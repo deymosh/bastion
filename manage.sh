@@ -40,9 +40,10 @@ usage() {
 }
 
 load_secrets() {
-    # 1. Load config if exists (we use a trick to source without 'export' keywords)
+    echo -e "${CYAN}${BOLD}--> Loading Configuration...${NC}"
+    
+    # 1. Load config if exists
     if [ -f "$CONFIG_FILE" ]; then
-        # This allows us to load VAR=VAL directly into the script's memory
         set -a
         source <(sed 's/^export //g' "$CONFIG_FILE")
         set +a
@@ -50,19 +51,22 @@ load_secrets() {
 
     # 2. Critical Prompts
     if [ -z "$WIREGUARD_SERVERURL" ]; then
-        echo -e "${YELLOW}[!] Essential network configuration missing.${NC}"
-        read -p "📝 Enter Public IP or Domain for Wireguard: " WIREGUARD_SERVERURL
+        echo -e "${YELLOW}${BOLD}[!] Essential network configuration missing.${NC}"
+        echo -en "${CYAN}${BOLD}📝 Enter Public IP or Domain for Wireguard: ${NC}"
+        read WIREGUARD_SERVERURL
         echo "WIREGUARD_SERVERURL=$WIREGUARD_SERVERURL" >> "$CONFIG_FILE"
     fi
 
     if [ -z "$WIREGUARD_SERVERPORT" ]; then
-        echo -e "${YELLOW}[!] Essential network configuration missing.${NC}"
-        read -p "📝 Enter Public Port for Wireguard: " WIREGUARD_SERVERPORT
+        echo -e "${YELLOW}${BOLD}[!] Essential network configuration missing.${NC}"
+        echo -en "${CYAN}${BOLD}📝 Enter Public Port for Wireguard: ${NC}"
+        read WIREGUARD_SERVERPORT
         echo "WIREGUARD_SERVERPORT=$WIREGUARD_SERVERPORT" >> "$CONFIG_FILE"
     fi
 
     if [ -z "$NODE_ALIAS" ]; then
-        read -p "📝 Enter CLN Node Alias: " NODE_ALIAS
+        echo -en "${CYAN}${BOLD}📝 Enter CLN Node Alias: ${NC}"
+        read NODE_ALIAS
         echo "NODE_ALIAS=$NODE_ALIAS" >> "$CONFIG_FILE"
     fi
 
@@ -77,11 +81,10 @@ load_secrets() {
     )
 
     for var in "${!DEFAULTS[@]}"; do
-        # If variable is not set in shell, use default and save to file
         if [ -z "${!var}" ]; then
-            # We use 'printf -v' to dynamically set the variable in the script
             printf -v "$var" "%s" "${DEFAULTS[$var]}"
             echo "$var=${DEFAULTS[$var]}" >> "$CONFIG_FILE"
+            echo -e "${YELLOW}--> Generated default for $var${NC}"
             CHANGED=true
         fi
     done
@@ -93,11 +96,40 @@ load_secrets() {
         fi
     done
 
-    # Export everything one last time for the current process
+    # Export everything one last time
     export $(cut -d= -f1 "$CONFIG_FILE" | grep -v '^#')
+    echo -e "${GREEN}${BOLD}[✔] Environment variables loaded.${NC}\n"
+}
+
+build_teos_if_missing() {
+    echo -e "${CYAN}${BOLD}--> Looking for TEOS image...${NC}"
+
+    local IMAGE_EXISTS=$(docker images -q teosd:latest 2> /dev/null)
+
+    if [ -z "$IMAGE_EXISTS" ]; then
+        echo -e "${YELLOW}${BOLD}[!] Watchtower image (teosd:latest) not found.${NC}"
+        echo -e "${CYAN}--> Building from submodule: ${BOLD}rust-teos${NC}"
+        
+        # Build the TEOS image from the rust-teos submodule in a subshell to avoid changing the main script's directory
+        (
+            cd rust-teos || { echo -e "${RED}✘ Error: Directory rust-teos not found!${NC}"; exit 1; }
+            docker build -f ./docker/Dockerfile -t teosd:latest .
+        )
+
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}✔ TEOS image built successfully.${NC}\n"
+        else
+            echo -e "${RED}✘ Error: Failed to build TEOS image.${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${GREEN}${BOLD}[✔] TEOS image is ready.${NC}"
+        echo -e
+    fi
 }
 
 load_secrets
+build_teos_if_missing
 
 if [ -z "$1" ]; then
     usage

@@ -1,0 +1,3 @@
+[submodule "rust-teos"]
+	path = rust-teos
+	url = https://github.com/deymosh/rust-teos
