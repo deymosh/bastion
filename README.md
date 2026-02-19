@@ -95,6 +95,32 @@ All plugins included and enabled by default (except trustedcoin, disabled since 
 
 Tor always enabled: routes through 10.0.0.11:9050
 
+### TEOS Configuration
+
+TEOS (`teosd`) is included but not configured by default. Running a watchtower on the same machine as your node is risky—if your node is compromised, so is the watchtower.
+
+Configuration files are templates in `stack-bitcoin/config/teos.toml` but must be manually copied to the persistent data directory after first run:
+
+```bash
+# After first run of the stack, copy config to data directory
+cp stack-bitcoin/config/teos.toml stack-bitcoin/data/teos/teos.toml
+docker restart teosd
+```
+
+**Why manual copy?** The container mounts `stack-bitcoin/data/teos:/home/teos/.teos` for persistence. We can't simultaneously mount `config/` templates into the same directory, so templates must be copied after first initialization.
+
+### RTL Configuration
+
+RTL connects to CLN via Docker network (10.0.0.10:3001). Configuration template is in `stack-bitcoin/config/RTL-Config.json` but must be manually copied to the persistent data directory after first run:
+
+```bash
+# After first run of the stack, copy config to data directory
+cp stack-bitcoin/config/RTL-Config.json stack-bitcoin/data/rtl/RTL-Config.json
+docker restart rtl
+```
+
+**Why manual copy?** The container mounts `stack-bitcoin/data/rtl:/data` for persistence. We can't simultaneously mount `config/` templates into the same directory, so templates must be copied after first initialization. Any changes to CLN RPC credentials or ports require updating this file.
+
 ## 🔧 Troubleshooting
 
 ```bash
