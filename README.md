@@ -1,251 +1,155 @@
 # 🏴‍☠️ BASTION - Bitcoin & Lightning Infrastructure
 
-Complete Docker infrastructure for running a full Bitcoin node with Lightning Network (CLN), private DNS, VPN access, and monitoring.
+Complete Docker infrastructure for running a Bitcoin node with Core Lightning, private DNS, VPN, and monitoring.
 
-## Quick Start
+## ⚠️ Disclaimer
+
+Lightning nodes handle real funds. Software is provided as-is. **Use only at your own risk.** See [CLN security docs](https://docs.corelightning.org/).
+
+## 🚀 Quick Start
 
 ### Prerequisites
 - Docker >= 24.0 & Docker Compose >= 2.0
 - Linux (Debian/Ubuntu)
-- 16GB+ RAM, 4+ CPU cores, 50GB storage
+- 16GB+ RAM, 4+ CPU cores, 50GB+ storage
 
-### Installation
+### Install
 ```bash
-# Make script executable
 chmod +x manage.sh
-
-# Deploy all stacks
 ./manage.sh up
 ```
 
-## Stacks Overview
+**What happens:**
+- Generates `bastion.conf` (auto-prompted for Wireguard URL, port, CLN alias)
+- Creates `.env` symlinks → `bastion.conf` (one source of truth)
+- Deploys: network → bitcoin → monitor
 
-| Stack | Services | Purpose |
-|-------|----------|---------|
-| **bitcoin** | bitcoind, clightning, tor, rtl | Bitcoin node + Lightning Network |
-| **network** | pihole, unbound, wireguard | DNS blocking, private DNS, VPN |
-| **monitor** | prometheus, grafana, portainer, node-exporter | Metrics & visualization |
+## 📦 Stacks
 
-## Commands
+| Stack | Services | IPs |
+|-------|----------|-----|
+| **network** | unbound DNS, wireguard VPN, pi-hole | 10.0.0.2-3 |
+| **bitcoin** | bitcoind, clightning, tor, rtl, teosd | 10.0.0.10-14 |
+| **monitor** | prometheus, grafana, portainer, node-exporter | 10.0.0.20-23 |
+
+## ⚙️ Commands
 
 ```bash
-./manage.sh up       # Start all stacks in order
-./manage.sh stop     # Stop all services
-./manage.sh status   # Show container status
-./manage.sh logs     # Follow logs
+./manage.sh up       # Start all stacks
+./manage.sh stop     # Stop services
+./manage.sh down     # Remove containers
+./manage.sh status   # Show containers
+./manage.sh logs     # Tail logs
 ```
 
-## Service Ports
+## 🌐 Access
 
-| Service | Port | URL |
-|---------|------|-----|
-| RTL (Lightning) | 3000 | http://localhost:3000 |
+| Service | Port | Location |
+|---------|------|----------|
+| RTL (Lightning UI) | 3000 | http://localhost:3000 |
 | Grafana | 4001 | http://localhost:4001 |
 | Portainer | 4000 | https://localhost:4000 |
 | Prometheus | 9090 | http://localhost:9090 |
 | Pi-hole | 80 | http://localhost/admin |
+| Wireguard VPN | 51820/udp | External |
 
-**Default credentials:**
-- Grafana: `admin` / `admin` (change immediately)
-- Pi-hole: `admin` / `pihole` (change immediately)
+**Defaults (change immediately):**
+- Grafana: `admin:admin`
+- Pi-hole: `admin:${PIHOLE_PASSWORD}`
+- Bitcoin RPC: `bitcoind.user:bitcoind.pass`
 
-## Bitcoin & Lightning Commands
+## 🛠️ Configuration
+
+`manage.sh` auto-generates `bastion.conf` on first run:
+- **Interactive prompts:** Wireguard URL/port, CLN node alias
+- **Auto-generated:** TIMEZONE, PIHOLE_PASSWORD, USER_ID, GROUP_ID
+- **Symlinks:** Each stack references `../bastion.conf` via `.env`
+
+### Key Files
+
+```
+stack-bitcoin/docker-compose.yml    # Edit RPC user/pass, pruning settings
+stack-bitcoin/config/cln_config     # CLN configuration (alias, plugins, proxy)
+stack-network/docker-compose.yml    # Wireguard server config
+bastion.conf                        # GENERATED - in .gitignore
+stack-*/.env                        # SYMLINKS - in .gitignore
+stack-*/data/                       # Volumes - in .gitignore
+```
+
+### Bitcoin Core Defaults
+
+```dockerfile
+-rpcuser=bitcoind.user              # Change if desired, but update in CLN and RTL configs
+-rpcpassword=bitcoind.pass          # Change if desired, but update in CLN and RTL configs
+-prune=20000                        # ~20GB block storage
+```
+
+### Core Lightning Plugins
+
+All plugins included and enabled by default (except trustedcoin, disabled since we use bitcoind):
+
+- **clboss** - Channel autopilot ([b827b258](https://github.com/ksedgwic/clboss/commit/b827b258a2607ec39985d46307d8c430e8e1caf4))
+- **watchtower-client** - TEOS breach watching ([be344ecc](https://github.com/talaia-labs/rust-teos/commit/be344ecc5286dd9436bf343d30954135da8ad4ac))
+- **backup** - Expects USB mount at `/mnt/backup_cln` ([cb3adab](https://github.com/lightningd/plugins/commit/cb3adabfcb95e802ff27be85a53a353150a4907d))
+- **trustedcoin** - [v0.8.6](https://github.com/nbd-wtf/trustedcoin/releases/tag/v0.8.6) (disabled - we have bitcoind)
+
+Tor always enabled: routes through 10.0.0.11:9050
+
+## 🔧 Troubleshooting
 
 ```bash
-# Bitcoin info
-docker exec bitcoind bitcoin-cli -rpcuser=USER -rpcpassword=PASS getblockchaininfo
+# CLN not connecting to Bitcoin
+docker logs clightning
+docker exec clightning ping -c 3 10.0.0.12
 
-# Lightning info
+# RTL cannot reach CLN
+docker logs rtl
 docker exec clightning lightning-cli getinfo
-docker exec clightning lightning-cli listchannels
-docker exec clightning lightning-cli listpeers
 
-# Balance & profits
-docker exec clightning lightning-cli bkpr-getbalances
+# DNS issues
+docker exec unbound dig @127.0.0.1 google.com
 
-# Watchtower status
-docker exec clightning lightning-cli watchtower-client-stats
+# Container resource usage
+docker stats
+df -h
 ```
 
-## Configuration
+## 🔒 Security
 
-**Bitcoin RPC** (`stack-bitcoin/docker-compose.yml`)
-```
-User: blockchainuser (change this)
-Password: secure_password_here (change this)
-Port: 8332
-```
+All containers are isolated on Docker network `10.0.0.0/24`. External access only via:
+- **Wireguard VPN** (51820/udp)
+- **SSH** (port 22)
+- **HTTP/HTTPS** web services (RTL, Grafana, etc)
 
-**CLN Config** (`stack-bitcoin/config/cln_config`)
-```properties
-alias=BastionCLN
-network=bitcoin
-bitcoin-rpcuser=blockchainuser
-bitcoin-rpcpassword=secure_password_here
-clnrest-port=3001
-always-use-proxy=true  # Routes through Tor
-```
+**Internal isolation:**
+- Bitcoin RPC: `10.0.0.12:8332` (Docker network only)
+- CLN REST: `10.0.0.10:3001` (Docker network only)
 
-**Wireguard** (`stack-network/docker-compose.yml`)
-```
-SERVERURL=your-domain.hopto.org  # Change this
-SERVERPORT=51820  # Change this
-```
+**Recommended:**
+- Change default passwords (Grafana: admin:admin, Pi-hole, Bitcoin RPC)
+- Keep `.gitignore` protected
+- Use Wireguard for remote access
 
-## Backup & Recovery
+## 📊 Versions
 
-```bash
-# Backup CLN (critical data)
-mkdir -p ~/backups
-docker compose -f stack-bitcoin/docker-compose.yml stop clightning
-tar -czf ~/backups/cln_backup_$(date +%Y%m%d_%H%M%S).tar.gz stack-bitcoin/data/cln/
-docker compose -f stack-bitcoin/docker-compose.yml start clightning
+| Component | Version |
+|-----------|---------|
+| Bitcoin Core | v26.0 |
+| Core Lightning | v25.12.1 |
+| RTL | v0.15.8 |
+| **CLN Plugins:** |
+| clboss | [b827b258](https://github.com/ksedgwic/clboss/commit/b827b258a2607ec39985d46307d8c430e8e1caf4) |
+| watchtower-client | [be344ecc](https://github.com/talaia-labs/rust-teos/commit/be344ecc5286dd9436bf343d30954135da8ad4ac) |
+| backup | [cb3adab](https://github.com/lightningd/plugins/commit/cb3adabfcb95e802ff27be85a53a353150a4907d) |
+| trustedcoin | [v0.8.6](https://github.com/nbd-wtf/trustedcoin/releases/tag/v0.8.6) (disabled) |
 
-# Restore
-./manage.sh stop
-rm -rf stack-bitcoin/data/cln/
-tar -xzf ~/backups/cln_backup_YYYYMMDD_HHMMSS.tar.gz -C stack-bitcoin/data/
-./manage.sh up
-```
+## 📚 Resources
 
-## Watchtower Registration
-
-```bash
-docker exec clightning lightning-cli registertower <pubkey>@<host>:<port>
-```
-
-## Troubleshooting
-
-**Network not found:**
-```bash
-docker network create --driver bridge --subnet 10.0.0.0/24 bastion-network
-```
-
-**Bitcoin/CLN not syncing:**
-```bash
-docker logs -f bitcoind  # Check sync progress
-docker exec bitcoind bitcoin-cli -rpcuser=USER -rpcpassword=PASS getblockcount
-```
-
-**RTL cannot connect to CLN:**
-```bash
-docker ps | grep clightning  # Verify running
-docker exec clightning lightning-cli getinfo  # Test RPC
-docker logs rtl  # Check RTL logs
-```
-
-**DNS issues (Pi-hole/Unbound):**
-```bash
-docker exec unbound nslookup google.com localhost
-dig @127.0.0.1 +short google.com
-docker logs -f pihole
-```
-
-**Port conflicts:**
-```bash
-sudo netstat -tlnp | grep <port>
-# Change port in docker-compose.yml and restart
-```
-
-## Security Best Practices
-
-1. **Change all default passwords immediately:**
-   - RPC Bitcoin password
-   - Pi-hole web password
-   - Grafana admin password
-
-2. **Firewall (UFW):**
-```bash
-sudo ufw allow 22/tcp      # SSH only
-sudo ufw allow 3000/tcp    # RTL (if exposing)
-sudo ufw allow 51820/udp   # Wireguard
-sudo ufw allow 53/tcp 53/udp  # DNS
-sudo ufw enable
-```
-
-3. **Never expose RPC ports to internet** - use Wireguard VPN instead
-
-4. **Regular backups** of CLN data (critical!)
-
-5. **Keep Bitcoin Core updated** for security patches
-
-## Logs & Diagnostics
-
-```bash
-# View all logs
-./manage.sh logs
-
-# Individual service logs
-docker logs -f bitcoind
-docker logs -f clightning
-docker logs -f rtl
-docker logs -f pihole
-
-# System info
-df -h          # Disk usage
-free -h        # Memory usage
-docker stats   # Container stats
-docker events  # Docker events
-```
-
-## Project Structure
-
-```
-bastion/
-├── README.md                    # This file
-├── manage.sh                    # CLI management script
-├── stack-bitcoin/
-│   ├── docker-compose.yml
-│   ├── Dockerfile.clightning    # Custom CLN with plugins
-│   ├── config/
-│   │   ├── cln_config
-│   │   ├── torrc
-│   │   └── RTL-Config.json
-│   └── data/                    # Persistent volumes
-│       ├── bitcoin/             # Blockchain
-│       ├── cln/                 # Lightning data
-│       ├── rtl/                 # RTL data
-│       └── tor/                 # Tor data
-├── stack-network/
-│   ├── docker-compose.yml
-│   ├── unbound.conf
-│   └── data/
-│       ├── etc-pihole/
-│       ├── etc-dnsmasq.d/
-│       └── wireguard/
-└── stack-monitor/
-    ├── docker-compose.yml
-    └── prometheus.yml
-```
-
-## Updates
-
-```bash
-# Pull latest images
-docker pull elementsproject/lightningd:v25.12.1
-docker pull lncm/bitcoind:v26.0
-
-# Restart
-./manage.sh stop
-./manage.sh up
-```
-
-## Software Versions
-
-- **Bitcoin Core**: v26.0
-- **Core Lightning**: v25.12.1
-- **RTL**: v0.15.8
-- **Plugins**: clboss, backup, watchtower-client
-- **Network**: Pi-hole, Unbound, Wireguard
-- **Monitoring**: Prometheus, Grafana, Portainer
-
-## Support
-
-- Bitcoin: https://bitcoin.org/
-- Core Lightning: https://github.com/ElementsProject/lightning
-- Docker: https://docs.docker.com/
+- **Bitcoin**: https://bitcoin.org
+- **Core Lightning**: https://github.com/ElementsProject/lightning
+- **Docker**: https://docs.docker.com
+- **Block explorer**: https://mempool.space
 
 ---
 
-**Last Updated**: February 2026
-**Version**: 1.0.0
+**Software provided as-is.** Use at your own risk. Change defaults immediately. Never commit secrets.
