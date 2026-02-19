@@ -1,0 +1,30 @@
+{
+  "multiPass": "bastion.rtl",
+  "port": "3000",
+  "defaultNodeIndex": 1,
+  "SSO": {
+    "rtlSSO": 0,
+    "rtlCookiePath": "",
+    "logoutRedirectLink": ""
+  },
+  "nodes": [
+    {
+      "index": 1,
+      "lnNode": "BastionCLN",
+      "lnImplementation": "CLN",
+      "authentication": {
+        "runePath": "/data/access.rune"
+      },
+      "settings": {
+        "userPersona": "OPERATOR",
+        "themeMode": "DAY",
+        "themeColor": "PURPLE",
+        "bitcoindConfigPath": "",
+        "logLevel": "INFO",
+        "fiatConversion": false,
+        "unannouncedChannels": false,
+        "lnServerUrl": "http://10.0.0.10:3001"
+      }
+    }
+  ]
+}

@@ -1,0 +1,118 @@
+name: stack-bitcoin
+
+services:
+  clightning:
+    image: clightning-custom:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.clightning
+    container_name: clightning
+    restart: unless-stopped
+    depends_on:
+      - bitcoind
+      - tor
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"   # Maximum 10 Megabytes per file
+        max-file: "3"     # Only saves the last 3 files
+    volumes:
+      # BACKUP
+      - /mnt/backup_cln:/backup_usb
+      # CONFIG & DATA
+      - ./config/cln_config:/root/.lightning/config
+      - ./data/cln:/root/.lightning/bitcoin
+      - ./data/tor:/data/.tor
+    ports:
+      - "127.0.0.1:3001:3001"
+      - "10.0.0.1:3001:3001"
+    networks:
+      net:
+        ipv4_address: 10.0.0.10
+    command:
+      - --alias=${NODE_ALIAS}
+      - --network=bitcoin
+      - --log-level=info
+
+  tor:
+    image: lncm/tor:latest
+    container_name: tor
+    restart: always
+    healthcheck:
+      test: ["CMD", "timeout", "5", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/9050"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - ./config/torrc:/etc/tor/torrc
+      - ./data/tor:/data/.tor
+    networks:
+      net:
+        ipv4_address: 10.0.0.11
+
+  bitcoind:
+    image: lncm/bitcoind:v26.0
+    container_name: bitcoind
+    restart: unless-stopped
+    user: "${USER_ID}:${GROUP_ID}"
+    stop_grace_period: 5m  # Gives 5 minutes for graceful shutdown
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"   # Maximum 10 Megabytes per file
+        max-file: "3"     # Only saves the last 3 files
+    volumes:
+      - ./data/bitcoin:/data/.bitcoin
+    networks:
+      net:
+        ipv4_address: 10.0.0.12
+    command:
+      - -server=1
+      - -dbcache=8000
+      - -prune=20000        # This limits block storage to ~20GB
+      - -txindex=0          # Saves space (not needed for CLN)
+      - -prune=20000        # Keeps ~20GB of blocks (adjust if you want more)
+      - -printtoconsole=1
+      - -rpcuser=bitcoind.user      # Put the user you want
+      - -rpcpassword=bitcoind.pass  # Put the password you want
+      - -rpcallowip=10.0.0.0/24
+      - -rpcbind=0.0.0.0
+
+  rtl:
+    image: shahanafarooqui/rtl:v0.15.8
+    container_name: rtl
+    restart: unless-stopped
+    depends_on:
+      - clightning
+    environment:
+      - RTL_CONFIG_PATH=/data
+    volumes:
+      - ./data/rtl:/data
+    ports:
+      - "3000:3000"
+    networks:
+      net:
+        ipv4_address: 10.0.0.13
+
+  teosd:
+    image: teosd:latest
+    build: 
+      context: ./rust-teos
+      dockerfile: ./docker/Dockerfile
+    container_name: teosd
+    restart: always
+    depends_on:
+      tor:
+        condition: service_healthy
+    volumes:
+      - ./data/teos:/home/teos/.teos
+      - ./data/tor:/data/.tor
+    command: ["teosd"]
+    networks:
+      net:
+        ipv4_address: 10.0.0.14
+
+networks:
+  net:
+    name: bastion-network
+    external: true

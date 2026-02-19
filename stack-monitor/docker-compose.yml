@@ -1,0 +1,64 @@
+name: stack-monitor
+
+services:
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    ports:
+      - "4000:9443"
+    networks:
+      net:
+        ipv4_address: 10.0.0.20
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "4001:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      net:
+        ipv4_address: 10.0.0.21
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: node-exporter
+    restart: unless-stopped
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.ignored-mount-points=^/(sys|proc|dev|host|etc)($$|/)'
+    networks:
+      net:
+        ipv4_address: 10.0.0.22
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    networks:
+      net:
+        ipv4_address: 10.0.0.23
+
+volumes:
+  portainer_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  net:
+    name: bastion-network
+    external: true

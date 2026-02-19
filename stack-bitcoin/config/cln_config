@@ -1,0 +1,28 @@
+# CLN Node General Info
+rgb=0399b5
+network=bitcoin
+
+# CLN REST API
+clnrest-port=3001
+clnrest-host=0.0.0.0
+clnrest-protocol=http
+
+# Bitcoin RPC config (if not using trustedcoin plugin)
+bitcoin-rpcuser=bitcoind.user
+bitcoin-rpcpassword=bitcoind.pass
+bitcoin-rpcconnect=10.0.0.12
+
+# Plugins config (careful CLBOSS can open channels and manage funds, so only use if you trust it)
+plugin=/usr/local/bin/clboss
+
+# Disable bcli and enable trustedcoin if you dont want to run bitcoind
+# disable-plugin=bcli
+# important-plugin=/usr/local/bin/trustedcoin
+important-plugin=/usr/local/bin/backup/backup.py
+important-plugin=/usr/local/bin/watchtower-client
+
+# Network and proxy settings (Tor in this case)
+bind-addr=0.0.0.0:9735
+proxy=10.0.0.11:9050
+addr=statictor:10.0.0.11:9051
+always-use-proxy=true

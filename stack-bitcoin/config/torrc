@@ -1,0 +1,8 @@
+# Socks and Control ports (CLN + TEOS)
+SocksPort 0.0.0.0:9050
+ControlPort 0.0.0.0:9051
+
+# Cookie Authentication (CLN + TEOS)
+CookieAuthentication 1
+CookieAuthFileGroupReadable 1
+DataDirectoryGroupReadable 1

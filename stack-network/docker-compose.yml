@@ -1,0 +1,62 @@
+name: stack-network
+
+services:
+  pihole:
+    depends_on:
+      - unbound
+    container_name: pihole
+    image: pihole/pihole:latest
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - TZ=${TIMEZONE}
+      - FTLCONF_webserver_api_password=${PIHOLE_PASSWORD}
+      - FTLCONF_dns_upstreams=10.0.0.2#53
+    volumes:
+      - './data/etc-pihole:/etc/pihole'
+      - './data/etc-dnsmasq.d:/etc/dnsmasq.d'
+    cap_add:
+      - NET_ADMIN
+
+  unbound:
+    image: mvance/unbound:latest
+    container_name: unbound
+    restart: unless-stopped
+    volumes:
+      - ./unbound.conf:/opt/unbound/etc/unbound/unbound.conf
+    networks:
+      net:
+        ipv4_address: 10.0.0.2
+
+  wireguard:
+    image: lscr.io/linuxserver/wireguard:latest
+    container_name: wireguard
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE # You may need to install wireguard on the host if it fails
+    environment:
+      - PUID=${USER_ID}
+      - PGID=${GROUP_ID}
+      - TZ=${TIMEZONE}
+      - SERVERURL=${WIREGUARD_SERVERURL}
+      - SERVERPORT=${WIREGUARD_SERVERPORT}
+      - PEERS=${WIREGUARD_PEERS}
+      - PEERDNS=10.0.0.1
+      - INTERNAL_SUBNET=10.13.13.0
+      - ALLOWEDIPS=0.0.0.0/0
+    volumes:
+      - ./data/wireguard:/config
+      - /lib/modules:/lib/modules
+    ports:
+      - "51820:51820/udp"
+    networks:
+      net:
+        ipv4_address: 10.0.0.3
+
+networks:
+  net:
+    name: bastion-network
+    ipam:
+      config:
+        - subnet: 10.0.0.0/24

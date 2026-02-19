@@ -1,0 +1,120 @@
+# Use base clightning image to build plugins
+FROM elementsproject/lightningd:v25.12.1 AS builder
+
+# Install compilation dependencies and plugins
+RUN apt-get update && apt-get install -y \
+    git \
+    autoconf-archive \
+    libtool \
+    curl \
+    ca-certificates \
+    pkg-config \
+    protobuf-compiler \
+    libssl-dev \
+    libev-dev \
+    libffi-dev \
+    libsqlite3-dev \
+    libcurl4-gnutls-dev \
+    libunwind-dev \
+    build-essential \
+    dnsutils \
+    python3-pip && \
+    rm -rf /var/lib/apt/lists/*
+
+# Define clboss version
+ENV CLBOSS_COMMIT="b827b258a2607ec39985d46307d8c430e8e1caf4"
+
+# Install clboss plugin
+RUN git clone https://github.com/ksedgwic/clboss.git /tmp/clboss_build && \
+    cd /tmp/clboss_build && \
+    git checkout $CLBOSS_COMMIT
+
+WORKDIR /tmp/clboss_build
+RUN echo "--- Installing Clboss Plugin ---" && \
+    autoreconf -i && \
+    ./configure
+
+RUN echo "--- Compiling Clboss Plugin ---" && \
+    make -j$(nproc) && \
+    make install && \
+    cd /root && \
+    rm -rf /tmp/clboss_build && \
+    echo "--- Clboss Plugin installed successfully ---"
+
+# Define TEOS version
+ENV TEOS_COMMIT="be344ecc5286dd9436bf343d30954135da8ad4ac"
+
+# Install TEOS plugin
+RUN git clone https://github.com/talaia-labs/rust-teos.git /tmp/teos_build && \
+    cd /tmp/teos_build && \
+    git checkout $TEOS_COMMIT
+
+WORKDIR /tmp/teos_build
+RUN echo "--- Installing Rust Toolchain ---"; \
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y;
+
+RUN echo "--- Compiling TEOS Plugin ---"; \
+    /root/.cargo/bin/cargo install --locked --path watchtower-plugin && \
+    cp ~/.cargo/bin/watchtower-client /usr/local/bin/watchtower-client && \
+    chmod +x /usr/local/bin/watchtower-client && \
+    cd /root && \
+    rm -rf /tmp/teos_build && \
+    echo "--- TEOS Plugin installed successfully ---"
+
+# Define backup plugin version
+ENV BACKUP_PLUGIN_COMMIT="cb3adabfcb95e802ff27be85a53a353150a4907d"
+
+# Install backup plugin
+RUN git clone https://github.com/lightningd/plugins /tmp/plugins && \
+    cd /tmp/plugins && \
+    git checkout $BACKUP_PLUGIN_COMMIT
+
+WORKDIR /tmp/plugins
+RUN echo "--- Installing Backup Plugin ---" && \
+    curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="/usr/local/bin" sh && \
+    pip3 install --break-system-packages \
+    coincurve \
+    pyln-client \
+    pyln-proto && \
+    cp -r /tmp/plugins/backup /usr/local/bin/backup/ && \
+    chmod +x /usr/local/bin/backup/backup.py && \
+    chmod +x /usr/local/bin/backup/backup-cli && \
+    cd /root && \
+    rm -rf /tmp/plugins && \
+    echo "--- Backup Plugin installed successfully ---"
+
+# Define TrustedCoin plugin version
+ENV TRUSTEDCOIN_RELEASE="v0.8.6"
+
+# Install TrustedCoin plugin
+RUN echo "--- Installing TrustedCoin Plugin ---" && \
+    curl -L https://github.com/nbd-wtf/trustedcoin/releases/download/$TRUSTEDCOIN_RELEASE/trustedcoin-$TRUSTEDCOIN_RELEASE-linux-amd64.tar.gz | tar -xz -C /usr/local/bin/ > /dev/null 2>&1 && \
+    chmod +x /usr/local/bin/trustedcoin && \
+    echo "--- TrustedCoin Plugin installed successfully ---"
+
+# Copy plugins to the light base image
+FROM elementsproject/lightningd:v25.12.1 AS final
+
+# Runtime dependencies for plugins
+RUN apt-get update && apt-get install -y \
+    curl \
+    dnsutils \
+    libssl-dev \
+    libev-dev \
+    libffi-dev \
+    libsqlite3-dev \
+    libcurl4-gnutls-dev \
+    libunwind-dev \
+    python3-pip
+
+# Install UV for backup plugin
+RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="/usr/local/bin" sh
+
+# Copy plugins from builder stage
+COPY --from=builder /usr/local/bin/clboss /usr/local/bin/clboss
+COPY --from=builder /usr/local/bin/watchtower-client /usr/local/bin/watchtower-client
+COPY --from=builder /usr/local/bin/backup /usr/local/bin/backup
+COPY --from=builder /usr/local/bin/trustedcoin /usr/local/bin/trustedcoin
+
+# Set entrypoint for clightning
+ENTRYPOINT ["lightningd"]
