@@ -33,6 +33,7 @@ services:
       - --alias=${NODE_ALIAS}
       - --network=bitcoin
       - --log-level=info
+      - --clboss-min-channel=1000000
 
   tor:
     image: lncm/tor:latest
@@ -96,9 +97,6 @@ services:
 
   teosd:
     image: teosd:latest
-    build: 
-      context: ./rust-teos
-      dockerfile: ./docker/Dockerfile
     container_name: teosd
     restart: always
     depends_on:

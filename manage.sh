@@ -28,6 +28,7 @@ usage() {
     echo -e "  ${YELLOW}stop${NC}    -> Stop all containers"
     echo -e "  ${RED}down${NC}    -> Stop and remove all containers"
     echo -e "  ${CYAN}status${NC}  -> Show running containers and IPs"
+    echo -e "  ${BOLD}build${NC}   -> Build all stacks without starting"
     echo -e "  ${BOLD}logs${NC}    -> Tail logs from all stacks"
     echo -e ""
     echo -e "${YELLOW}${BOLD}STACKS MANAGED:${NC}"
@@ -117,9 +118,9 @@ build_teos_if_missing() {
         )
 
         if [ $? -eq 0 ]; then
-            echo -e "${GREEN}✔ TEOS image built successfully.${NC}\n"
+            echo -e "${GREEN}[✔] TEOS image built successfully.${NC}\n"
         else
-            echo -e "${RED}✘ Error: Failed to build TEOS image.${NC}"
+            echo -e "${RED}[✘] Error: Failed to build TEOS image.${NC}"
             exit 1
         fi
     else
@@ -142,7 +143,7 @@ case "$1" in
             echo -e "${CYAN}--> Starting:${NC} ${BOLD}$stack${NC}"
             docker compose -f ./$stack/docker-compose.yml up -d
         done
-        echo -e "\n${GREEN}${BOLD}✔ $PROJECT_NAME is now LIVE.${NC}"
+        echo -e "\n${GREEN}${BOLD}[✔] $PROJECT_NAME is now LIVE.${NC}"
         ;;
     stop)
         echo -e "${RED}${BOLD}[-] Stopping all stacks...${NC}"
@@ -164,6 +165,14 @@ case "$1" in
     status)
         echo -e "${CYAN}${BOLD}[?] Current Environment Status:${NC}"
         docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Networks}}"
+        ;;
+    build)
+        echo -e "${CYAN}${BOLD}[+] Building all stacks...${NC}"
+        for stack in "${STACKS[@]}"; do
+            echo -e "${CYAN}--> Building:${NC} ${BOLD}$stack${NC}"
+            docker compose -f ./$stack/docker-compose.yml build
+        done
+        echo -e "\n${GREEN}${BOLD}[✔] All stacks built successfully.${NC}"
         ;;
     logs)
         echo -e "${CYAN}${BOLD}[!] Attaching to Logs...${NC}"

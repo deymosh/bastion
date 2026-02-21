@@ -124,6 +124,10 @@ docker restart rtl
 ## 🔧 Troubleshooting
 
 ```bash
+# CLN backup plugin backup not initialized - ensure USB mount is correct and accessible
+# Example command to initialize backup plugin with mounted USB path:
+docker run --rm -it -v $(pwd)/data/cln:/root/.lightning/bitcoin -v /mnt/backup_cln:/backup_usb --entrypoint /usr/local/bin/backup/backup-cli clightning-custom:latest init --lightning-dir /root/.lightning/bitcoin file:///backup_usb/backup.sqlite.bkp
+
 # CLN not connecting to Bitcoin
 docker logs clightning
 docker exec clightning ping -c 3 10.0.0.12
@@ -134,6 +138,10 @@ docker exec clightning lightning-cli getinfo
 
 # DNS issues
 docker exec unbound dig @127.0.0.1 google.com
+
+# TOR connectivity
+docker kill --signal=HUP tor
+docker logs tor
 
 # Container resource usage
 docker stats
