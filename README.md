@@ -139,9 +139,14 @@ docker exec clightning lightning-cli getinfo
 # DNS issues
 docker exec unbound dig @127.0.0.1 google.com
 
-# TOR connectivity
+# TOR connectivity (config restart to refresh circuits)
 docker kill --signal=HUP tor
 docker logs tor
+
+# TOR connectivity (delete tor state and cache for fresh start)
+docker stop tor
+rm -f stack-bitcoin/data/tor/state stack-bitcoin/data/tor/cached-* stack-bitcoin/data/tor/microdesc-*
+docker start tor
 
 # Container resource usage
 docker stats
