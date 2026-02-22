@@ -1,4 +1,4 @@
-# Use base clightning image to build plugins
+# Use base lightningd image to build plugins
 FROM elementsproject/lightningd:v25.12.1 AS builder
 
 # Install compilation dependencies and plugins
@@ -116,5 +116,5 @@ COPY --from=builder /usr/local/bin/watchtower-client /usr/local/bin/watchtower-c
 COPY --from=builder /usr/local/bin/backup /usr/local/bin/backup
 COPY --from=builder /usr/local/bin/trustedcoin /usr/local/bin/trustedcoin
 
-# Set entrypoint for clightning
+# Set entrypoint to lightningd binary
 ENTRYPOINT ["lightningd"]

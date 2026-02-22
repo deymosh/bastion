@@ -29,7 +29,7 @@ chmod +x manage.sh
 | Stack | Services | IPs |
 |-------|----------|-----|
 | **network** | unbound DNS, wireguard VPN, pi-hole | 10.0.0.2-3 |
-| **bitcoin** | bitcoind, clightning, tor, rtl, teosd | 10.0.0.10-14 |
+| **bitcoin** | bitcoind, lightningd, tor, rtl, teosd | 10.0.0.10-14 |
 | **monitor** | prometheus, grafana, portainer, node-exporter | 10.0.0.20-23 |
 
 ## ⚙️ Commands
@@ -128,19 +128,19 @@ The commands below assume you are in the project root and have the necessary per
 ```bash
 # CLN backup plugin backup not initialized - ensure USB mount is correct and accessible
 # Example command to initialize backup plugin with mounted USB path:
-docker run --rm -it -v $(pwd)/stack-bitcoin/data/cln:~/.lightning/bitcoin -v /mnt/backup_cln:/backup_usb --entrypoint /usr/local/bin/backup/backup-cli clightning-custom:latest init --lightning-dir ~/.lightning/bitcoin file:///backup_usb/backup.sqlite.bkp
+docker run --rm -it -v $(pwd)/stack-bitcoin/data/cln:~/.lightning/bitcoin -v /mnt/backup_cln:/backup_usb --entrypoint /usr/local/bin/backup/backup-cli lightningd-custom:latest init --lightning-dir ~/.lightning/bitcoin file:///backup_usb/backup.sqlite.bkp
 
 # CLN backup plugin - restore from backup file
 ./backup-cli restore file:///mnt/external/location ~/.lightning/bitcoin/lightningd.sqlite3
-docker run --rm -it -v $(pwd)/stack-bitcoin/data/cln:~/.lightning/bitcoin -v /mnt/backup_cln:/backup_usb --entrypoint /usr/local/bin/backup/backup-cli clightning-custom:latest restore file:///backup_usb/backup.sqlite.bkp --lightning-dir ~/.lightning/bitcoin
+docker run --rm -it -v $(pwd)/stack-bitcoin/data/cln:~/.lightning/bitcoin -v /mnt/backup_cln:/backup_usb --entrypoint /usr/local/bin/backup/backup-cli lightningd-custom:latest restore file:///backup_usb/backup.sqlite.bkp --lightning-dir ~/.lightning/bitcoin
 
 # CLN not connecting to Bitcoin
-docker logs clightning
-docker exec clightning ping -c 3 10.0.0.12
+docker logs lightningd
+docker exec lightningd ping -c 3 10.0.0.12
 
 # RTL cannot reach CLN
 docker logs rtl
-docker exec clightning lightning-cli getinfo
+docker exec lightningd lightning-cli getinfo
 
 # DNS issues
 docker exec unbound dig @127.0.0.1 google.com

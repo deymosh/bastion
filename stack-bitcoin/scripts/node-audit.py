@@ -12,7 +12,7 @@ RESET = "\033[0m"
 def fetch_bkpr_data():
     """Fetches accounting data from Core Lightning inside Docker."""
     try:
-        cmd = ["docker", "exec", "clightning", "lightning-cli", "bkpr-listaccountevents"]
+        cmd = ["docker", "exec", "lightningd", "lightning-cli", "bkpr-listaccountevents"]
         process = subprocess.run(cmd, capture_output=True, text=True, check=True)
         return json.loads(process.stdout)
     except Exception as e:
@@ -53,7 +53,7 @@ def run_audit():
     status_color = GREEN if net_sats > 0 else RED
 
     # Bastion Output
-    print("\n" + f"{CYAN}═{RESET}"*55)
+    print(f"{CYAN}═{RESET}"*55)
     print(f"{BOLD}{CYAN}             BASTION NODE AUDIT REPORT{RESET}")
     print(f"{CYAN}═{RESET}"*55)
     print(f"{'Total Routing Income:':<30} {GREEN}{income_msat:>18,.0f} msat{RESET}")

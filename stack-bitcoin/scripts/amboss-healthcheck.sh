@@ -11,8 +11,8 @@
 AMBOSS_URL="https://api.amboss.space/graphql"
 TOR_PROXY="socks5h://10.0.0.11:9050"
 
-# Replace 'clightning' with your actual container name if different
-CLN_CONTAINER="clightning"
+# Replace 'lightningd' with your actual container name if different
+CLN_CONTAINER="lightningd"
 
 # --- 1. Generate ISO 8601 UTC Timestamp ---
 NOW=$(date -u +%Y-%m-%dT%H:%M:%S%z)

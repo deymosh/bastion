@@ -1,12 +1,12 @@
 name: stack-bitcoin
 
 services:
-  clightning:
-    image: clightning-custom:latest
+  lightningd:
+    image: lightningd-custom:latest
     build:
       context: .
-      dockerfile: Dockerfile.clightning
-    container_name: clightning
+      dockerfile: Dockerfile.lightningd
+    container_name: lightningd
     restart: unless-stopped
     depends_on:
       - bitcoind
@@ -84,7 +84,7 @@ services:
     container_name: rtl
     restart: unless-stopped
     depends_on:
-      - clightning
+      - lightningd
     environment:
       - RTL_CONFIG_PATH=/data
     volumes:
