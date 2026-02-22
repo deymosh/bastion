@@ -122,11 +122,17 @@ docker restart rtl
 **Why manual copy?** The container mounts `stack-bitcoin/data/rtl:/data` for persistence. We can't simultaneously mount `config/` templates into the same directory, so templates must be copied after first initialization. Any changes to CLN RPC credentials or ports require updating this file.
 
 ## 🔧 Troubleshooting
+General troubleshooting steps for common issues. Always check container logs first (`docker logs <container>`).
+The commands below assume you are in the project root and have the necessary permissions to run Docker commands. Adjust paths and container names as needed based on your specific setup.
 
 ```bash
 # CLN backup plugin backup not initialized - ensure USB mount is correct and accessible
 # Example command to initialize backup plugin with mounted USB path:
-docker run --rm -it -v $(pwd)/data/cln:/root/.lightning/bitcoin -v /mnt/backup_cln:/backup_usb --entrypoint /usr/local/bin/backup/backup-cli clightning-custom:latest init --lightning-dir /root/.lightning/bitcoin file:///backup_usb/backup.sqlite.bkp
+docker run --rm -it -v $(pwd)/stack-bitcoin/data/cln:~/.lightning/bitcoin -v /mnt/backup_cln:/backup_usb --entrypoint /usr/local/bin/backup/backup-cli clightning-custom:latest init --lightning-dir ~/.lightning/bitcoin file:///backup_usb/backup.sqlite.bkp
+
+# CLN backup plugin - restore from backup file
+./backup-cli restore file:///mnt/external/location ~/.lightning/bitcoin/lightningd.sqlite3
+docker run --rm -it -v $(pwd)/stack-bitcoin/data/cln:~/.lightning/bitcoin -v /mnt/backup_cln:/backup_usb --entrypoint /usr/local/bin/backup/backup-cli clightning-custom:latest restore file:///backup_usb/backup.sqlite.bkp --lightning-dir ~/.lightning/bitcoin
 
 # CLN not connecting to Bitcoin
 docker logs clightning
