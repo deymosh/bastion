@@ -39,6 +39,7 @@ chmod +x manage.sh
 ./manage.sh stop     # Stop services
 ./manage.sh down     # Remove containers
 ./manage.sh status   # Show containers
+./manage.sh audit    # Check node profitability
 ./manage.sh logs     # Tail logs
 ```
 
@@ -88,9 +89,9 @@ stack-*/data/                       # Volumes - in .gitignore
 
 All plugins included and enabled by default (except trustedcoin, disabled since we use bitcoind):
 
-- **clboss** - Channel autopilot ([b827b258](https://github.com/ksedgwic/clboss/commit/b827b258a2607ec39985d46307d8c430e8e1caf4))
-- **watchtower-client** - TEOS breach watching ([be344ecc](https://github.com/talaia-labs/rust-teos/commit/be344ecc5286dd9436bf343d30954135da8ad4ac))
-- **backup** - Expects USB mount at `/mnt/backup_cln` ([cb3adab](https://github.com/lightningd/plugins/commit/cb3adabfcb95e802ff27be85a53a353150a4907d))
+- **clboss** - Channel autopilot ([b827b258](https://github.com/ksedgwic/clboss/tree/b827b258a2607ec39985d46307d8c430e8e1caf4))
+- **watchtower-client** - TEOS breach watching ([be344ecc](https://github.com/talaia-labs/rust-teos/tree/be344ecc5286dd9436bf343d30954135da8ad4ac))
+- **backup** - Expects USB mount at `/mnt/backup_cln` ([cb3adab](https://github.com/lightningd/plugins/tree/cb3adabfcb95e802ff27be85a53a353150a4907d))
 - **trustedcoin** - [v0.8.6](https://github.com/nbd-wtf/trustedcoin/releases/tag/v0.8.6) (disabled - we have bitcoind)
 
 Tor always enabled: routes through 10.0.0.11:9050
@@ -131,8 +132,10 @@ The commands below assume you are in the project root and have the necessary per
 docker run --rm -it -v $(pwd)/stack-bitcoin/data/cln:~/.lightning/bitcoin -v /mnt/backup_cln:/backup_usb --entrypoint /usr/local/bin/backup/backup-cli lightningd-custom:latest init --lightning-dir ~/.lightning/bitcoin file:///backup_usb/backup.sqlite.bkp
 
 # CLN backup plugin - restore from backup file
-./backup-cli restore file:///mnt/external/location ~/.lightning/bitcoin/lightningd.sqlite3
 docker run --rm -it -v $(pwd)/stack-bitcoin/data/cln:~/.lightning/bitcoin -v /mnt/backup_cln:/backup_usb --entrypoint /usr/local/bin/backup/backup-cli lightningd-custom:latest restore file:///backup_usb/backup.sqlite.bkp --lightning-dir ~/.lightning/bitcoin
+
+# CLN backup plugin - compact backup file
+docker exec lightningd lightning-cli backup-compact
 
 # CLN not connecting to Bitcoin
 docker logs lightningd
@@ -183,9 +186,9 @@ All containers are isolated on Docker network `10.0.0.0/24`. External access onl
 | Core Lightning | v25.12.1 |
 | RTL | v0.15.8 |
 | **CLN Plugins:** |
-| clboss | [b827b258](https://github.com/ksedgwic/clboss/commit/b827b258a2607ec39985d46307d8c430e8e1caf4) |
-| watchtower-client | [be344ecc](https://github.com/talaia-labs/rust-teos/commit/be344ecc5286dd9436bf343d30954135da8ad4ac) |
-| backup | [cb3adab](https://github.com/lightningd/plugins/commit/cb3adabfcb95e802ff27be85a53a353150a4907d) |
+| clboss | [b827b258](https://github.com/ksedgwic/clboss/tree/b827b258a2607ec39985d46307d8c430e8e1caf4) |
+| watchtower-client | [be344ecc](https://github.com/talaia-labs/rust-teos/tree/be344ecc5286dd9436bf343d30954135da8ad4ac) |
+| backup | [cb3adab](https://github.com/lightningd/plugins/tree/cb3adabfcb95e802ff27be85a53a353150a4907d) |
 | trustedcoin | [v0.8.6](https://github.com/nbd-wtf/trustedcoin/releases/tag/v0.8.6) (disabled) |
 
 ## 📚 Resources
