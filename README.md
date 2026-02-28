@@ -15,8 +15,8 @@ Lightning nodes handle real funds. Software is provided as-is. **Use only at you
 
 ### Install
 ```bash
-chmod +x manage.sh
-./manage.sh up
+chmod +x bastion
+./bastion up
 ```
 
 **What happens:**
@@ -35,12 +35,12 @@ chmod +x manage.sh
 ## ⚙️ Commands
 
 ```bash
-./manage.sh up       # Start all stacks
-./manage.sh stop     # Stop services
-./manage.sh down     # Remove containers
-./manage.sh status   # Show containers
-./manage.sh audit    # Check node profitability
-./manage.sh logs     # Tail logs
+./bastion up       # Start all stacks
+./bastion stop     # Stop services
+./bastion down     # Remove containers
+./bastion status   # Show containers
+./bastion audit    # Check node profitability
+./bastion logs     # Tail logs
 ```
 
 ## 🌐 Access
@@ -61,7 +61,7 @@ chmod +x manage.sh
 
 ## 🛠️ Configuration
 
-`manage.sh` auto-generates `bastion.conf` on first run:
+`./bastion` auto-generates `bastion.conf` on first run:
 - **Interactive prompts:** Wireguard URL/port, CLN node alias
 - **Auto-generated:** TIMEZONE, PIHOLE_PASSWORD, USER_ID, GROUP_ID
 - **Symlinks:** Each stack references `../bastion.conf` via `.env`
