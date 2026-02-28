@@ -116,5 +116,5 @@ COPY --from=builder /usr/local/bin/watchtower-client /usr/local/bin/watchtower-c
 COPY --from=builder /usr/local/bin/backup /usr/local/bin/backup
 COPY --from=builder /usr/local/bin/trustedcoin /usr/local/bin/trustedcoin
 
-# Set entrypoint to lightningd binary
-ENTRYPOINT ["lightningd"]
+# Set entrypoint as the oficial lightningd image
+ENTRYPOINT ["/entrypoint.sh"]
