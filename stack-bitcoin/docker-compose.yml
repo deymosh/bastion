@@ -34,6 +34,8 @@ services:
       - --network=bitcoin
       - --log-level=info
       - --clboss-min-channel=1000000
+      - --clboss-max-rebalance-fee-ppm=200
+      - --clboss-auto-close=false
 
   tor:
     image: lncm/tor:latest
