@@ -22,7 +22,7 @@ RUN apt-get update && apt-get install -y \
     rm -rf /var/lib/apt/lists/*
 
 # Define clboss version
-ENV CLBOSS_COMMIT="b827b258a2607ec39985d46307d8c430e8e1caf4"
+ENV CLBOSS_COMMIT="401bbb79c9a51c0d4ca106cbf3618c4a3dc1725b"
 
 # Install clboss plugin
 RUN git clone https://github.com/ksedgwic/clboss.git /tmp/clboss_build && \

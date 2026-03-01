@@ -89,7 +89,7 @@ stack-*/data/                       # Volumes - in .gitignore
 
 All plugins included and enabled by default (except trustedcoin, disabled since we use bitcoind):
 
-- **clboss** - Channel autopilot ([b827b258](https://github.com/ksedgwic/clboss/tree/b827b258a2607ec39985d46307d8c430e8e1caf4))
+- **clboss** - Channel autopilot ([401bbb79](https://github.com/ksedgwic/clboss/tree/401bbb79c9a51c0d4ca106cbf3618c4a3dc1725b))
 - **watchtower-client** - TEOS breach watching ([be344ecc](https://github.com/talaia-labs/rust-teos/tree/be344ecc5286dd9436bf343d30954135da8ad4ac))
 - **backup** - Expects USB mount at `/mnt/backup_cln` ([cb3adab](https://github.com/lightningd/plugins/tree/cb3adabfcb95e802ff27be85a53a353150a4907d))
 - **trustedcoin** - [v0.8.6](https://github.com/nbd-wtf/trustedcoin/releases/tag/v0.8.6) (disabled - we have bitcoind)
@@ -186,7 +186,7 @@ All containers are isolated on Docker network `10.0.0.0/24`. External access onl
 | Core Lightning | v25.12.1 |
 | RTL | v0.15.8 |
 | **CLN Plugins:** |
-| clboss | [b827b258](https://github.com/ksedgwic/clboss/tree/b827b258a2607ec39985d46307d8c430e8e1caf4) |
+| clboss | [401bbb79](https://github.com/ksedgwic/clboss/tree/401bbb79c9a51c0d4ca106cbf3618c4a3dc1725b) |
 | watchtower-client | [be344ecc](https://github.com/talaia-labs/rust-teos/tree/be344ecc5286dd9436bf343d30954135da8ad4ac) |
 | backup | [cb3adab](https://github.com/lightningd/plugins/tree/cb3adabfcb95e802ff27be85a53a353150a4907d) |
 | trustedcoin | [v0.8.6](https://github.com/nbd-wtf/trustedcoin/releases/tag/v0.8.6) (disabled) |
