@@ -12,6 +12,11 @@ bitcoin-rpcuser=bitcoind.user
 bitcoin-rpcpassword=bitcoind.pass
 bitcoin-rpcconnect=10.0.0.12
 
+# Autoclean config (1 week in seconds, 1 month for expired invoices)
+autoclean-failedpays-age=604800
+autoclean-failedforwards-age=604800
+autoclean-expiredinvoices-age=2592000
+
 # Plugins config (careful CLBOSS can open channels and manage funds, so only use if you trust it)
 plugin=/usr/local/bin/clboss
 
