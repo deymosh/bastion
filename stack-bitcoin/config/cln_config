@@ -17,13 +17,16 @@ autoclean-failedpays-age=604800
 autoclean-failedforwards-age=604800
 autoclean-expiredinvoices-age=2592000
 
+# Backup config (native replication or backup plugin, use one of the following lines)
+wallet=sqlite3:///root/.lightning/bitcoin/lightningd.sqlite3:/backup_usb/lightningd.sqlite3
+# important-plugin=/usr/local/bin/backup/backup.py
+
 # Plugins config (careful CLBOSS can open channels and manage funds, so only use if you trust it)
 plugin=/usr/local/bin/clboss
 
-# Disable bcli and enable trustedcoin if you dont want to run bitcoind
-# disable-plugin=bcli
-# important-plugin=/usr/local/bin/trustedcoin
-important-plugin=/usr/local/bin/backup/backup.py
+# Use trustedcoin for both worlds, it uses bitcoind if available (helps with pruned bitcoind)
+disable-plugin=bcli
+important-plugin=/usr/local/bin/trustedcoin
 important-plugin=/usr/local/bin/watchtower-client
 
 # Network and proxy settings (Tor in this case)
