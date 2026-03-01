@@ -1,5 +1,15 @@
 #!/bin/bash
 
+################################################################################
+# BASTION - CLI Orchestrator
+#
+# This script is the main entry point for managing the BASTION stack.
+# It provides a simple CLI to start, stop, and monitor all services in the stack.
+#
+# Usage:
+#   $ ./bastion #COMMAND (empty for help)
+################################################################################
+
 # Import configuration and utilities
 if [ -f "./utils/config.sh" ]; then
     source ./utils/config.sh

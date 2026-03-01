@@ -1,5 +1,15 @@
 #!/bin/bash
 
+################################################################################
+# BASTION - TEOS Build Utility
+#
+# This script handles building the TEOS Docker image from the rust-teos submodule.
+# It checks if the image already exists and only rebuilds if necessary or if a force flag is provided.
+#
+# Usage:
+#   Used internally by the main script bastion. Not meant to be run directly.
+################################################################################
+
 # --- STYLING (Shared with main script) ---
 BOLD='\033[1m'
 CYAN='\033[0;36m'

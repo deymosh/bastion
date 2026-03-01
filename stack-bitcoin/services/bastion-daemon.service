@@ -1,0 +1,20 @@
+[Unit]
+Description=BASTION Node Master Management Service
+After=network.target docker.service
+# We add docker.service so it waits for the containers to exist
+
+[Service]
+Type=simple
+# Running as root to handle CLN root-owned files
+User=root
+# Change to setup folder
+WorkingDirectory=/bastion
+ExecStart=/bin/bash ./stack-bitcoin/services/bastion-daemon.sh
+Restart=always
+RestartSec=10
+# Standard output to journal (view with journalctl)
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

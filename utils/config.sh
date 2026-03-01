@@ -1,5 +1,17 @@
 #!/bin/bash
 
+################################################################################
+# BASTION - Configuration Loader
+#
+# This script handles loading and managing configuration variables 
+# for the BASTION project. It ensures that essential variables are set,
+# generates defaults where necessary, and provides a centralized way to
+# manage configuration across all stacks.
+#
+# Usage:
+#   Used internally by the main script bastion. Not meant to be run directly.
+################################################################################
+
 # --- CONFIGURATION ---
 PROJECT_NAME="BASTION"
 CONFIG_FILE="./bastion.conf"
