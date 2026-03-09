@@ -12,11 +12,12 @@
 # Usage:
 #   Use the provided bastion-daemon.service example to set up this script
 #   as a systemd service for automatic startup and management.
+#   Not intended to be run manually.
 ################################################################################
 
 # --- 1. Configuration & Paths ---
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-CLN_DATA_DIR="$SCRIPT_DIR/../data/cln"
+CLN_DATA_DIR="$SCRIPT_DIR/../stack-bitcoin/data/cln"
 BACKUP_DEST="/mnt/backup_cln"
 CLN_CONTAINER="lightningd"
 
@@ -26,6 +27,7 @@ SCB_HISTORY_DIR="$BACKUP_DEST/history"
 
 # Settings
 BACKUP_PLUGIN_COMPACT=false # Set to true if using backup plugin and want to compact it daily
+ENABLE_LXMF_BRIDGE=true # Set to true to enable the LXMF bridge (experimental)
 CHECK_INTERVAL=3600  # 1 hour in seconds
 LAST_MAINTENANCE_DATE=""
 
@@ -90,9 +92,33 @@ run_daily_maintenance() {
     fi
 }
 
+start_LXMF_bridge() {
+    if [ "$ENABLE_LXMF_BRIDGE" = true ]; then
+        echo "[$(date)] Starting LXMF Bridge (experimental)..."
+        
+        # Create a python virtual environment for the bridge
+        if [ ! -d "venv" ]; then
+            python3 -m venv venv
+        fi
+
+        source venv/bin/activate
+
+        # Install dependencies (if any)
+        pip install --upgrade pip
+        pip install RNS LXMF
+
+        # Start the bridge in the background
+        python services/lxmf-bridge.py &
+        echo "[$(date)] LXMF Bridge started."
+    else
+        echo "[$(date)] LXMF Bridge is disabled (ENABLE_LXMF_BRIDGE=false)."
+    fi
+}
+
 # --- 4. Main Execution Flow ---
 
 wait_for_cln
+start_LXMF_bridge
 
 # Ensure the SCB file exists before starting the loop
 while [ ! -f "$SCB_SOURCE" ]; do

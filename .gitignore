@@ -1,3 +1,4 @@
 bastion.conf
 stack-*/data
 stack-*/*.env
+venv
