@@ -27,7 +27,7 @@ SCB_HISTORY_DIR="$BACKUP_DEST/history"
 
 # Settings
 BACKUP_PLUGIN_COMPACT=false # Set to true if using backup plugin and want to compact it daily
-ENABLE_LXMF_BRIDGE=true # Set to true to enable the LXMF bridge (experimental)
+ENABLE_LXMF_BRIDGE=false # Set to true to enable the LXMF bridge (experimental)
 CHECK_INTERVAL=3600  # 1 hour in seconds
 LAST_MAINTENANCE_DATE=""
 
