@@ -34,7 +34,7 @@ services:
       - --network=bitcoin
       - --log-level=info
       - --clboss-min-channel=1000000
-      - --clboss-max-rebalance-fee-ppm=200
+      - --clboss-max-rebalance-fee-ppm=250
       - --clboss-auto-close=false
 
   tor:
@@ -49,6 +49,9 @@ services:
     volumes:
       - ./config/torrc:/etc/tor/torrc
       - ./data/tor:/data/.tor
+    ports:
+      - "9050:9050"
+      - "127.0.0.1:9051:9051"
     networks:
       net:
         ipv4_address: 10.0.0.11
