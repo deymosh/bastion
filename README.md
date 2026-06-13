@@ -45,19 +45,21 @@ chmod +x bastion
 
 ## 🌐 Access
 
-| Service | Port | Location |
-|---------|------|----------|
-| RTL (Lightning UI) | 3000 | http://localhost:3000 |
-| Grafana | 4001 | http://localhost:4001 |
-| Portainer | 4000 | https://localhost:4000 |
-| Prometheus | 9090 | http://localhost:9090 |
-| Pi-hole | 80 | http://localhost/admin |
-| Wireguard VPN | 51820/udp | External |
+| Service | Port | Location | Version |
+|---------|------|----------|---------|
+| RTL (Lightning UI) | 3000 | http://localhost:3000 | v0.15.8 |
+| Grafana | 4001 | http://localhost:4001 | latest |
+| Portainer | 4000 | https://localhost:4000 | latest |
+| Prometheus | 9090 | http://localhost:9090 | latest |
+| Pi-hole | 80 | http://localhost/admin | latest |
+| CLN REST API | 3001 | http://localhost:3001 | (CLN native) |
+| Wireguard VPN | 51820/udp | External | latest |
 
 **Defaults (change immediately):**
 - Grafana: `admin:admin`
 - Pi-hole: `admin:${PIHOLE_PASSWORD}`
 - Bitcoin RPC: `bitcoind.user:bitcoind.pass`
+- CLN REST API: Access via `http://localhost:3001`
 
 ## 🛠️ Configuration
 
@@ -80,21 +82,55 @@ stack-*/data/                       # Volumes - in .gitignore
 ### Bitcoin Core Defaults
 
 ```dockerfile
--rpcuser=bitcoind.user              # Change if desired, but update in CLN and RTL configs
--rpcpassword=bitcoind.pass          # Change if desired, but update in CLN and RTL configs
--prune=20000                        # ~20GB block storage
+-rpcuser=bitcoind.user              # RPC user (change if desired)
+-rpcpassword=bitcoind.pass          # RPC password (change if desired)
+-prune=20000                        # ~20GB block storage (adjust as needed)
+-txindex=0                          # Disabled (not needed for CLN)
+-rpcallowip=10.0.0.0/24             # Allow RPC from container network
+-rpcbind=0.0.0.0                    # Listen on all interfaces (container network)
 ```
+
+**Note:** RPC credentials must match those in `stack-bitcoin/config/cln_config` and RTL config.
 
 ### Core Lightning Plugins
 
-All plugins included and enabled by default (except trustedcoin, disabled since we use bitcoind):
+All plugins included and enabled by default:
 
-- **clboss** - Channel autopilot ([95d195f8](https://github.com/ksedgwic/clboss/tree/95d195f8baafa1aa22f7aa95fa1dd1fd26003583))
-- **watchtower-client** - TEOS breach watching ([be344ecc](https://github.com/talaia-labs/rust-teos/tree/be344ecc5286dd9436bf343d30954135da8ad4ac))
-- **backup** - Expects USB mount at `/mnt/backup_cln` ([cb3adab](https://github.com/lightningd/plugins/tree/cb3adabfcb95e802ff27be85a53a353150a4907d))
-- **trustedcoin** - [v0.8.6](https://github.com/nbd-wtf/trustedcoin/releases/tag/v0.8.6) (disabled - we have bitcoind)
+| Plugin | Commit | Purpose |
+|--------|--------|---------|
+| **clboss** | [95d195f8](https://github.com/ksedgwic/clboss/tree/95d195f8baafa1aa22f7aa95fa1dd1fd26003583) | Channel autopilot & rebalancing |
+| **watchtower-client** | [be344ecc](https://github.com/talaia-labs/rust-teos/tree/be344ecc5286dd9436bf343d30954135da8ad4ac) | TEOS breach watching |
+| **peerswap** | [23b32d3a](https://github.com/ElementsProject/peerswap/tree/23b32d3a1b1665c7c5e50e76d530fff5bf8be3d8) | Submarine swap rebalancing |
+| **backup** | [cb3adab](https://github.com/lightningd/plugins/tree/cb3adabfcb95e802ff27be85a53a353150a4907d) | Replication to USB/external |
+| **trustedcoin** | [v0.8.6](https://github.com/nbd-wtf/trustedcoin/releases/tag/v0.8.6) | Fee and block validity estimator; verifies block data and channel existence |
+| **darknet** | Local | Prefer .onion addresses for peers |
 
-Tor always enabled: routes through 10.0.0.11:9050
+**CLN Configuration:**
+```ini
+# Autopilot settings (clboss)
+--clboss-min-channel=1000000       # Minimum channel: 1M sats
+--clboss-max-rebalance-fee-ppm=250 # Max rebalancing fee
+--clboss-auto-close=false          # Don't auto-close channels
+
+# Autoclean settings (remove failed payments & invoices)
+autoclean-failedpays-age=604800    # Remove failed pays after 7 days
+autoclean-failedforwards-age=604800 # Remove failed forwards after 7 days
+autoclean-expiredinvoices-age=2592000 # Remove expired invoices after 30 days
+
+# Wallet & backup
+wallet=sqlite3:///root/.lightning/bitcoin/lightningd.sqlite3:/backup_usb/lightningd.sqlite3
+
+# Network settings
+proxy=10.0.0.11:9050               # Tor SOCKS proxy
+addr=statictor:10.0.0.11:9051      # Tor control port
+always-use-proxy=true              # Route all traffic through Tor
+bind-addr=0.0.0.0:9735             # Listen on all interfaces
+```
+
+**Important Plugins:**
+- `trustedcoin` - Critical for fee estimation and block validation (marked as `important-plugin`)
+- `watchtower-client` - Critical for channel security (marked as `important-plugin`)
+- `bcli` - Disabled in favor of trustedcoin
 
 ### TEOS Configuration
 

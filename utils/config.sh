@@ -73,6 +73,7 @@ load_secrets() {
         ["WIREGUARD_PEERS"]="1"
         ["USER_ID"]=$(id -u)
         ["GROUP_ID"]=$(id -g)
+        ["LXMF_ALLOWED_IDENTITY"]=""
     )
 
     for var in "${!DEFAULTS[@]}"; do

@@ -21,8 +21,12 @@ autoclean-expiredinvoices-age=2592000
 wallet=sqlite3:///root/.lightning/bitcoin/lightningd.sqlite3:/backup_usb/lightningd.sqlite3
 # important-plugin=/usr/local/bin/backup/backup.py
 
+# Custom plugin 'darknet' to prefer onion addresses for peers when available (optional, only if you want to use it)
+plugin=/usr/local/bin/darknet.py
+
 # Plugins config (careful CLBOSS can open channels and manage funds, so only use if you trust it)
 plugin=/usr/local/bin/clboss
+plugin=/usr/local/bin/peerswap
 
 # Use trustedcoin for both worlds, it uses bitcoind if available (helps with pruned bitcoind)
 disable-plugin=bcli

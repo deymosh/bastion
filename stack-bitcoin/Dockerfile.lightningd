@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y \
     autoconf-archive \
     libtool \
     curl \
+    wget \
     ca-certificates \
     pkg-config \
     protobuf-compiler \
@@ -52,6 +53,27 @@ RUN echo "--- Installing Backup Plugin ---" && \
     rm -rf /tmp/plugins && \
     echo "--- Backup Plugin installed successfully ---"
 
+## Define PeerSwap plugin version
+ENV PEERSWAP_COMMIT="23b32d3a1b1665c7c5e50e76d530fff5bf8be3d8"
+ENV GO_VERSION="1.23.0"
+
+# Install PeerSwap plugin
+RUN git clone https://github.com/ElementsProject/peerswap.git /tmp/peerswap_build && \
+    cd /tmp/peerswap_build && \
+    git checkout $PEERSWAP_COMMIT
+
+WORKDIR /tmp/peerswap_build
+RUN echo "--- Installing PeerSwap Plugin ---" && \
+    wget https://go.dev/dl/go$GO_VERSION.linux-amd64.tar.gz && \
+    tar -C /usr/local -xzf go$GO_VERSION.linux-amd64.tar.gz && \
+    export PATH=$PATH:/usr/local/go/bin && \
+    make cln-release && \
+    cp peerswap /usr/local/bin/peerswap && \
+    chmod +x /usr/local/bin/peerswap && \
+    cd /root && \
+    rm -rf /tmp/peerswap_build && \
+    echo "--- PeerSwap Plugin installed successfully ---"
+
 ## Define TEOS version
 ENV TEOS_COMMIT="be344ecc5286dd9436bf343d30954135da8ad4ac"
 
@@ -61,10 +83,9 @@ RUN git clone https://github.com/talaia-labs/rust-teos.git /tmp/teos_build && \
     git checkout $TEOS_COMMIT
 
 WORKDIR /tmp/teos_build
-RUN echo "--- Installing Rust Toolchain ---"; \
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y;
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y;
 
-RUN echo "--- Compiling TEOS Plugin ---"; \
+RUN echo "--- Installing TEOS Plugin ---"; \
     /root/.cargo/bin/cargo install --locked --path watchtower-plugin && \
     cp ~/.cargo/bin/watchtower-client /usr/local/bin/watchtower-client && \
     chmod +x /usr/local/bin/watchtower-client && \
@@ -116,6 +137,11 @@ COPY --from=builder /usr/local/bin/clboss /usr/local/bin/clboss
 COPY --from=builder /usr/local/bin/watchtower-client /usr/local/bin/watchtower-client
 COPY --from=builder /usr/local/bin/backup /usr/local/bin/backup
 COPY --from=builder /usr/local/bin/trustedcoin /usr/local/bin/trustedcoin
+COPY --from=builder /usr/local/bin/peerswap /usr/local/bin/peerswap
+
+# Copy custom plugin 'darknet' from the local directory
+COPY darknet.py /usr/local/bin/darknet.py
+RUN chmod +x /usr/local/bin/darknet.py
 
 # Set entrypoint as the oficial lightningd image
 ENTRYPOINT ["/entrypoint.sh"]

@@ -35,7 +35,7 @@ echo "[$(date)] BASTION Master Daemon started."
 
 # Start BASTION services
 echo "[$(date)] Launching BASTION stack..."
-./bastion up -d
+./bastion up
 
 # --- 2. Function: Wait for Lightningd ---
 wait_for_cln() {
@@ -108,7 +108,7 @@ start_LXMF_bridge() {
         pip install RNS LXMF
 
         # Start the bridge in the background
-        python services/lxmf-bridge.py &
+        python -u services/lxmf-bridge.py &
         echo "[$(date)] LXMF Bridge started."
     else
         echo "[$(date)] LXMF Bridge is disabled (ENABLE_LXMF_BRIDGE=false)."
