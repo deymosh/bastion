@@ -3,13 +3,12 @@ import sys
 import time
 import json
 import signal
-import urllib.error
 
 import RNS
 import LXMF
+import requests
 from stem.control import Controller
 from stem.connection import authenticate_safecookie
-from urllib.request import ProxyHandler, build_opener, Request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from clboss_parser import CLBOSSStatus, extract_msat_value
@@ -43,6 +42,14 @@ RNS_IDENTITY_DISPLAY_NAME = "Bastion Bridge"
 MEMPOOL_API_URL = "https://mempool.space/api/v1/lightning/nodes/{}"
 MEMPOOL_NODE_URL = "https://mempool.space/es/lightning/node/{}"
 ONION_KEY_TYPE = "ED25519-V3"
+
+# Persistent requests session for repeated Tor SOCKS usage
+TOR_REQUESTS_SESSION = requests.Session()
+TOR_REQUESTS_SESSION.proxies.update({
+    'http': TOR_SOCKS_PROXY,
+    'https': TOR_SOCKS_PROXY,
+})
+TOR_REQUESTS_SESSION.headers.update({'User-Agent': 'Mozilla/5.0'})
 
 # Use this to debug the packet lifecycle
 RNS.loglevel = RNS_LOG_LEVEL 
@@ -149,17 +156,15 @@ def setup_onion():
         return None
 
 def get_node_alias(node_id: str) -> str:
-    """Fetch node alias from mempool.space API, with fallback to node_id"""
+    """Fetch node alias from mempool.space API over Tor SOCKS proxy."""
     try:
         url = MEMPOOL_API_URL.format(node_id)
-        proxy_handler = ProxyHandler({'http': TOR_SOCKS_PROXY, 'https': TOR_SOCKS_PROXY})
-        opener = build_opener(proxy_handler)
-        req = Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with opener.open(req, timeout=5) as response:
-            data = json.loads(response.read().decode())
-            alias = data.get('alias', node_id[:14])
-            return alias if alias else node_id[:14]
-    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, Exception):
+        response = TOR_REQUESTS_SESSION.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        alias = data.get('alias', node_id[:14])
+        return alias if alias else node_id[:14]
+    except (requests.RequestException, json.JSONDecodeError, Exception):
         # Return truncated node_id if API call fails
         return node_id[:14]
 

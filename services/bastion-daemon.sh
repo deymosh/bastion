@@ -105,7 +105,7 @@ start_LXMF_bridge() {
 
         # Install dependencies (if any)
         pip install --upgrade pip
-        pip install RNS LXMF
+        pip install requests[socks] RNS LXMF
 
         # Start the bridge in the background
         python -u services/lxmf-bridge.py &
