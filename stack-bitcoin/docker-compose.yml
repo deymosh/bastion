@@ -79,6 +79,8 @@ services:
       - -txindex=0          # Saves space (not needed for CLN)
       - -prune=20000        # Keeps ~20GB of blocks (adjust if you want more)
       - -printtoconsole=1
+      - -proxy=tor:9050     # Route all P2P traffic through Tor
+      - -listen=0           # Disable incoming P2P connections
       - -rpcuser=bitcoind.user      # Put the user you want
       - -rpcpassword=bitcoind.pass  # Put the password you want
       - -rpcallowip=10.0.0.0/24
