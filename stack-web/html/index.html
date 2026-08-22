@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -128,7 +128,7 @@
 <div class="grid" id="grid"></div>
 
 <footer>
-  Conectado como <code id="host"></code>
+  Connected as <code id="host"></code>
 </footer>
 
 <script>
@@ -141,11 +141,11 @@
   };
 
   const services = [
-    { name: 'RTL', desc: 'Panel Lightning', icon: 'lightning', port: 3000, protocol: null, path: '' },
-    { name: 'Grafana', desc: 'Métricas y dashboards', icon: 'chart', port: 4001, protocol: null, path: '' },
-    { name: 'Portainer', desc: 'Gestión de contenedores', icon: 'box', port: 4000, protocol: 'https:', path: '' },
-    { name: 'Prometheus', desc: 'Series temporales', icon: 'pulse', port: 9090, protocol: null, path: '' },
-    { name: 'Pi-hole', desc: 'DNS y bloqueo de anuncios', icon: 'shield', port: 8081, protocol: null, path: '/admin' },
+    { name: 'RTL', desc: 'Lightning panel', icon: 'lightning', port: 3000, protocol: null, path: '' },
+    { name: 'Grafana', desc: 'Metrics & dashboards', icon: 'chart', port: 4001, protocol: null, path: '' },
+    { name: 'Portainer', desc: 'Container management', icon: 'box', port: 4000, protocol: 'https:', path: '' },
+    { name: 'Prometheus', desc: 'Time-series metrics', icon: 'pulse', port: 9090, protocol: null, path: '' },
+    { name: 'Pi-hole', desc: 'DNS & ad blocking', icon: 'shield', port: 8081, protocol: null, path: '/admin' },
   ];
 
   const host = location.hostname;
