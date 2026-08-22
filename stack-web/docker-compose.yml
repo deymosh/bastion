@@ -1,0 +1,19 @@
+name: stack-web
+
+services:
+  hub:
+    image: nginx:alpine
+    container_name: hub
+    restart: unless-stopped
+    volumes:
+      - ./html:/usr/share/nginx/html:ro
+    ports:
+      - "80:80"
+    networks:
+      net:
+        ipv4_address: 10.0.0.30
+
+networks:
+  net:
+    name: bastion-network
+    external: true

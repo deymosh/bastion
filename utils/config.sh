@@ -16,7 +16,7 @@
 PROJECT_NAME="BASTION"
 CONFIG_FILE="./bastion.conf"
 # Deployment order is crucial: Network must be first.
-STACKS=("stack-network" "stack-bitcoin" "stack-monitor")
+STACKS=("stack-network" "stack-bitcoin" "stack-monitor" "stack-web")
 # Path to the python audit script
 AUDIT_SCRIPT="./stack-bitcoin/scripts/node-audit.py"
 # Path to the TEOS build utility

@@ -31,6 +31,7 @@ chmod +x bastion
 | **network** | unbound DNS, wireguard VPN, pi-hole | 10.0.0.2-3 |
 | **bitcoin** | bitcoind, lightningd, tor, rtl, teosd | 10.0.0.10-14 |
 | **monitor** | prometheus, grafana, portainer, node-exporter | 10.0.0.20-23 |
+| **web** | hub (landing page) | 10.0.0.30 |
 
 ## ⚙️ Commands
 
@@ -47,13 +48,16 @@ chmod +x bastion
 
 | Service | Port | Location | Version |
 |---------|------|----------|---------|
+| **Hub** (this app's landing page) | 80 | http://localhost | - |
 | RTL (Lightning UI) | 3000 | http://localhost:3000 | v0.15.8 |
 | Grafana | 4001 | http://localhost:4001 | latest |
 | Portainer | 4000 | https://localhost:4000 | latest |
 | Prometheus | 9090 | http://localhost:9090 | latest |
-| Pi-hole | 80 | http://localhost/admin | latest |
+| Pi-hole | 8081 | http://localhost:8081/admin | latest |
 | CLN REST API | 3001 | http://localhost:3001 | (CLN native) |
 | Wireguard VPN | 51820/udp | External | latest |
+
+The Hub links to every panel above using whatever hostname you're currently browsing with (localhost, LAN IP, Wireguard IP, or a Tor address), so you don't need to remember each port.
 
 **Defaults (change immediately):**
 - Grafana: `admin:admin`
@@ -74,6 +78,7 @@ chmod +x bastion
 stack-bitcoin/docker-compose.yml    # Edit RPC user/pass, pruning settings
 stack-bitcoin/config/cln_config     # CLN configuration (alias, plugins, proxy)
 stack-network/docker-compose.yml    # Wireguard server config
+stack-web/html/index.html           # Hub landing page (edit to add/remove panels)
 bastion.conf                        # GENERATED - in .gitignore
 stack-*/.env                        # SYMLINKS - in .gitignore
 stack-*/data/                       # Volumes - in .gitignore

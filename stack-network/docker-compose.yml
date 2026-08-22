@@ -12,6 +12,7 @@ services:
       - TZ=${TIMEZONE}
       - FTLCONF_webserver_api_password=${PIHOLE_PASSWORD}
       - FTLCONF_dns_upstreams=10.0.0.2#53
+      - FTLCONF_webserver_port=8081o,443os,[::]:8081o,[::]:443os
     volumes:
       - './data/etc-pihole:/etc/pihole'
       - './data/etc-dnsmasq.d:/etc/dnsmasq.d'
