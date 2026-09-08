@@ -1,0 +1,56 @@
+ARG CCR_REF=fix/log-body.worker.js
+ARG CCR_REPOSITORY=https://github.com/deymosh/claude-code-router.git
+
+FROM node:22-bookworm AS source
+ARG CCR_REF
+ARG CCR_REPOSITORY
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && git clone --depth 1 --branch "${CCR_REF}" "${CCR_REPOSITORY}" /src
+
+WORKDIR /src
+RUN npm ci && npm run build:docker
+
+FROM node:22-bookworm-slim AS production-deps
+WORKDIR /src
+COPY --from=source /src/package.json /src/package-lock.json ./
+COPY --from=source /src/packages/core/package.json packages/core/package.json
+RUN npm ci --omit=dev --workspace=@claude-code-router/core --include-workspace-root=false \
+    && npm cache clean --force
+
+FROM node:22-bookworm-slim AS runtime
+ENV NODE_ENV=production \
+    CCR_DATA_DIR=/data \
+    CCR_WEB_HOST=127.0.0.1 \
+    CCR_WEB_PORT=3459 \
+    CCR_NGINX_PORT=8080 \
+    CCR_GATEWAY_HOST=0.0.0.0 \
+    CCR_GATEWAY_PORT=3456 \
+    CCR_GATEWAY_CORE_PORT=3457 \
+    CCR_PUBLIC_HOST=ccr \
+    CCR_PUBLIC_PORT=3458 \
+    HOME=/data
+
+WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libstdc++6 nginx \
+    && npm install --global @anthropic-ai/claude-code \
+    && rm -rf /var/lib/apt/lists/* /usr/local/lib/node_modules/npm /usr/local/include/node
+
+COPY --from=source /src/package.json /src/package-lock.json ./
+COPY --from=production-deps /src/node_modules ./node_modules
+COPY --from=source /src/packages/core/dist ./packages/core/dist
+COPY --from=source /src/packages/ui/dist/renderer /usr/share/nginx/html
+COPY --from=source /src/docker/entrypoint.sh /usr/local/bin/ccr-entrypoint
+COPY --from=source /src/docker/pm2.config.cjs ./docker/pm2.config.cjs
+
+RUN chmod 0755 /usr/local/bin/ccr-entrypoint \
+    && mkdir -p /data /run/nginx /var/lib/nginx /var/log/nginx
+
+VOLUME ["/data"]
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD node -e "fetch('http://127.0.0.1:8080/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+ENTRYPOINT ["ccr-entrypoint"]

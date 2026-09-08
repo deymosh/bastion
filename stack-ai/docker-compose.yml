@@ -1,0 +1,72 @@
+name: stack-ai
+
+services:
+  ccr:
+    build:
+      context: .
+      dockerfile: Dockerfile.ccr
+      args:
+        CCR_REF: fix/log-body.worker.js
+    image: bastion-claude-code-router:local
+    container_name: ccr
+    restart: unless-stopped
+    environment:
+      CCR_GATEWAY_HOST: 0.0.0.0
+      CCR_WEB_HOST: 127.0.0.1
+      CCR_PUBLIC_HOST: 127.0.0.1
+      CCR_PUBLIC_PORT: 3458
+      CCR_WEB_AUTH_TOKEN: ${CCR_WEB_AUTH_TOKEN}
+      CLAUDE_CONFIG_DIR: /data/.claude
+    volumes:
+      - ./data/ccr:/data
+    ports:
+      - "127.0.0.1:3458:8080"
+    networks:
+      net:
+        ipv4_address: 10.0.0.40
+
+  codedeck-bridge:
+    image: ghcr.io/deymosh/codedeck-plus-bridge:v0.11.1
+    container_name: codedeck-bridge
+    restart: unless-stopped
+    depends_on:
+      - ccr
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      NODE_ENV: production
+      GIT_USER: ${GIT_USER}
+      GIT_EMAIL: ${GIT_EMAIL}
+      GIT_REPO: ${GIT_REPO}
+      CODEDECK_RELAYS: ${CODEDECK_RELAYS}
+      CODEDECK_TOR_PROXY_URL: ${CODEDECK_TOR_PROXY_URL}
+      ANTHROPIC_BASE_URL: http://ccr:8080
+    secrets:
+      - source: claude_code_oauth_token
+        target: claude_code_oauth_token
+        uid: "1000"
+        gid: "1000"
+        mode: 0440
+      - source: github_token
+        target: github_token
+        uid: "1000"
+        gid: "1000"
+        mode: 0440
+    volumes:
+      - ./data/codedeck:/data
+    networks:
+      net:
+        ipv4_address: 10.0.0.41
+
+secrets:
+  claude_code_oauth_token:
+    environment: CLAUDE_CODE_OAUTH_TOKEN
+  github_token:
+    environment: GITHUB_TOKEN
+
+networks:
+  net:
+    name: bastion-network
+    external: true
