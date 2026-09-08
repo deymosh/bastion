@@ -1,6 +1,26 @@
-# 🏴‍☠️ BASTION - Bitcoin & Lightning Infrastructure
+<div align="center">
 
-Complete Docker infrastructure for running a Bitcoin node with Core Lightning, private DNS, VPN, and monitoring.
+<img src="stack-web/html/favicon.svg" alt="Bastion" width="96" height="96">
+
+# BASTION
+
+### Sovereign Infrastructure, Operations &amp; AI
+
+Self-hosted systems for private networking, Bitcoin and Lightning, observability,
+and local AI workflows.
+
+</div>
+
+---
+
+## What It Is
+
+Bastion is a deliberate Docker environment for the services that matter:
+
+- A guarded network edge with private DNS and WireGuard.
+- Bitcoin, Core Lightning, Tor, TEOS, swaps, automation, and backups.
+- Monitoring, administration, and a single operations Hub.
+- An AI control plane built around Claude Code Router and CodeDeck+.
 
 ## ⚠️ Disclaimer
 
@@ -22,16 +42,25 @@ chmod +x bastion
 **What happens:**
 - Generates `bastion.conf` (auto-prompted for Wireguard URL, port, CLN alias)
 - Creates `.env` symlinks → `bastion.conf` (one source of truth)
-- Deploys: network → bitcoin → monitor
+- Deploys: network → bitcoin → monitor → web → AI
 
-## 📦 Stacks
+For a single stack, use Docker Compose directly. The network stack must be running
+before stacks that use `bastion-network`:
+
+```bash
+docker compose -f ./stack-network/docker-compose.yml up -d
+docker compose -f ./stack-ai/docker-compose.yml up -d
+```
+
+## 📦 Bastion Stacks
 
 | Stack | Services | IPs |
 |-------|----------|-----|
-| **network** | unbound DNS, wireguard VPN, pi-hole | 10.0.0.2-3 |
-| **bitcoin** | bitcoind, lightningd, tor, rtl, teosd | 10.0.0.10-14 |
+| **network** | unbound DNS, WireGuard VPN, Pi-hole | 10.0.0.2-3 |
+| **bitcoin** | bitcoind, lightningd, Tor, RTL, TEOS | 10.0.0.10-14 |
 | **monitor** | prometheus, grafana, portainer, node-exporter | 10.0.0.20-23 |
-| **web** | hub (landing page) | 10.0.0.30 |
+| **web** | Bastion operations hub | 10.0.0.30 |
+| **ai** | Claude Code Router, CodeDeck+ bridge | 10.0.0.40-41 |
 
 ## ⚙️ Commands
 
@@ -44,11 +73,17 @@ chmod +x bastion
 ./bastion logs     # Tail logs
 ```
 
+Run one stack:
+
+```bash
+docker compose -f ./stack-<name>/docker-compose.yml up -d
+```
+
 ## 🌐 Access
 
 | Service | Port | Location | Version |
 |---------|------|----------|---------|
-| **Hub** (this app's landing page) | 80 | http://localhost | - |
+| **Hub** (Bastion operations hub) | 80 | http://localhost | - |
 | RTL (Lightning UI) | 3000 | http://localhost:3000 | v0.15.8 |
 | Grafana | 4001 | http://localhost:4001 | latest |
 | Portainer | 4000 | https://localhost:4000 | latest |
@@ -56,8 +91,9 @@ chmod +x bastion
 | Pi-hole | 8081 | http://localhost:8081/admin | latest |
 | CLN REST API | 3001 | http://localhost:3001 | (CLN native) |
 | Wireguard VPN | 51820/udp | External | latest |
+| CCR management UI | 3458 | http://localhost:3458 | pinned fix branch |
 
-The Hub links to every panel above using whatever hostname you're currently browsing with (localhost, LAN IP, Wireguard IP, or a Tor address), so you don't need to remember each port.
+The Hub links to the available panels above using whatever hostname you're currently browsing with (localhost, LAN IP, WireGuard IP, or a Tor address), so you don't need to remember each port. CCR is included in the Hub, remains protected by its own web authentication, and is host-local by design at `127.0.0.1:3458`.
 
 **Defaults (change immediately):**
 - Grafana: `admin:admin`
@@ -67,10 +103,15 @@ The Hub links to every panel above using whatever hostname you're currently brow
 
 ## 🛠️ Configuration
 
-`./bastion` auto-generates `bastion.conf` on first run:
+`./bastion` creates and maintains an organized `bastion.conf`:
 - **Interactive prompts:** Wireguard URL/port, CLN node alias
-- **Auto-generated:** TIMEZONE, PIHOLE_PASSWORD, USER_ID, GROUP_ID
-- **Symlinks:** Each stack references `../bastion.conf` via `.env`
+- **Auto-generated:** TIMEZONE, PIHOLE_PASSWORD, USER_ID, GROUP_ID, CCR web token
+- **AI settings:** CodeDeck relay, Tor proxy, Git, Claude, and GitHub variables
+- **Idempotent:** managed variables are rewritten without duplicates on repeated runs
+- **Symlinks:** Each stack references `../bastion.conf` via `.env` on Linux
+
+On Windows, use a real `.env` file in each stack directory if symlinks are not
+enabled. Keep credentials out of Git in every environment.
 
 ### Key Files
 
@@ -82,6 +123,36 @@ stack-web/html/index.html           # Hub landing page (edit to add/remove panel
 bastion.conf                        # GENERATED - in .gitignore
 stack-*/.env                        # SYMLINKS - in .gitignore
 stack-*/data/                       # Volumes - in .gitignore
+stack-ai/docker-compose.yml        # CCR + CodeDeck+ integration
+stack-ai/Dockerfile.ccr             # CCR fix branch plus Claude Code
+```
+
+### AI Stack
+
+The AI stack builds Claude Code Router from the `fix/log-body.worker.js` branch of
+`deymosh/claude-code-router`, including its Docker worker fix. CCR includes Claude
+Code and runs as root because its upstream Docker entrypoint writes the Nginx
+configuration at startup. CodeDeck+ uses the published
+`ghcr.io/deymosh/codedeck-plus-bridge:v0.11.1` image, runs as its own non-root user,
+and routes Claude Code requests through CCR at `http://ccr:8080`.
+
+AI state is persisted under `stack-ai/data/`. CCR provider credentials are configured
+in the CCR UI; CodeDeck's Claude OAuth token is a separate credential used by the
+bridge.
+
+Before starting Bastion, add these values to the generated `bastion.conf`:
+
+```bash
+CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat-...
+GITHUB_TOKEN=                 # optional
+CODEDECK_RELAYS=wss://your-trusted-relay.example
+```
+
+CodeDeck relay connections use Bastion's existing Tor service at
+`socks5h://tor:9050` by default. Pair the Android app by reading the bridge logs:
+
+```bash
+docker logs codedeck-bridge
 ```
 
 ### Bitcoin Core Defaults
@@ -203,7 +274,7 @@ docker stats
 df -h
 ```
 
-## 🔒 Security
+## 🔒 Security and Boundaries
 
 All containers are isolated on Docker network `10.0.0.0/24`. External access only via:
 - **Wireguard VPN** (51820/udp)
@@ -213,6 +284,8 @@ All containers are isolated on Docker network `10.0.0.0/24`. External access onl
 **Internal isolation:**
 - Bitcoin RPC: `10.0.0.12:8332` (Docker network only)
 - CLN REST: `10.0.0.10:3001` (Docker network only)
+- CCR gateway: `ccr:8080` (Docker network only; management UI is localhost-published)
+- CodeDeck bridge: no published host port; relay traffic uses the shared Docker network
 
 **Recommended:**
 - Change default passwords (Grafana: admin:admin, Pi-hole, Bitcoin RPC)
@@ -226,6 +299,8 @@ All containers are isolated on Docker network `10.0.0.0/24`. External access onl
 | Bitcoin Core | v26.0 |
 | Core Lightning | v25.12.1 |
 | RTL | v0.15.8 |
+| Claude Code Router | `fix/log-body.worker.js` |
+| CodeDeck+ bridge | v0.11.1 |
 | **CLN Plugins:** |
 | clboss | [95d195f8](https://github.com/ksedgwic/clboss/tree/95d195f8baafa1aa22f7aa95fa1dd1fd26003583) |
 | watchtower-client | [be344ecc](https://github.com/talaia-labs/rust-teos/tree/be344ecc5286dd9436bf343d30954135da8ad4ac) |
