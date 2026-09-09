@@ -7,7 +7,8 @@
 # never a gate. Set CCR_TOKEN_REFRESH=0 to skip it entirely.
 set -eu
 
-REFRESHER="/usr/local/bin/ccr-token-refresher.mjs"
+# The refresher ships next to this wrapper (both land in /usr/local/bin).
+REFRESHER="$(dirname "$0")/ccr-token-refresher.mjs"
 
 if [ "${CCR_TOKEN_REFRESH:-1}" = "1" ] && [ -f "$REFRESHER" ]; then
     echo "[ccr-entrypoint-wrapper] starting OAuth token refresher (idle until an OAuth credentials file appears)"
