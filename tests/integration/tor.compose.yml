@@ -1,0 +1,59 @@
+# Hermetic environment for the hidden-service reachability test.
+#
+# Builds the real Tor image from stack-network/Dockerfile.tor and runs it with
+# a torrc derived from stack-network/config/torrc (the test harness rewrites the
+# 10.254.x transit addresses to the 10.253.x range below so the subnet can't
+# collide with a running Bastion). Mock listeners sit where CLN and TEOS
+# advertise their onion forward targets, plus one on a separate subnet. The
+# test asserts, from inside the tor container, which of those it can open a TCP
+# connection to - that connection is the last hop Tor makes for an inbound
+# onion stream.
+#
+# Own project name + own private subnets: nothing here touches a real stack.
+name: bastion-hs-test
+
+services:
+  tor:
+    build:
+      context: ../../stack-network
+      dockerfile: Dockerfile.tor
+    image: bastion-hs-test-tor:latest
+    volumes:
+      - ${HS_TEST_TORRC:-./torrc.generated}:/etc/tor/torrc:ro
+      - tor-data:/data/.tor
+    healthcheck:
+      test: ["CMD", "timeout", "5", "bash", "-c", "cat < /dev/null > /dev/tcp/10.253.0.2/9050"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+    networks:
+      transit:
+        ipv4_address: 10.253.0.2
+
+  # alpine/socat: socat is the ENTRYPOINT, no `apk add`, no shell - the mock is
+  # listening the instant the container starts (deterministic, no network pull
+  # at runtime). A plain accept-and-close is all the reachability probe needs.
+  cln_mock:                 # CLN's pinned transit slot (cln_config bind-addr, -> .10)
+    image: alpine/socat:1.8.1.3
+    command: ["-T1", "TCP-LISTEN:9735,fork,reuseaddr", "SYSTEM:true"]
+    networks: { transit: { ipv4_address: 10.253.0.10 } }
+
+  teos_mock:               # TEOS's pinned transit slot (teos.toml api_bind, -> .11)
+    image: alpine/socat:1.8.1.3
+    command: ["-T1", "TCP-LISTEN:9814,fork,reuseaddr", "SYSTEM:true"]
+    networks: { transit: { ipv4_address: 10.253.0.11 } }
+
+  btc_mock:               # a per-stack-subnet address: tor must NOT reach this
+    image: alpine/socat:1.8.1.3
+    command: ["-T1", "TCP-LISTEN:9814,fork,reuseaddr", "SYSTEM:true"]
+    networks: { isolated: { ipv4_address: 10.19.0.5 } }
+
+networks:
+  transit:
+    ipam: { config: [{ subnet: 10.253.0.0/24 }] }
+  isolated:
+    ipam: { config: [{ subnet: 10.19.0.0/24 }] }
+
+volumes:
+  tor-data:

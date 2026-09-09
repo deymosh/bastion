@@ -1,0 +1,72 @@
+#!/usr/sbin/nft -f
+#
+# Bastion reference host firewall (nftables).
+#
+# Bastion publishes its Hub services on 0.0.0.0 by design so they are reachable
+# from WireGuard, from localhost, and from the trusted LAN. The HOST FIREWALL is
+# the access-control layer - this file is a starting point, NOT optional in
+# production. Adjust the three placeholders, review, then:
+#
+#   sudo cp firewall.example.nft /etc/nftables.conf   # (or an include)
+#   sudo nft -c -f /etc/nftables.conf                 # syntax check
+#   sudo systemctl enable --now nftables
+#
+# It denies the Hub ports from anywhere that is not WireGuard or the LAN, and in
+# particular from any WAN interface / port-forward. It does NOT touch outbound
+# traffic or the WireGuard listener itself (51820/udp must stay open to the WAN).
+
+define WAN_IF     = "eth0"                 # the interface facing the internet / router
+define LAN_SUBNET = 192.168.1.0/24         # your trusted LAN
+define WG_SUBNET  = 10.13.13.0/24          # WireGuard INTERNAL_SUBNET (stack-network compose)
+
+# Hub service ports (host side). Keep in sync with the Access table in README.md.
+# 8081 is Pi-hole's admin UI (Pi-hole runs network_mode: host, Linux only).
+define HUB_PORTS  = { 80, 3000, 3001, 3458, 4000, 4001, 8081, 9090 }
+
+table inet bastion {
+    chain input {
+        type filter hook input priority filter; policy drop;
+
+        iif "lo" accept
+        ct state established,related accept
+        ct state invalid drop
+
+        # ICMP / ping - trim to taste
+        ip protocol icmp accept
+        ip6 nexthdr ipv6-icmp accept
+
+        # WireGuard must be reachable from the WAN
+        udp dport 51820 accept
+
+        # SSH - restrict to LAN + WireGuard (edit if you expose it elsewhere)
+        tcp dport 22 ip saddr { $LAN_SUBNET, $WG_SUBNET } accept
+
+        # Hub services: WireGuard + LAN only, everything else dropped.
+        tcp dport $HUB_PORTS ip saddr { $LAN_SUBNET, $WG_SUBNET } accept
+        tcp dport $HUB_PORTS iifname $WAN_IF drop
+        tcp dport $HUB_PORTS drop
+
+        # Pi-hole DNS (network_mode: host). Keep ONLY if the WG/LAN clients
+        # resolve through this host - the bastion.node record lives here.
+        # Drop these two lines if your DNS is elsewhere.
+        tcp dport 53 ip saddr { $LAN_SUBNET, $WG_SUBNET } accept
+        udp dport 53 ip saddr { $LAN_SUBNET, $WG_SUBNET } accept
+        tcp dport 53 drop
+        udp dport 53 drop
+
+        # Extra safety: Bitcoin/Lightning/Tor internals are never published by
+        # Bastion, but block them explicitly in case a future change slips.
+        tcp dport { 8332, 9050, 9051, 9735, 9814, 50051 } drop
+    }
+
+    chain forward {
+        type filter hook forward priority filter; policy drop;
+        ct state established,related accept
+        # Docker manages its own forward rules; if you use Docker's iptables
+        # integration, let it. This chain is only a backstop.
+    }
+
+    chain output {
+        type filter hook output priority filter; policy accept;
+    }
+}

@@ -1,0 +1,12 @@
+# Tor client services for Bastion's transit network
+SocksPort 10.254.0.2:9050
+ControlPort 10.254.0.2:9051
+
+# Cookie authentication shared read-only with CLN and TEOS.
+# CookieAuthFile must be set explicitly for CookieAuthFileGroupReadable to take
+# effect (tor warns and ignores the flag otherwise). The file lands in the
+# DataDirectory, which the Bastion image creates as gid 1000, mode 0750.
+CookieAuthentication 1
+CookieAuthFile /data/.tor/control_auth_cookie
+CookieAuthFileGroupReadable 1
+DataDirectoryGroupReadable 1

@@ -10,8 +10,8 @@ available on the current host.
 | Hub | `http://localhost` | Service directory and access point |
 
 The Hub includes RTL, Grafana, Portainer, Prometheus, Pi-hole, and CCR. CCR is
-published only on `127.0.0.1:3458`, so its Hub link is intended for use from the
-Bastion host.
+published on host port `3458`, so its Hub link works from the Bastion host and
+from clients connected through WireGuard.
 
 ## Commands
 

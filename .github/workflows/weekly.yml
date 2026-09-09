@@ -1,0 +1,34 @@
+name: Weekly
+
+# Catches regressions that land with no commit from us - a pinned base image
+# that moved, a build dependency that vanished, an upstream behaviour change.
+# Does NOT block merges.
+#
+# One job on purpose: it builds the images and immediately runs the CLN
+# real-config boot against the freshly built lightningd-custom, all local to
+# the run. Nothing is pushed to a registry and no artifacts are uploaded, so it
+# consumes no account storage; public-repo Actions minutes are unmetered.
+#
+# GitHub auto-disables scheduled workflows after 60 days of repo inactivity.
+
+on:
+  schedule:
+    - cron: "0 4 * * 1" # Mondays 04:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: weekly
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  weekly:
+    name: image builds + CLN real-config boot
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - run: bash tests/run.sh weekly

@@ -6,27 +6,54 @@ services:
       context: .
       dockerfile: Dockerfile.ccr
       args:
-        CCR_REF: fix/log-body.worker.js
-    image: bastion-claude-code-router:local
+        # Pin to a commit, not a branch: the branch head moves under us. Bump
+        # with `gh api repos/deymosh/claude-code-router/commits/<branch> --jq .sha`.
+        CCR_REF: ec9fc53436d4602b9617ee68269895f9e141aa99
+    image: bastion-claude-code-router:ec9fc53
     container_name: ccr
     restart: unless-stopped
+    # ccr-entrypoint-wrapper.sh aligns ownership then gosu-drops to uid/gid 1000.
+    # The added caps are only used at startup by the root wrapper (chown + the
+    # priv drop); the long-running nginx/pm2/node processes hold none.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
     environment:
+      # The wrapper starts as root, chowns the writable paths + data volume to
+      # this uid/gid, then gosu-drops to it. Matches the ./data/ccr owner.
+      PUID: ${USER_ID:-1000}
+      PGID: ${GROUP_ID:-1000}
       CCR_GATEWAY_HOST: 0.0.0.0
       CCR_WEB_HOST: 127.0.0.1
       CCR_PUBLIC_HOST: 127.0.0.1
       CCR_PUBLIC_PORT: 3458
-      CCR_WEB_AUTH_TOKEN: ${CCR_WEB_AUTH_TOKEN}
+      # CCR_WEB_AUTH_TOKEN is NOT an env var - ccr-entrypoint-wrapper.sh exports
+      # it from /run/secrets/ccr_web_auth_token (falls back to the env if set).
       CLAUDE_CONFIG_DIR: /data/.claude
+      # OAuth token refresher (keeps .credentials.json fresh; no restart needed).
+      CCR_TOKEN_REFRESH: ${CCR_TOKEN_REFRESH:-1}
+      CCR_REFRESH_INTERVAL: ${CCR_REFRESH_INTERVAL:-300}
+      CCR_REFRESH_SKEW_MS: ${CCR_REFRESH_SKEW_MS:-1800000}
     volumes:
       - ./data/ccr:/data
+    secrets:
+      - ccr_web_auth_token
     ports:
-      - "127.0.0.1:3458:8080"
+      - "3458:8080"
     networks:
       net:
-        ipv4_address: 10.0.0.40
+        ipv4_address: 10.50.0.2
 
   codedeck-bridge:
-    image: ghcr.io/deymosh/codedeck-plus-bridge:v0.11.1
+    # Pinned by digest (version tag kept for readability). Pinned 2026-09-09.
+    image: ghcr.io/deymosh/codedeck-plus-bridge:v0.11.1@sha256:c7cb907258cc3503027d9b344d510411a7ed2e88f98a5258af214f0626b06c74
     container_name: codedeck-bridge
     restart: unless-stopped
     depends_on:
@@ -43,14 +70,15 @@ services:
       CODEDECK_RELAYS: ${CODEDECK_RELAYS}
       CODEDECK_TOR_PROXY_URL: ${CODEDECK_TOR_PROXY_URL}
       ANTHROPIC_BASE_URL: http://ccr:8080
+      # Let Claude Code populate its /model picker from the gateway's /v1/models.
+      # No request is made if CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC is set.
+      CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: ${CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY:-1}
     secrets:
       - source: claude_code_oauth_token
-        target: claude_code_oauth_token
         uid: "1000"
         gid: "1000"
         mode: 0440
       - source: github_token
-        target: github_token
         uid: "1000"
         gid: "1000"
         mode: 0440
@@ -58,15 +86,26 @@ services:
       - ./data/codedeck:/data
     networks:
       net:
-        ipv4_address: 10.0.0.41
+        ipv4_address: 10.50.0.3
+      transit:
 
+# Derived from bastion.conf by ./bastion (utils/config.sh write_secret_files);
+# git-ignored, mode 600. Delivered to the container as files under /run/secrets,
+# never as plaintext env vars.
 secrets:
+  ccr_web_auth_token:
+    file: ../secrets/ccr_web_auth_token
   claude_code_oauth_token:
-    environment: CLAUDE_CODE_OAUTH_TOKEN
+    file: ../secrets/claude_code_oauth_token
   github_token:
-    environment: GITHUB_TOKEN
+    file: ../secrets/github_token
 
 networks:
   net:
-    name: bastion-network
+    name: bastion-ai
+    ipam:
+      config:
+        - subnet: 10.50.0.0/24
+  transit:
+    name: bastion-transit
     external: true

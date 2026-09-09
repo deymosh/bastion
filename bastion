@@ -3,11 +3,20 @@
 ################################################################################
 # BASTION - CLI Orchestrator
 #
-# This script is the main entry point for managing the BASTION stack.
-# It provides a simple CLI to start, stop, and monitor all services in the stack.
+# Main entry point for managing the Bastion stacks. Run with no arguments on a
+# terminal for the interactive TUI, or with a command for scripted use.
 #
 # Usage:
-#   $ ./bastion #COMMAND (empty for help)
+#   ./bastion                       # interactive TUI (needs a TTY)
+#   ./bastion up|stop|down|build|logs [stack ...]
+#   ./bastion status | versions | audit | tui
+#   ./bastion up --recreate-networks
+#   ./bastion up --with-watchtower  # also run teosd (off by default)
+#   ./bastion down stack-network --force
+#
+# stack-network is the foundation: every "up" brings it up first (it is added
+# automatically when omitted), and it cannot be stopped or removed while another
+# stack still has containers running unless --force is given.
 ################################################################################
 
 # Import configuration and utilities
@@ -20,28 +29,43 @@ fi
 
 # --- HEADER ---
 HEADER_LINE="═══════════════════════════════════════════════════════"
-echo -e "${CYAN}${HEADER_LINE}${NC}"
-echo -e "${CYAN}${BOLD}                 🏴‍☠️  $PROJECT_NAME CLI                  ${NC}"
-echo -e "${CYAN}${BOLD}          Sovereign Node Infrastructure              ${NC}"
-echo -e "${CYAN}${HEADER_LINE}${NC}"
+print_header() {
+    echo -e "${CYAN}${HEADER_LINE}${NC}"
+    echo -e "${CYAN}${BOLD}                 🏴‍☠️  $PROJECT_NAME CLI                  ${NC}"
+    echo -e "${CYAN}${BOLD}       Sovereign Infrastructure · Operations · AI     ${NC}"
+    echo -e "${CYAN}${HEADER_LINE}${NC}"
+}
 
 # --- HELPER FUNCTIONS ---
 usage() {
+    print_header
     echo -e "${YELLOW}${BOLD}COMMANDS:${NC}"
-    echo -e "  ${GREEN}up${NC}      -> Deploy all stacks in order"
-    echo -e "  ${YELLOW}stop${NC}    -> Stop all containers"
-    echo -e "  ${RED}down${NC}    -> Stop and remove all containers"
-    echo -e "  ${CYAN}status${NC}  -> Show running containers and IPs"
-    echo -e "  ${CYAN}audit${NC}   -> Run the Python Node Profitability Audit"
-    echo -e "  ${BOLD}build${NC}   -> Build all stacks without starting"
-    echo -e "  ${BOLD}logs${NC}    -> Tail logs from all stacks"
+    echo -e "  ${GREEN}up${NC}      [stack...]     -> Deploy stacks in order (default: all)"
+    echo -e "  ${YELLOW}stop${NC}    [stack|ctr...] -> Stop stacks, or a single container"
+    echo -e "  ${RED}down${NC}    [stack...]     -> Stop and remove containers (reverse order)"
+    echo -e "  ${BOLD}build${NC}   [stack...]     -> Build images without starting"
+    echo -e "  ${BOLD}logs${NC}    [stack|ctr...] -> Tail logs (a stack set, or one container)"
+    echo -e "  ${GREEN}restart${NC} <container>    -> Restart one container"
+    echo -e "  ${GREEN}start${NC}   <container>    -> Start one stopped container"
+    echo -e "  ${BOLD}exec${NC}    <ctr> -- <cmd> -> Run a command in a container"
+    echo -e "  ${BOLD}shell${NC}   <container>    -> Open a shell in a container"
+    echo -e "  ${CYAN}ps${NC}                     -> Every Bastion container: state + health + stack"
+    echo -e "  ${CYAN}status${NC}                 -> docker ps table"
+    echo -e "  ${CYAN}versions${NC}               -> Image pin vs. what is running"
+    echo -e "  ${CYAN}audit${NC}                  -> Node profitability audit"
+    echo -e "  ${CYAN}tui${NC}                    -> Force the interactive dashboard"
     echo -e ""
-    echo -e "${YELLOW}${BOLD}STACKS MANAGED:${NC}"
+    echo -e "${YELLOW}${BOLD}FLAGS:${NC}"
+    echo -e "  ${BOLD}--recreate-networks${NC} -> On 'up', drop a stale bastion-network (old subnet) first"
+    echo -e "  ${BOLD}--force${NC}, ${BOLD}-f${NC}         -> Allow 'stop'/'down' of stack-network while other stacks run"
+    echo -e "  ${BOLD}--with-watchtower${NC}   -> Also run teosd (your own watchtower); off by default"
+    echo -e ""
+    echo -e "${YELLOW}${BOLD}STACKS:${NC}"
     for i in "${!STACKS[@]}"; do
         echo -e "  $((i+1)). ${STACKS[$i]}"
     done
     echo -e ""
-    echo -e "${BOLD}Example:${NC} $0 up"
+    echo -e "${BOLD}Examples:${NC} $0 up   |   $0 up stack-web stack-ai   |   $0 logs stack-bitcoin"
     exit 1
 }
 
@@ -52,41 +76,424 @@ check_docker() {
     fi
 }
 
+wait_for_health() {
+    local container="$1"
+    local timeout_seconds=120
+    local elapsed=0
+    local health_status
+
+    echo -e "${CYAN}--> Waiting for ${container} to become healthy...${NC}"
+    while [ "$elapsed" -lt "$timeout_seconds" ]; do
+        health_status=$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null || true)
+        case "$health_status" in
+            healthy)
+                echo -e "${GREEN}[✔] ${container} is healthy.${NC}"
+                return 0
+                ;;
+            unhealthy)
+                echo -e "${RED}[✘] ${container} is unhealthy.${NC}"
+                docker logs --tail=40 "$container"
+                return 1
+                ;;
+        esac
+        sleep 2
+        elapsed=$((elapsed + 2))
+    done
+
+    echo -e "${RED}[✘] Timed out waiting for ${container} to become healthy.${NC}"
+    docker logs --tail=40 "$container"
+    return 1
+}
+
+# Guard against the pre-transit flat network. stack-network keeps the name
+# "bastion-network" but its subnet changed from 10.0.0.0/24 to 10.10.0.0/24, and
+# Docker will not reconcile a subnet change on an existing network - it just
+# fails "up" with a confusing error. Detect the stale network and either stop
+# with instructions, or (with --recreate-networks) remove it after "down".
+preflight_networks() {
+    local existing_subnet
+    existing_subnet=$(docker network inspect bastion-network \
+        --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}' 2>/dev/null || true)
+
+    [ -z "$existing_subnet" ] && return 0                 # no network yet - fine
+    [ "$existing_subnet" = "10.10.0.0/24" ] && return 0   # already migrated
+
+    echo -e "${YELLOW}${BOLD}[!] Stale 'bastion-network' found (${existing_subnet}); expected 10.10.0.0/24.${NC}"
+    if [ "$RECREATE_NETWORKS" = "1" ]; then
+        echo -e "${CYAN}--> Removing it (all Bastion stacks will be brought down first)...${NC}"
+        for (( i=${#STACKS[@]}-1; i>=0; i-- )); do
+            docker compose -f "./${STACKS[$i]}/docker-compose.yml" down 2>/dev/null || true
+        done
+        if docker network rm bastion-network >/dev/null 2>&1; then
+            echo -e "${GREEN}[✔] Removed stale bastion-network; it will be recreated with the new subnet.${NC}"
+            return 0
+        fi
+        echo -e "${RED}[✘] Could not remove bastion-network (a container may still be attached).${NC}"
+        return 1
+    fi
+
+    echo -e "${RED}[✘] Refusing to continue. Run:${NC}"
+    echo -e "    ${BOLD}./bastion down${NC} && ${BOLD}docker network rm bastion-network${NC}"
+    echo -e "  or re-run with ${BOLD}--recreate-networks${NC} to do it automatically."
+    return 1
+}
+
+# --- Stack selection --------------------------------------------------------
+# Populates SELECTED_STACKS (subset of STACKS, canonical order). No args = all.
+resolve_stacks() {
+    SELECTED_STACKS=()
+    if [ "$#" -eq 0 ]; then
+        SELECTED_STACKS=("${STACKS[@]}")
+        return 0
+    fi
+    local want s ok
+    for want in "$@"; do
+        # accept "web" as shorthand for "stack-web"
+        case "$want" in stack-*) : ;; *) want="stack-$want" ;; esac
+        ok=0
+        for s in "${STACKS[@]}"; do [ "$s" = "$want" ] && ok=1; done
+        if [ "$ok" -eq 0 ]; then
+            echo -e "${RED}[✘] Unknown stack: $want${NC}" >&2
+            echo -e "    Known: ${STACKS[*]}" >&2
+            exit 1
+        fi
+    done
+    for s in "${STACKS[@]}"; do
+        for want in "$@"; do
+            case "$want" in stack-*) : ;; *) want="stack-$want" ;; esac
+            [ "$s" = "$want" ] && SELECTED_STACKS+=("$s")
+        done
+    done
+}
+
+_contains() { local n="$1"; shift; local x; for x in "$@"; do [ "$x" = "$n" ] && return 0; done; return 1; }
+
+# Every compose profile Bastion knows about. `stop`/`down` activate all of them
+# so an opt-in service (e.g. teosd) is torn down even if the flag was omitted.
+ALL_PROFILES="watchtower"
+_profile_active() { case ",${COMPOSE_PROFILES:-}," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
+
+# stack-network owns the bastion-transit network and runs Tor; stack-bitcoin
+# (CLN/TEOS dial Tor over transit) and stack-ai (codedeck-bridge joins transit)
+# break the moment it goes away. Refuse a stop/down that targets stack-network
+# while any *other* stack still has containers up. Returns 0 when it is safe to
+# proceed, 1 to abort. --force (global $FORCE) downgrades the refusal to a note.
+check_network_teardown() {
+    local action="$1"; shift
+    _contains "$NETWORK_STACK" "$@" || return 0        # network not in this set
+    local orphans=() r
+    while IFS= read -r r; do
+        [ -n "$r" ] || continue
+        _contains "$r" "$@" || orphans+=("$r")
+    done < <(running_stacks)
+    [ "${#orphans[@]}" -eq 0 ] && return 0             # nothing else is running
+
+    if [ "${FORCE:-0}" = 1 ]; then
+        echo -e "${YELLOW}${BOLD}[!] --force: ${action} ${NETWORK_STACK} with these still up -> ${orphans[*]}${NC}"
+        return 0
+    fi
+    echo -e "${RED}${BOLD}[✘] Refusing to ${action} ${NETWORK_STACK} while other stacks are running:${NC}" >&2
+    echo -e "    ${BOLD}${orphans[*]}${NC}" >&2
+    echo -e "    ${NETWORK_STACK} owns the bastion-transit network and Tor; removing it now" >&2
+    echo -e "    cuts Lightning/TEOS off Tor and orphans the shared network." >&2
+    echo -e "    ${CYAN}Bring those down first:${NC} ${BOLD}./bastion ${action} ${orphans[*]}${NC}" >&2
+    echo -e "    ${CYAN}or override:${NC}          ${BOLD}./bastion ${action} ${NETWORK_STACK} --force${NC}" >&2
+    return 1
+}
+
+# --- Action bodies (operate on a stack list) ------------------------------
+do_up() {
+    local stacks=("$@")
+    # stack-network is mandatory: bastion-transit + Tor underpin every stack.
+    # Add it (first, canonical order) whenever the caller left it out.
+    if ! _contains "$NETWORK_STACK" "${stacks[@]}"; then
+        echo -e "${CYAN}[i] Adding ${NETWORK_STACK} - the required foundation for every stack.${NC}"
+        stacks=("$NETWORK_STACK" "${stacks[@]}")
+    fi
+    if _contains "$NETWORK_STACK" "${stacks[@]}"; then
+        preflight_networks || return 1
+    fi
+    if _contains stack-bitcoin "${stacks[@]}"; then
+        seed_runtime_config
+        if _profile_active watchtower; then
+            seed_teos_config
+            bash "$TEOS_BUILD_UTIL" || return 1
+        fi
+    fi
+    echo -e "${GREEN}${BOLD}[+] Booting: ${stacks[*]}${NC}"
+    local stack
+    for stack in "${stacks[@]}"; do
+        echo -e "${CYAN}--> Starting:${NC} ${BOLD}$stack${NC}"
+        if ! docker compose -f "./$stack/docker-compose.yml" up -d; then
+            echo -e "${RED}${BOLD}[✘] Failed to start $stack.${NC}"
+            return 1
+        fi
+        if [ "$stack" = "stack-network" ]; then
+            wait_for_health tor || return 1
+        fi
+        if [ "$stack" = "stack-bitcoin" ]; then
+            ensure_rtl_rune
+        fi
+    done
+    echo -e "\n${GREEN}${BOLD}[✔] Up: ${stacks[*]}${NC}"
+}
+
+do_stop() {
+    local stacks=("$@") i
+    check_network_teardown stop "${stacks[@]}" || return 1
+    export COMPOSE_PROFILES="$ALL_PROFILES"   # also stop opt-in services
+    echo -e "${RED}${BOLD}[-] Stopping: ${stacks[*]}${NC}"
+    for (( i=${#stacks[@]}-1; i>=0; i-- )); do
+        docker compose -f "./${stacks[$i]}/docker-compose.yml" stop
+    done
+}
+
+do_down() {
+    local stacks=("$@") i
+    check_network_teardown down "${stacks[@]}" || return 1
+    export COMPOSE_PROFILES="$ALL_PROFILES"   # also remove opt-in services
+    echo -e "${RED}${BOLD}[-] Removing: ${stacks[*]}${NC}"
+    for (( i=${#stacks[@]}-1; i>=0; i-- )); do
+        docker compose -f "./${stacks[$i]}/docker-compose.yml" down
+    done
+}
+
+do_build() {
+    local stacks=("$@") stack
+    if _contains stack-bitcoin "${stacks[@]}" && _profile_active watchtower; then
+        bash "$TEOS_BUILD_UTIL" "force" || return 1
+    fi
+    for stack in "${stacks[@]}"; do
+        echo -e "${CYAN}--> Building:${NC} ${BOLD}$stack${NC}"
+        docker compose -f "./$stack/docker-compose.yml" build || return 1
+    done
+}
+
+do_logs() {
+    local stacks=("$@") args=()
+    local s; for s in "${stacks[@]}"; do args+=(-f "./$s/docker-compose.yml"); done
+    echo -e "${CYAN}${BOLD}[!] Logs (Ctrl-C to stop): ${stacks[*]}${NC}"
+    docker compose "${args[@]}" logs -f --tail=50
+}
+
+# --- Per-container operations (so `docker compose` is never run by hand) ---
+_is_container() { [ -n "${CONTAINER_STACK[$1]:-}" ]; }
+_is_stack() {
+    local w="$1"; case "$w" in stack-*) : ;; *) w="stack-$w" ;; esac
+    _contains "$w" "${STACKS[@]}"
+}
+
+# Refuse to stop/restart a stack-network container (tor, pihole, ...) while some
+# other stack still has containers up; --force overrides. Returns 0 to proceed.
+_network_container_guard() {
+    local c="$1" action="$2" others
+    [ "${CONTAINER_STACK[$c]:-}" = "$NETWORK_STACK" ] || return 0
+    others=$(running_stacks | grep -v "^${NETWORK_STACK}\$" | paste -sd' ' -)
+    [ -z "$others" ] && return 0
+    if [ "${FORCE:-0}" = 1 ]; then
+        echo -e "${YELLOW}${BOLD}[!] --force: ${action} ${c} with these still up -> ${others}${NC}"
+        return 0
+    fi
+    echo -e "${RED}${BOLD}[✘] Refusing to ${action} ${c} (part of ${NETWORK_STACK}) while other stacks run:${NC}" >&2
+    echo -e "    ${BOLD}${others}${NC}" >&2
+    echo -e "    ${c} underpins Tor / bastion-transit. Bring those down first, or pass ${BOLD}--force${NC}." >&2
+    return 1
+}
+
+# do_container <action> <container> [args...]
+do_container() {
+    local action="$1" c="$2"; shift 2
+    local stack="${CONTAINER_STACK[$c]:-}"
+    if [ -z "$stack" ]; then
+        echo -e "${RED}[✘] Unknown container: $c${NC}" >&2
+        echo -e "    Known: $(printf '%s ' "${!CONTAINER_STACK[@]}" | tr ' ' '\n' | sort | paste -sd' ' -)" >&2
+        return 1
+    fi
+    local cf="./$stack/docker-compose.yml"
+    export COMPOSE_PROFILES="$ALL_PROFILES"   # so opt-in services are addressable
+
+    case "$action" in
+        stop|restart) _network_container_guard "$c" "$action" || return 1 ;;
+    esac
+
+    case "$action" in
+        restart) echo -e "${CYAN}--> Restarting ${BOLD}$c${NC}"; docker compose -f "$cf" restart "$c" ;;
+        stop)    echo -e "${RED}--> Stopping ${BOLD}$c${NC}";    docker compose -f "$cf" stop "$c" ;;
+        start)   echo -e "${GREEN}--> Starting ${BOLD}$c${NC}";  docker compose -f "$cf" start "$c" ;;
+        logs)    echo -e "${CYAN}${BOLD}[!] Logs for $c (Ctrl-C to stop):${NC}"
+                 docker compose -f "$cf" logs -f --tail=100 "$c" ;;
+        exec)    MSYS_NO_PATHCONV=1 docker compose -f "$cf" exec "$c" "$@" ;;
+        shell)   echo -e "${CYAN}--> Shell in ${BOLD}$c${NC} (exit to leave)${NC}"
+                 MSYS_NO_PATHCONV=1 docker compose -f "$cf" exec "$c" \
+                     sh -c 'command -v bash >/dev/null 2>&1 && exec bash || exec sh' ;;
+        *) echo -e "${RED}[✘] Unknown container action: $action${NC}" >&2; return 1 ;;
+    esac
+}
+
+# Flat table of every Bastion container: state + health + owning stack.
+do_ps() {
+    printf '  %-16s %-10s %-12s %s\n' "CONTAINER" "STATE" "HEALTH" "STACK"
+    local stack svc info st hl
+    for stack in "${STACKS[@]}"; do
+        while IFS=$'\t' read -r svc _; do
+            [ -n "$svc" ] || continue
+            info=$(docker inspect -f '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}-{{end}}' "$svc" 2>/dev/null) || info="absent|-"
+            info=${info//[$'\n\r']/}
+            st=${info%%|*}; hl=${info##*|}
+            printf '  %-16s %-10s %-12s %s\n' "$svc" "${st:-absent}" "${hl:--}" "$stack"
+        done < <(_compose_service_images "./$stack/docker-compose.yml")
+    done
+}
+
+# service<TAB>image for each service in a compose file, in file order.
+_compose_service_images() {
+    awk '
+        /^  [A-Za-z0-9_-]+:[[:space:]]*$/ { svc=$1; sub(/:$/, "", svc); next }
+        /^    image:[[:space:]]/ && svc != "" { print svc "\t" $2; svc="" }
+    ' "$1"
+}
+
+# Show the image each service is pinned to, and - when the container is up - the
+# digest actually running, so a drift is obvious. Reuses STACKS from config.sh.
+do_versions() {
+    echo -e "${CYAN}${BOLD}Images - configured pin vs. running:${NC}"
+    local stack svc cfg st rid created rdig
+    for stack in "${STACKS[@]}"; do
+        echo -e "\n${BOLD}${stack}${NC}"
+        while IFS=$'\t' read -r svc cfg; do
+            [ -n "$svc" ] || continue
+            st=$(docker inspect -f '{{.State.Status}}' "$svc" 2>/dev/null || true); st=${st//[$'\n\r']/}
+            rid=$(docker inspect -f '{{.Image}}' "$svc" 2>/dev/null || true); rid=${rid//[$'\n\r']/}
+            created=""; rdig=""
+            if [ -n "$rid" ]; then
+                created=$(docker image inspect -f '{{.Created}}' "$rid" 2>/dev/null | cut -c1-10)
+                rdig=$(docker image inspect -f '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' "$rid" 2>/dev/null)
+            fi
+            printf '  %-16s %-9s %-11s %s\n' "$svc" "${st:-absent}" "${created:--}" "$cfg"
+            if [ -n "$rdig" ] && [ "${cfg##*@}" != "$cfg" ] && [ "${rdig##*@}" != "${cfg##*@}" ]; then
+                printf '  %b%-16s %-9s %-11s drift -> running %s%b\n' "$YELLOW" "" "" "" "${rdig##*@}" "$NC"
+            fi
+        done < <(_compose_service_images "./$stack/docker-compose.yml")
+    done
+}
+
+# Entry points used by the TUI (utils/tui.sh).
+bastion_stack_action() {
+    local action="$1"; shift
+    case "$action" in
+        deploy|up) do_up "$@" ;;
+        stop)      do_stop "$@" ;;
+        down)      do_down "$@" ;;
+        build)     do_build "$@" ;;
+    esac
+}
+bastion_stack_logs() { do_logs "$@"; }
+bastion_container_action() { do_container "$@"; }   # TUI Containers view
+
 # --- EXECUTION ---
-check_docker
-load_secrets
 
-if [ -z "$1" ]; then
-    usage
+# Strip global flags before dispatch.
+RECREATE_NETWORKS=0
+FORCE=0
+WITH_WATCHTOWER=0
+ARGS=()
+for arg in "$@"; do
+    case "$arg" in
+        --recreate-networks) RECREATE_NETWORKS=1 ;;
+        --force|-f)          FORCE=1 ;;
+        --with-watchtower)   WITH_WATCHTOWER=1 ;;
+        *) ARGS+=("$arg") ;;
+    esac
+done
+set -- "${ARGS[@]}"
+CMD="${1:-}"
+
+# Compose profiles: --with-watchtower and/or BASTION_PROFILES (comma list) select
+# opt-in services. `docker compose` reads COMPOSE_PROFILES natively, so exporting
+# it here is all that is needed at the call sites.
+_profiles="${BASTION_PROFILES:-}"
+[ "$WITH_WATCHTOWER" = 1 ] && case ",$_profiles," in *,watchtower,*) : ;; *) _profiles="${_profiles:+$_profiles,}watchtower" ;; esac
+[ -n "$_profiles" ] && export COMPOSE_PROFILES="$_profiles"
+
+# Help needs neither Docker nor config - answer it before touching either.
+case "$CMD" in -h|--help|help) usage ;; esac
+
+# Load bastion.conf + defaults for every real command. This never prompts;
+# only commands that boot containers (below) call require_essentials.
+load_config
+
+# No command (or `tui`) on a real terminal -> interactive dashboard.
+if { [ -z "$CMD" ] || [ "$CMD" = "tui" ]; } && [ -t 0 ] && [ -t 1 ]; then
+    check_docker
+    source ./utils/tui.sh
+    tui_main
+    exit 0
 fi
+if [ "$CMD" = "tui" ]; then
+    echo -e "${RED}[✘] 'tui' needs an interactive terminal.${NC}"
+    exit 1
+fi
+[ -z "$CMD" ] && usage
 
-case "$1" in
+shift
+check_docker
+case "$CMD" in
     up)
-        bash "$TEOS_BUILD_UTIL"
-        echo -e "${GREEN}${BOLD}[+] Booting Infrastructure...${NC}"
-        for stack in "${STACKS[@]}"; do
-            echo -e "${CYAN}--> Starting:${NC} ${BOLD}$stack${NC}"
-            docker compose -f "./$stack/docker-compose.yml" up -d
-        done
-        echo -e "\n${GREEN}${BOLD}[✔] $PROJECT_NAME is now LIVE.${NC}"
+        require_essentials || exit 1
+        resolve_stacks "$@"
+        print_header
+        do_up "${SELECTED_STACKS[@]}"
         ;;
-    stop)
-        echo -e "${RED}${BOLD}[-] Stopping all stacks...${NC}"
-        for (( i=${#STACKS[@]}-1; i>=0; i-- )); do
-            docker compose -f "./${STACKS[$i]}/docker-compose.yml" stop
-        done
-        echo -e "\n${RED}${BOLD}✘ $PROJECT_NAME is OFFLINE.${NC}"
+    stop|logs)
+        # A single known container name -> operate on that container; otherwise
+        # treat the args as a stack list (backward compatible).
+        if [ "$#" -eq 1 ] && _is_container "$1" && ! _is_stack "$1"; then
+            print_header
+            do_container "$CMD" "$1"
+        else
+            resolve_stacks "$@"
+            print_header
+            "do_${CMD}" "${SELECTED_STACKS[@]}"
+        fi
         ;;
-    down)
-        echo -e "${RED}${BOLD}[-] Tearing down all stacks...${NC}"
-        for (( i=${#STACKS[@]}-1; i>=0; i-- )); do
-            docker compose -f "./${STACKS[$i]}/docker-compose.yml" down
-        done
-        echo -e "\n${RED}${BOLD}✘ $PROJECT_NAME has been REMOVED.${NC}"
+    down|build)
+        resolve_stacks "$@"
+        print_header
+        "do_${CMD}" "${SELECTED_STACKS[@]}"
+        ;;
+    restart|start)
+        if [ "$#" -ne 1 ] || ! _is_container "$1"; then
+            echo -e "${RED}[✘] usage: $0 $CMD <container>${NC}" >&2; exit 1
+        fi
+        print_header
+        do_container "$CMD" "$1"
+        ;;
+    exec)
+        _ec="${1:-}"; shift || true
+        [ "${1:-}" = "--" ] && shift
+        if [ -z "$_ec" ] || ! _is_container "$_ec" || [ "$#" -eq 0 ]; then
+            echo -e "${RED}[✘] usage: $0 exec <container> [--] <cmd> [args...]${NC}" >&2; exit 1
+        fi
+        do_container exec "$_ec" "$@"
+        ;;
+    shell)
+        if [ "$#" -ne 1 ] || ! _is_container "$1"; then
+            echo -e "${RED}[✘] usage: $0 shell <container>${NC}" >&2; exit 1
+        fi
+        do_container shell "$1"
+        ;;
+    ps)
+        print_header
+        do_ps
         ;;
     status)
+        print_header
         echo -e "${CYAN}${BOLD}[?] Current Environment Status:${NC}"
         docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Networks}}"
+        ;;
+    versions)
+        print_header
+        do_versions
         ;;
     audit)
         if [ -f "$AUDIT_SCRIPT" ]; then
@@ -94,17 +501,6 @@ case "$1" in
         else
             echo -e "${RED}[✘] Error: Audit script not found at $AUDIT_SCRIPT${NC}"
         fi
-        ;;
-    build)
-        bash "$TEOS_BUILD_UTIL" "force"
-        for stack in "${STACKS[@]}"; do
-            docker compose -f "./$stack/docker-compose.yml" build
-        done
-        ;;
-    logs)
-        echo -e "${CYAN}${BOLD}[!] Attaching to Logs...${NC}"
-        # shellcheck disable=SC2046
-        docker compose $(printf -- "-f ./%s/docker-compose.yml " "${STACKS[@]}") logs -f --tail=50
         ;;
     *)
         usage

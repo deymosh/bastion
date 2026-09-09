@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+    paths-ignore: ["**/*.md", "LICENSE*", "**/.gitignore", "docs/**"]
+  pull_request:
+    branches: [master]
+    paths-ignore: ["**/*.md", "LICENSE*", "**/.gitignore", "docs/**"]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    name: static (lint + config invariants)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: false }
+      - name: Install linters
+        run: |
+          # shellcheck ships on the runner image; fall back to the release
+          # tarball rather than apt (its third-party repos flake on Hash Sum).
+          if ! command -v shellcheck >/dev/null; then
+            curl -fsSL https://github.com/koalaman/shellcheck/releases/download/v0.10.0/shellcheck-v0.10.0.linux.x86_64.tar.xz \
+              | tar -xJ && sudo mv shellcheck-v0.10.0/shellcheck /usr/local/bin/
+          fi
+          shellcheck --version
+          pipx install yamllint
+      - run: bash tests/run.sh static
+
+  unit:
+    name: unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: bash tests/run.sh unit
+
+  integration:
+    name: integration (tor reachability)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: false }
+      - run: bash tests/run.sh integration

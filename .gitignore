@@ -1,2 +1,7 @@
 bastion.conf
+bastion.conf.*
+secrets/
 venv
+tests/weekly/.work/
+tests/integration/torrc.generated
+tests/integration/sectest/test_secret

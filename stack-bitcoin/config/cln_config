@@ -10,7 +10,7 @@ clnrest-protocol=http
 # Bitcoin RPC config (if not using trustedcoin plugin)
 bitcoin-rpcuser=bitcoind.user
 bitcoin-rpcpassword=bitcoind.pass
-bitcoin-rpcconnect=10.0.0.12
+bitcoin-rpcconnect=10.20.0.3
 
 # Autoclean config (1 week in seconds, 1 month for expired invoices)
 autoclean-failedpays-age=604800
@@ -34,7 +34,11 @@ important-plugin=/usr/local/bin/trustedcoin
 important-plugin=/usr/local/bin/watchtower-client
 
 # Network and proxy settings (Tor in this case)
-bind-addr=0.0.0.0:9735
-proxy=10.0.0.11:9050
-addr=statictor:10.0.0.11:9051
+# bind-addr is the address CLN hands to the Tor control port as the static
+# hidden-service forward target, so it must be reachable FROM the tor
+# container - i.e. CLN's pinned bastion-transit address, not 0.0.0.0
+# (which Tor would resolve to its own loopback).
+bind-addr=10.254.0.10:9735
+proxy=10.254.0.2:9050
+addr=statictor:10.254.0.2:9051
 always-use-proxy=true

@@ -8,9 +8,11 @@ services:
       dockerfile: Dockerfile.lightningd
     container_name: lightningd
     restart: unless-stopped
-    depends_on:
-      - bitcoind
-      - tor
+    # No depends_on bitcoind: the chain backend is trustedcoin (bcli disabled),
+    # so CLN never queries bitcoind, and a hard dependency would make
+    # `docker compose up lightningd` also start a full bitcoind sync - the one
+    # thing the local-testing workflow must avoid. `./bastion up` still starts
+    # bitcoind (it is in the stack) and waits for tor to be healthy first.
     logging:
       driver: "json-file"
       options:
@@ -22,13 +24,17 @@ services:
       # CONFIG & DATA
       - ./config/cln_config:/root/.lightning/config
       - ./data/cln:/root/.lightning/bitcoin
-      - ./data/tor:/data/.tor
+      - tor-data:/data/.tor:ro
     ports:
-      - "127.0.0.1:3001:3001"
-      - "10.0.0.1:3001:3001"
+      - "3001:3001"
     networks:
       net:
-        ipv4_address: 10.0.0.10
+        ipv4_address: 10.20.0.2
+      transit:
+        # Pinned: CLN advertises this address to Tor as its hidden-service
+        # forward target (see bind-addr in config/cln_config). It must be an
+        # address the tor container can reach, i.e. on bastion-transit.
+        ipv4_address: 10.254.0.10
     command:
       - --alias=${NODE_ALIAS}
       - --network=bitcoin
@@ -37,27 +43,9 @@ services:
       - --clboss-max-rebalance-fee-ppm=250
       - --clboss-auto-close=false
 
-  tor:
-    image: lncm/tor:latest
-    container_name: tor
-    restart: always
-    healthcheck:
-      test: ["CMD", "timeout", "5", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/9050"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    volumes:
-      - ./config/torrc:/etc/tor/torrc
-      - ./data/tor:/data/.tor
-    ports:
-      - "9050:9050"
-      - "127.0.0.1:9051:9051"
-    networks:
-      net:
-        ipv4_address: 10.0.0.11
-
   bitcoind:
-    image: lncm/bitcoind:v26.0
+    # Version tag + digest. Pinned 2026-09-09.
+    image: lncm/bitcoind:v26.0@sha256:2a335ea0e77106fc8768cade374808485a43825a6b4a17e85dd36d4acd931b22
     container_name: bitcoind
     restart: unless-stopped
     user: "${USER_ID}:${GROUP_ID}"
@@ -71,23 +59,30 @@ services:
       - ./data/bitcoin:/data/.bitcoin
     networks:
       net:
-        ipv4_address: 10.0.0.12
+        ipv4_address: 10.20.0.3
+      transit:
+    healthcheck:
+      test: ["CMD-SHELL", "bitcoin-cli -rpcuser=bitcoind.user -rpcpassword=bitcoind.pass -rpcport=8332 getblockchaininfo > /dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     command:
       - -server=1
       - -dbcache=8000
       - -prune=20000        # This limits block storage to ~20GB
       - -txindex=0          # Saves space (not needed for CLN)
-      - -prune=20000        # Keeps ~20GB of blocks (adjust if you want more)
       - -printtoconsole=1
-      - -proxy=tor:9050     # Route all P2P traffic through Tor
+      - -proxy=tor:9050     # Route all P2P traffic through Tor (resolved on bastion-transit)
       - -listen=0           # Disable incoming P2P connections
       - -rpcuser=bitcoind.user      # Put the user you want
       - -rpcpassword=bitcoind.pass  # Put the password you want
-      - -rpcallowip=10.0.0.0/24
+      - -rpcallowip=10.20.0.0/24
       - -rpcbind=0.0.0.0
 
   rtl:
-    image: shahanafarooqui/rtl:v0.15.8
+    # Version tag + digest. Pinned 2026-09-09.
+    image: shahanafarooqui/rtl:v0.15.8@sha256:54131152cba02a968d83fcc89c07426bfb979372f743649ba1e2626426a34dc0
     container_name: rtl
     restart: unless-stopped
     depends_on:
@@ -100,24 +95,44 @@ services:
       - "3000:3000"
     networks:
       net:
-        ipv4_address: 10.0.0.13
+        ipv4_address: 10.20.0.4
 
   teosd:
     image: teosd:latest
     container_name: teosd
     restart: always
+    # Opt-in: running your OWN watchtower for other nodes is not the default.
+    # `./bastion up --with-watchtower` (or BASTION_PROFILES=watchtower) starts it.
+    # The CLN `watchtower-client` plugin - breach protection FOR this node,
+    # pointed at an external tower - is unrelated and always on.
+    profiles: ["watchtower"]
     depends_on:
-      tor:
+      bitcoind:
         condition: service_healthy
     volumes:
       - ./data/teos:/home/teos/.teos
-      - ./data/tor:/data/.tor
+      - tor-data:/data/.tor:ro
     command: ["teosd"]
     networks:
       net:
-        ipv4_address: 10.0.0.14
+        ipv4_address: 10.20.0.5
+      transit:
+        # Pinned: teosd binds its API here and advertises it to Tor as the
+        # watchtower hidden-service forward target (see api_bind in
+        # config/teos.toml). Must be reachable from the tor container.
+        ipv4_address: 10.254.0.11
 
 networks:
   net:
-    name: bastion-network
+    name: bastion-bitcoin
+    ipam:
+      config:
+        - subnet: 10.20.0.0/24
+  transit:
+    name: bastion-transit
+    external: true
+
+volumes:
+  tor-data:
+    name: bastion-tor-data
     external: true

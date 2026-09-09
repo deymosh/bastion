@@ -5,32 +5,43 @@ services:
     depends_on:
       - unbound
     container_name: pihole
-    image: pihole/pihole:latest
+    # Pinned to an exact version + digest for reproducibility. To bump: pick a
+    # newer tag, resolve its digest with `docker buildx imagetools inspect
+    # pihole/pihole:<tag>`, update both. `./bastion versions` shows what is
+    # actually running. Pinned 2026-09-09.
+    image: pihole/pihole:2026.07.2@sha256:f7d1be836e3bc608b56d82fc9904f5a831cdfbc0dc9c6d58f94e4c985c70038b
     restart: unless-stopped
     network_mode: host
     environment:
       - TZ=${TIMEZONE}
-      - FTLCONF_webserver_api_password=${PIHOLE_PASSWORD}
-      - FTLCONF_dns_upstreams=10.0.0.2#53
+      # Web password comes from a mounted secret, not a plaintext env var: the
+      # image reads /run/secrets/<WEBPASSWORD_FILE> when
+      # FTLCONF_webserver_api_password is unset (src/bash_functions.sh).
+      - WEBPASSWORD_FILE=pihole_password
+      - FTLCONF_dns_upstreams=10.10.0.2#53
       - FTLCONF_webserver_port=8081o,443os,[::]:8081o,[::]:443os
     volumes:
       - './data/etc-pihole:/etc/pihole'
       - './data/etc-dnsmasq.d:/etc/dnsmasq.d'
+    secrets:
+      - pihole_password
     cap_add:
       - NET_ADMIN
 
   unbound:
-    image: mvance/unbound:latest
+    # Pinned by digest (tag kept for readability). Pinned 2026-09-09.
+    image: mvance/unbound:1.22.0@sha256:76906da36d1806f3387338f15dcf8b357c51ce6897fb6450d6ce010460927e90
     container_name: unbound
     restart: unless-stopped
     volumes:
-      - ./unbound.conf:/opt/unbound/etc/unbound/unbound.conf
+      - ./config/unbound.conf:/opt/unbound/etc/unbound/unbound.conf
     networks:
       net:
-        ipv4_address: 10.0.0.2
+        ipv4_address: 10.10.0.2
 
   wireguard:
-    image: lscr.io/linuxserver/wireguard:latest
+    # Pinned by digest (tag kept for readability). Pinned 2026-09-09.
+    image: lscr.io/linuxserver/wireguard:1.0.20260223-r0-ls121@sha256:bf03578ef7318ccc7675b4a82beac4d35cd0da2253194f6b6ecf61656b40f0ee
     container_name: wireguard
     restart: unless-stopped
     cap_add:
@@ -43,7 +54,7 @@ services:
       - SERVERURL=${WIREGUARD_SERVERURL}
       - SERVERPORT=${WIREGUARD_SERVERPORT}
       - PEERS=${WIREGUARD_PEERS}
-      - PEERDNS=10.0.0.1
+      - PEERDNS=10.10.0.1
       - INTERNAL_SUBNET=10.13.13.0
       - ALLOWEDIPS=0.0.0.0/0
     volumes:
@@ -53,11 +64,51 @@ services:
       - "51820:51820/udp"
     networks:
       net:
-        ipv4_address: 10.0.0.3
+        ipv4_address: 10.10.0.3
+
+  tor:
+    build:
+      context: .
+      dockerfile: Dockerfile.tor
+    image: tor-custom:latest
+    container_name: tor
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "timeout", "5", "bash", "-c", "cat < /dev/null > /dev/tcp/10.254.0.2/9050"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    volumes:
+      - ./config/torrc:/etc/tor/torrc:ro
+      - tor-data:/data/.tor
+    # No host ports. torrc binds SocksPort/ControlPort to 10.254.0.2 only, so a
+    # host publish would forward to a port nothing listens on - and a future
+    # 0.0.0.0 SocksPort behind an open publish would be an open proxy. Anything
+    # on the host that needs Tor goes through a container already on transit
+    # (see stack-bitcoin/scripts/amboss-healthcheck.sh -> docker exec lightningd).
+    networks:
+      transit:
+        ipv4_address: 10.254.0.2
 
 networks:
   net:
     name: bastion-network
     ipam:
       config:
-        - subnet: 10.0.0.0/24
+        - subnet: 10.10.0.0/24
+  transit:
+    name: bastion-transit
+    ipam:
+      config:
+        - subnet: 10.254.0.0/24
+
+volumes:
+  tor-data:
+    name: bastion-tor-data
+
+# Derived from bastion.conf by ./bastion (utils/config.sh write_secret_files);
+# git-ignored, mode 600. Mounted at /run/secrets/<name>, never an env var.
+secrets:
+  pihole_password:
+    file: ../secrets/pihole_password
