@@ -52,6 +52,35 @@ check_docker() {
     fi
 }
 
+wait_for_health() {
+    local container="$1"
+    local timeout_seconds=120
+    local elapsed=0
+    local health_status
+
+    echo -e "${CYAN}--> Waiting for ${container} to become healthy...${NC}"
+    while [ "$elapsed" -lt "$timeout_seconds" ]; do
+        health_status=$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null || true)
+        case "$health_status" in
+            healthy)
+                echo -e "${GREEN}[✔] ${container} is healthy.${NC}"
+                return 0
+                ;;
+            unhealthy)
+                echo -e "${RED}[✘] ${container} is unhealthy.${NC}"
+                docker logs --tail=40 "$container"
+                return 1
+                ;;
+        esac
+        sleep 2
+        elapsed=$((elapsed + 2))
+    done
+
+    echo -e "${RED}[✘] Timed out waiting for ${container} to become healthy.${NC}"
+    docker logs --tail=40 "$container"
+    return 1
+}
+
 # --- EXECUTION ---
 check_docker
 load_secrets
@@ -66,7 +95,13 @@ case "$1" in
         echo -e "${GREEN}${BOLD}[+] Booting Infrastructure...${NC}"
         for stack in "${STACKS[@]}"; do
             echo -e "${CYAN}--> Starting:${NC} ${BOLD}$stack${NC}"
-            docker compose -f "./$stack/docker-compose.yml" up -d
+            if ! docker compose -f "./$stack/docker-compose.yml" up -d; then
+                echo -e "${RED}${BOLD}[✘] Failed to start $stack.${NC}"
+                exit 1
+            fi
+            if [ "$stack" = "stack-network" ]; then
+                wait_for_health tor || exit 1
+            fi
         done
         echo -e "\n${GREEN}${BOLD}[✔] $PROJECT_NAME is now LIVE.${NC}"
         ;;

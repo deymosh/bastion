@@ -8,19 +8,23 @@ changes when the node holds funds.
 
 | Service | Container address | Purpose |
 |---|---|---|
-| Bitcoin Core | `10.0.0.12:8332` | Pruned Bitcoin backend |
-| Core Lightning | `10.0.0.10:9735` | Lightning node and CLN REST |
-| Tor | `10.0.0.11:9050`, `:9051` | Proxy and control service |
-| RTL | `10.0.0.13:3000` | Lightning UI |
-| TEOS | `10.0.0.14` | Watchtower daemon |
+| Bitcoin Core | `10.20.0.3:8332` | Pruned Bitcoin backend |
+| Core Lightning | `10.20.0.2:9735` | Lightning node and CLN REST |
+| Tor | `tor:9050`, `tor:9051` | Shared transit proxy/control service |
+| RTL | `10.20.0.4:3000` | Lightning UI |
+| TEOS | `10.20.0.5` | Watchtower daemon |
 
-Compose also publishes CLN REST on `127.0.0.1:3001` and `10.0.0.1:3001`,
+Compose publishes CLN REST on host port `3001` so Zeus can reach it through
+WireGuard. Restrict host firewall/Docker traffic to the WireGuard subnet and
+never expose this port directly to the public Internet.
 Tor SOCKS on host port `9050`, Tor control on `127.0.0.1:9051`, and RTL on
 host port `3000`. Review those bindings against your host firewall before
 exposing the machine beyond a trusted network.
 
-The stack joins the external `bastion-network` created by `stack-network`.
-Lightning, Bitcoin Core, and TEOS share the configured Tor service internally.
+The stack owns the private `bastion-bitcoin` subnet (`10.20.0.0/24`) and joins
+the external `bastion-transit` network created by `stack-network`. Lightning,
+Bitcoin Core, and TEOS reach Tor through that transit network. CLN and TEOS mount
+the Tor state volume read-only so they can read the control cookie.
 
 ## Commands
 
@@ -43,7 +47,11 @@ plan.
 - `config/cln_config` controls CLN plugins, REST, Tor, and automation.
 - `config/RTL-Config.json` is a template copied to `data/rtl/` after initialization.
 - `config/teos.toml` is a template copied to `data/teos/` after initialization.
-- `data/cln/`, `data/bitcoin/`, `data/rtl/`, `data/teos/`, and `data/tor/` are persistent state.
+- `data/cln/`, `data/bitcoin/`, `data/rtl/`, and `data/teos/` are persistent state.
+- Tor runtime state is stored in the external Docker volume `bastion-tor-data`, owned by `stack-network`.
+
+The Tor state volume is intentionally new during this migration. CLN and TEOS
+state remain untouched; only Tor client cache/state is recreated.
 - `rust-teos/` is the initialized TEOS source submodule used by `utils/build_teos.sh`.
 
 Review logs before restarting a service. Lightning plugins such as CLBoss and

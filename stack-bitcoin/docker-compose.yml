@@ -8,9 +8,6 @@ services:
       dockerfile: Dockerfile.lightningd
     container_name: lightningd
     restart: unless-stopped
-    depends_on:
-      - bitcoind
-      - tor
     logging:
       driver: "json-file"
       options:
@@ -22,13 +19,13 @@ services:
       # CONFIG & DATA
       - ./config/cln_config:/root/.lightning/config
       - ./data/cln:/root/.lightning/bitcoin
-      - ./data/tor:/data/.tor
+      - tor-data:/data/.tor:ro
     ports:
-      - "127.0.0.1:3001:3001"
-      - "10.0.0.1:3001:3001"
+      - "3001:3001"
     networks:
       net:
-        ipv4_address: 10.0.0.10
+        ipv4_address: 10.20.0.2
+      transit:
     command:
       - --alias=${NODE_ALIAS}
       - --network=bitcoin
@@ -36,25 +33,6 @@ services:
       - --clboss-min-channel=1000000
       - --clboss-max-rebalance-fee-ppm=250
       - --clboss-auto-close=false
-
-  tor:
-    image: lncm/tor:latest
-    container_name: tor
-    restart: always
-    healthcheck:
-      test: ["CMD", "timeout", "5", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/9050"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    volumes:
-      - ./config/torrc:/etc/tor/torrc
-      - ./data/tor:/data/.tor
-    ports:
-      - "9050:9050"
-      - "127.0.0.1:9051:9051"
-    networks:
-      net:
-        ipv4_address: 10.0.0.11
 
   bitcoind:
     image: lncm/bitcoind:v26.0
@@ -71,7 +49,8 @@ services:
       - ./data/bitcoin:/data/.bitcoin
     networks:
       net:
-        ipv4_address: 10.0.0.12
+        ipv4_address: 10.20.0.3
+      transit:
     command:
       - -server=1
       - -dbcache=8000
@@ -79,11 +58,11 @@ services:
       - -txindex=0          # Saves space (not needed for CLN)
       - -prune=20000        # Keeps ~20GB of blocks (adjust if you want more)
       - -printtoconsole=1
-      - -proxy=tor:9050     # Route all P2P traffic through Tor
+      - -proxy=10.254.0.2:9050 # Route all P2P traffic through Tor
       - -listen=0           # Disable incoming P2P connections
       - -rpcuser=bitcoind.user      # Put the user you want
       - -rpcpassword=bitcoind.pass  # Put the password you want
-      - -rpcallowip=10.0.0.0/24
+      - -rpcallowip=10.20.0.0/24
       - -rpcbind=0.0.0.0
 
   rtl:
@@ -100,24 +79,34 @@ services:
       - "3000:3000"
     networks:
       net:
-        ipv4_address: 10.0.0.13
+        ipv4_address: 10.20.0.4
 
   teosd:
     image: teosd:latest
     container_name: teosd
     restart: always
     depends_on:
-      tor:
-        condition: service_healthy
+      - bitcoind
     volumes:
       - ./data/teos:/home/teos/.teos
-      - ./data/tor:/data/.tor
+      - tor-data:/data/.tor:ro
     command: ["teosd"]
     networks:
       net:
-        ipv4_address: 10.0.0.14
+        ipv4_address: 10.20.0.5
+      transit:
 
 networks:
   net:
-    name: bastion-network
+    name: bastion-bitcoin
+    ipam:
+      config:
+        - subnet: 10.20.0.0/24
+  transit:
+    name: bastion-transit
+    external: true
+
+volumes:
+  tor-data:
+    name: bastion-tor-data
     external: true

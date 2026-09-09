@@ -7,12 +7,12 @@ not own node state; it reads metrics and provides management interfaces.
 
 | Service | Host address | Purpose |
 |---|---|---|
-| Portainer | `https://localhost:4000` | Container administration |
-| Grafana | `http://localhost:4001` | Dashboards |
-| Prometheus | `http://localhost:9090` | Metrics storage and queries |
-| Node Exporter | `10.0.0.22:9100` | Host metrics |
+| Portainer | `https://localhost:4000` | Container administration (`10.30.0.2`) |
+| Grafana | `http://localhost:4001` | Dashboards (`10.30.0.3`) |
+| Prometheus | `http://localhost:9090` | Metrics storage and queries (`10.30.0.5`) |
+| Node Exporter | `10.30.0.4:9100` | Host metrics |
 
-All services join `bastion-network`. Prometheus uses `prometheus.yml` and persists
+All services join the private `bastion-monitor` subnet (`10.30.0.0/24`). Prometheus uses `prometheus.yml` and persists
 its data in a Docker-managed volume.
 
 ## Commands

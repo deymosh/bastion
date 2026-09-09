@@ -1,7 +1,8 @@
 # API
-api_bind = "10.0.0.14"
+api_bind = "10.20.0.5"
 api_port = 9814
 tor_control_port = 9051
+tor_control_host = "10.254.0.2"
 onion_hidden_service_port = 9814
 tor_support = true
 

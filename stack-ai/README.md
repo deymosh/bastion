@@ -8,11 +8,11 @@ CodeDeck+ bridge for remote Claude Code sessions.
 | Service | Address | Purpose |
 |---|---|---|
 | CCR | `http://localhost:3458` | Provider, routing, logs, and gateway UI |
-| CodeDeck bridge | `10.0.0.41` | Nostr bridge for the Android client |
+| CodeDeck bridge | `10.50.0.3` | Nostr bridge for the Android client |
 
-Inside `bastion-network`, CodeDeck sends Claude requests to CCR at
+Inside `bastion-ai`, CodeDeck sends Claude requests to CCR at
 `http://ccr:8080`. The bridge has no published host port. Relay connections use
-Bastion's Tor service at `socks5h://tor:9050` by default.
+Bastion's Tor service on `bastion-transit` at `socks5h://tor:9050` by default.
 
 ## Commands
 

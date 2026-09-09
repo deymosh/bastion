@@ -20,10 +20,10 @@ services:
     volumes:
       - ./data/ccr:/data
     ports:
-      - "127.0.0.1:3458:8080"
+      - "3458:8080"
     networks:
       net:
-        ipv4_address: 10.0.0.40
+        ipv4_address: 10.50.0.2
 
   codedeck-bridge:
     image: ghcr.io/deymosh/codedeck-plus-bridge:v0.11.1
@@ -58,7 +58,8 @@ services:
       - ./data/codedeck:/data
     networks:
       net:
-        ipv4_address: 10.0.0.41
+        ipv4_address: 10.50.0.3
+      transit:
 
 secrets:
   claude_code_oauth_token:
@@ -68,5 +69,10 @@ secrets:
 
 networks:
   net:
-    name: bastion-network
+    name: bastion-ai
+    ipam:
+      config:
+        - subnet: 10.50.0.0/24
+  transit:
+    name: bastion-transit
     external: true

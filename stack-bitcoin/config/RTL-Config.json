@@ -23,7 +23,7 @@
         "logLevel": "INFO",
         "fiatConversion": false,
         "unannouncedChannels": false,
-        "lnServerUrl": "http://10.0.0.10:3001"
+        "lnServerUrl": "http://10.20.0.2:3001"
       }
     }
   ]

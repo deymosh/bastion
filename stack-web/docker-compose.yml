@@ -11,9 +11,11 @@ services:
       - "80:80"
     networks:
       net:
-        ipv4_address: 10.0.0.30
+        ipv4_address: 10.40.0.2
 
 networks:
   net:
-    name: bastion-network
-    external: true
+    name: bastion-web
+    ipam:
+      config:
+        - subnet: 10.40.0.0/24

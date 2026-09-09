@@ -45,7 +45,7 @@ chmod +x bastion
 - Deploys: network → bitcoin → monitor → web → AI
 
 For a single stack, use Docker Compose directly. The network stack must be running
-before stacks that use `bastion-network`:
+before any other stack that uses Bastion's networks:
 
 ```bash
 docker compose -f ./stack-network/docker-compose.yml up -d
@@ -56,11 +56,15 @@ docker compose -f ./stack-ai/docker-compose.yml up -d
 
 | Stack | Services | IPs |
 |-------|----------|-----|
-| **network** | unbound DNS, WireGuard VPN, Pi-hole | 10.0.0.2-3 |
-| **bitcoin** | bitcoind, lightningd, Tor, RTL, TEOS | 10.0.0.10-14 |
-| **monitor** | prometheus, grafana, portainer, node-exporter | 10.0.0.20-23 |
-| **web** | Bastion operations hub | 10.0.0.30 |
-| **ai** | Claude Code Router, CodeDeck+ bridge | 10.0.0.40-41 |
+| **network** | unbound DNS, WireGuard VPN, Pi-hole, Tor | 10.10.0.2-3 + transit |
+| **bitcoin** | bitcoind, lightningd, RTL, TEOS | 10.20.0.2-5 + transit |
+| **monitor** | prometheus, grafana, portainer, node-exporter | 10.30.0.2-5 |
+| **web** | Bastion operations hub | 10.40.0.2 |
+| **ai** | Claude Code Router, CodeDeck+ bridge | 10.50.0.2-3 + transit |
+
+The private stack networks use `10.10.0.0/24` through `10.50.0.0/24`.
+Cross-stack services use the restricted `bastion-transit` network at
+`10.254.0.0/24`; Tor is `10.254.0.2` on that network.
 
 ## ⚙️ Commands
 
@@ -90,10 +94,10 @@ docker compose -f ./stack-<name>/docker-compose.yml up -d
 | Prometheus | 9090 | http://localhost:9090 | latest |
 | Pi-hole | 8081 | http://localhost:8081/admin | latest |
 | CLN REST API | 3001 | http://localhost:3001 | (CLN native) |
+| CCR management UI | 3458 | http://localhost:3458 | pinned fix branch  |
 | Wireguard VPN | 51820/udp | External | latest |
-| CCR management UI | 3458 | http://localhost:3458 | pinned fix branch |
 
-The Hub links to the available panels above using whatever hostname you're currently browsing with (localhost, LAN IP, WireGuard IP, or a Tor address), so you don't need to remember each port. CCR is included in the Hub, remains protected by its own web authentication, and is host-local by design at `127.0.0.1:3458`.
+The Hub links to the available panels above using whatever hostname you're currently browsing with (localhost, LAN IP, WireGuard IP, or a Tor address), so you don't need to remember each port. CCR is included in the Hub and remains protected by its own web authentication.
 
 **Defaults (change immediately):**
 - Grafana: `admin:admin`
@@ -118,7 +122,7 @@ enabled. Keep credentials out of Git in every environment.
 ```
 stack-bitcoin/docker-compose.yml    # Edit RPC user/pass, pruning settings
 stack-bitcoin/config/cln_config     # CLN configuration (alias, plugins, proxy)
-stack-network/docker-compose.yml    # Wireguard server config
+stack-network/docker-compose.yml    # Network, WireGuard, and Tor config
 stack-web/html/index.html           # Hub landing page (edit to add/remove panels)
 bastion.conf                        # GENERATED - in .gitignore
 stack-*/.env                        # SYMLINKS - in .gitignore
@@ -162,7 +166,7 @@ docker logs codedeck-bridge
 -rpcpassword=bitcoind.pass          # RPC password (change if desired)
 -prune=20000                        # ~20GB block storage (adjust as needed)
 -txindex=0                          # Disabled (not needed for CLN)
--rpcallowip=10.0.0.0/24             # Allow RPC from container network
+-rpcallowip=10.20.0.0/24            # Allow RPC from the Bitcoin stack network
 -rpcbind=0.0.0.0                    # Listen on all interfaces (container network)
 ```
 
@@ -197,8 +201,8 @@ autoclean-expiredinvoices-age=2592000 # Remove expired invoices after 30 days
 wallet=sqlite3:///root/.lightning/bitcoin/lightningd.sqlite3:/backup_usb/lightningd.sqlite3
 
 # Network settings
-proxy=10.0.0.11:9050               # Tor SOCKS proxy
-addr=statictor:10.0.0.11:9051      # Tor control port
+proxy=10.254.0.2:9050              # Tor SOCKS proxy
+addr=statictor:10.254.0.2:9051     # Tor control port
 always-use-proxy=true              # Route all traffic through Tor
 bind-addr=0.0.0.0:9735             # Listen on all interfaces
 ```
@@ -224,7 +228,7 @@ docker restart teosd
 
 ### RTL Configuration
 
-RTL connects to CLN via Docker network (10.0.0.10:3001). Configuration template is in `stack-bitcoin/config/RTL-Config.json` but must be manually copied to the persistent data directory after first run:
+RTL connects to CLN via the Bitcoin stack network (10.20.0.2:3001). Configuration template is in `stack-bitcoin/config/RTL-Config.json` but must be manually copied to the persistent data directory after first run:
 
 ```bash
 # After first run of the stack, copy config to data directory
@@ -251,7 +255,7 @@ docker exec lightningd lightning-cli backup-compact
 
 # CLN not connecting to Bitcoin
 docker logs lightningd
-docker exec lightningd ping -c 3 10.0.0.12
+docker exec lightningd ping -c 3 10.20.0.3
 
 # RTL cannot reach CLN
 docker logs rtl
@@ -264,9 +268,9 @@ docker exec unbound dig @127.0.0.1 google.com
 docker kill --signal=HUP tor
 docker logs tor
 
-# TOR connectivity (delete tor state and cache for fresh start)
+# TOR connectivity (delete Tor state for fresh circuits)
 docker stop tor
-rm -f stack-bitcoin/data/tor/state stack-bitcoin/data/tor/cached-* stack-bitcoin/data/tor/microdesc-*
+docker volume rm bastion-tor-data
 docker start tor
 
 # Container resource usage
@@ -276,21 +280,23 @@ df -h
 
 ## 🔒 Security and Boundaries
 
-All containers are isolated on Docker network `10.0.0.0/24`. External access only via:
+Each stack has a private Docker subnet. Cross-stack dependencies use the restricted
+`bastion-transit` network (`10.254.0.0/24`). External access is through:
 - **Wireguard VPN** (51820/udp)
 - **SSH** (port 22)
 - **HTTP/HTTPS** web services (RTL, Grafana, etc)
 
 **Internal isolation:**
-- Bitcoin RPC: `10.0.0.12:8332` (Docker network only)
-- CLN REST: `10.0.0.10:3001` (Docker network only)
-- CCR gateway: `ccr:8080` (Docker network only; management UI is localhost-published)
-- CodeDeck bridge: no published host port; relay traffic uses the shared Docker network
+- Bitcoin RPC: `10.20.0.3:8332` (Bitcoin stack network only)
+- CLN REST: `10.20.0.2:3001` internally; host port `3001` for host/WireGuard clients
+- CCR gateway: `ccr:8080` (AI stack network only; management UI is host/WireGuard published)
+- CodeDeck bridge: no published host port; relay traffic uses `bastion-transit`
 
 **Recommended:**
 - Change default passwords (Grafana: admin:admin, Pi-hole, Bitcoin RPC)
 - Keep `.gitignore` protected
 - Use Wireguard for remote access
+- Restrict host port `3001` (CLN REST) to the WireGuard subnet; Zeus should connect through VPN
 
 ## 📊 Versions
 

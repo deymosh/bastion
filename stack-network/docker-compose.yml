@@ -11,7 +11,7 @@ services:
     environment:
       - TZ=${TIMEZONE}
       - FTLCONF_webserver_api_password=${PIHOLE_PASSWORD}
-      - FTLCONF_dns_upstreams=10.0.0.2#53
+      - FTLCONF_dns_upstreams=10.10.0.2#53
       - FTLCONF_webserver_port=8081o,443os,[::]:8081o,[::]:443os
     volumes:
       - './data/etc-pihole:/etc/pihole'
@@ -24,10 +24,10 @@ services:
     container_name: unbound
     restart: unless-stopped
     volumes:
-      - ./unbound.conf:/opt/unbound/etc/unbound/unbound.conf
+      - ./config/unbound.conf:/opt/unbound/etc/unbound/unbound.conf
     networks:
       net:
-        ipv4_address: 10.0.0.2
+        ipv4_address: 10.10.0.2
 
   wireguard:
     image: lscr.io/linuxserver/wireguard:latest
@@ -43,7 +43,7 @@ services:
       - SERVERURL=${WIREGUARD_SERVERURL}
       - SERVERPORT=${WIREGUARD_SERVERPORT}
       - PEERS=${WIREGUARD_PEERS}
-      - PEERDNS=10.0.0.1
+      - PEERDNS=10.10.0.1
       - INTERNAL_SUBNET=10.13.13.0
       - ALLOWEDIPS=0.0.0.0/0
     volumes:
@@ -53,11 +53,43 @@ services:
       - "51820:51820/udp"
     networks:
       net:
-        ipv4_address: 10.0.0.3
+        ipv4_address: 10.10.0.3
+
+  tor:
+    build:
+      context: .
+      dockerfile: Dockerfile.tor
+    image: tor-custom:latest
+    container_name: tor
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "timeout", "5", "bash", "-c", "cat < /dev/null > /dev/tcp/10.254.0.2/9050"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    volumes:
+      - ./config/torrc:/etc/tor/torrc:ro
+      - tor-data:/data/.tor
+    ports:
+      - "9050:9050"
+      - "127.0.0.1:9051:9051"
+    networks:
+      transit:
+        ipv4_address: 10.254.0.2
 
 networks:
   net:
     name: bastion-network
     ipam:
       config:
-        - subnet: 10.0.0.0/24
+        - subnet: 10.10.0.0/24
+  transit:
+    name: bastion-transit
+    ipam:
+      config:
+        - subnet: 10.254.0.0/24
+
+volumes:
+  tor-data:
+    name: bastion-tor-data
