@@ -42,8 +42,8 @@ except `stack-network`.
   pinned because each advertises its own address to Tor as an **inbound
   hidden-service forward target** — the `tor` container is on `bastion-transit`
   only and cannot route to a per-stack subnet, so a service reachable *through*
-  Tor must sit on transit at a stable address (never `0.0.0.0`, which Tor
-  resolves to its own loopback). `bitcoind` and `codedeck-bridge` only make
+  Tor must sit on transit at a stable address (never `0.0.0.0` - Tor's
+  `connect()` to it just fails). `bitcoind` and `codedeck-bridge` only make
   outbound Tor connections, so they stay dynamic.
 
 ## 2. Deciding whether a service needs `bastion-transit`

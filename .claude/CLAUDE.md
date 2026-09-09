@@ -112,7 +112,7 @@ plain path — the TUI never launches without an interactive terminal.
   - `10.254.0.10` — `lightningd`. It is `cln_config`'s `bind-addr`, which CLN
     hands to Tor as its **static hidden-service forward target**, so it must be
     an address the tor container can reach (i.e. on `bastion-transit`, never
-    `0.0.0.0` — Tor would resolve that to its own loopback).
+    `0.0.0.0` — Tor cannot connect to 0.0.0.0 at all - verified).
   - `10.254.0.11` — `teosd`. It is `teos.toml`'s `api_bind`, which rust-teos
     uses as both the API listen socket and the watchtower hidden-service
     forward target — same reachability requirement.
