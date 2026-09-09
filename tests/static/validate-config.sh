@@ -56,6 +56,12 @@ have '^tor_control_host\s*=\s*"10\.254\.0\.2"' "$TEOS" && ok "teos.toml tor_cont
 awk '/^  teosd:/{t=1} t&&/^  [a-z]/&&!/^  teosd:/{t=0} t&&/profiles:.*watchtower/{f=1} END{exit f?0:1}' "$BC" \
   && ok "teosd carries the 'watchtower' compose profile (opt-in)" \
   || bad "teosd is missing 'profiles: [watchtower]' - it would start by default"
+# ...and the opt-in path must seed teos.toml, or teosd would start on rust-teos's
+# compiled-in defaults (127.0.0.1 / no Tor) instead of the pinned transit config.
+grep -q 'TEOS_SEED_DST.*data/teos/teos.toml' utils/config.sh \
+  && grep -q 'stack-bitcoin/config/teos.toml' utils/config.sh \
+  && ok "utils/config.sh seeds data/teos/teos.toml from config/teos.toml" \
+  || bad "utils/config.sh no longer seeds teos.toml for the opt-in watchtower path"
 
 echo "== CLN <-> bitcoind wiring =="
 have '^bitcoin-rpcconnect=10\.20\.0\.3' "$CLN" && ok "cln_config bitcoin-rpcconnect = 10.20.0.3 (bitcoind)" \

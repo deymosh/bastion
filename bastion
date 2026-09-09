@@ -216,6 +216,7 @@ do_up() {
     if _contains stack-bitcoin "${stacks[@]}"; then
         seed_runtime_config
         if _profile_active watchtower; then
+            seed_teos_config
             bash "$TEOS_BUILD_UTIL" || return 1
         fi
     fi

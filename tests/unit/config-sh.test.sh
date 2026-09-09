@@ -130,6 +130,19 @@ seed_runtime_config >/dev/null
 echo "== a missing template seeds nothing =="
 assert_ok test '!' -e "$WORK/out/gone"
 
+echo "== seed_teos_config is create-only / idempotent =="
+printf 'TEOS TEMPLATE\n' > "$WORK/tpl/teos-src"
+TEOS_SEED_SRC="$WORK/tpl/teos-src"; TEOS_SEED_DST="$WORK/teosout/teos.toml"
+seed_teos_config >/dev/null
+assert_eq "$(cat "$WORK/teosout/teos.toml" 2>/dev/null)" "TEOS TEMPLATE" "seeds teos.toml when the target is absent"
+printf 'OPERATOR TEOS EDIT\n' > "$WORK/teosout/teos.toml"
+seed_teos_config >/dev/null
+assert_eq "$(cat "$WORK/teosout/teos.toml")" "OPERATOR TEOS EDIT" "an existing teos.toml is never overwritten"
+TEOS_SEED_SRC="$WORK/tpl/teos-missing"; TEOS_SEED_DST="$WORK/teosout/none.toml"
+seed_teos_config >/dev/null
+echo "== a missing teos.toml template seeds nothing =="
+assert_ok test '!' -e "$WORK/teosout/none.toml"
+
 echo "== ensure_rtl_rune =="
 mock_dir=$(mktemp -d)
 cat > "$mock_dir/docker" <<EOF
@@ -147,6 +160,9 @@ assert_eq "$(cat "$WORK/rune" 2>/dev/null)" 'LIGHTNING_RUNE="abcDEF123"' "writes
   assert_eq "$(stat -c '%a' "$WORK/rune")" "600" "rune file is mode 600"
 MOCK_EXEC_OUT='rune=SHOULD_NOT_BE_USED' ensure_rtl_rune >/dev/null
 assert_eq "$(cat "$WORK/rune")" 'LIGHTNING_RUNE="abcDEF123"' "an existing rune is left untouched (early return)"
+rm -f "$WORK/rune"
+MOCK_EXEC_OUT='{"rune":"jsonRUNE99","unique_id":"0"}' ensure_rtl_rune >/dev/null
+assert_eq "$(cat "$WORK/rune" 2>/dev/null)" 'LIGHTNING_RUNE="jsonRUNE99"' "parses a rune from a JSON response too"
 rm -f "$WORK/rune"
 out=$(MOCK_EXEC_RC=1 MOCK_EXEC_OUT="" ensure_rtl_rune 2>&1); rc=$?
 assert_eq "$rc" 0 "returns 0 when CLN is unreachable (never aborts the boot)"

@@ -69,6 +69,10 @@ On `./bastion up`, if they do not already exist:
 - `data/rtl/access.rune` is minted from CLN (`lightning-cli createrune`) and
   written as `LIGHTNING_RUNE="<rune>"`, mode `600` - RTL reads it via `runePath`.
   If CLN is not up yet this is skipped with a warning; re-run `./bastion up`.
+- **only with `--with-watchtower`:** `config/teos.toml` is copied to
+  `data/teos/teos.toml`. Without it `teosd` would fall back to rust-teos's
+  compiled-in defaults (`api_bind 127.0.0.1`, Tor off, `bitcoind` on localhost)
+  and never become reachable at its pinned transit address.
 
 Anything that already exists is left exactly as it is - an established install is
 never touched.

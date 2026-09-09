@@ -395,22 +395,40 @@ require_essentials() {
 
 # --- First-run seeding (idempotent, never touches an existing install) ------
 
-# template:target pairs, relative to the repo root. A target is seeded from its
-# template ONLY when the target does not exist yet - a populated data/ dir is
-# left exactly as it is.
+# Copy $1 -> $2, but ONLY when $2 does not exist yet - a populated data/ dir is
+# left exactly as it is. Missing source is a silent no-op. Never returns
+# non-zero: seeding must never abort a boot.
+_seed_file() {
+    local src="$1" dst="$2"
+    [ -f "$src" ] || return 0
+    [ -e "$dst" ] && return 0
+    mkdir -p "$(dirname "$dst")"
+    cp "$src" "$dst" && echo -e "${YELLOW}--> Seeded ${dst} from template${NC}"
+    return 0
+}
+
+# "template:target" pairs, relative to the repo root, seeded on every
+# `./bastion up` that includes stack-bitcoin.
 SEED_TEMPLATES=(
     "stack-bitcoin/config/RTL-Config.json:stack-bitcoin/data/rtl/RTL-Config.json"
 )
 seed_runtime_config() {
-    local pair src dst
+    local pair
     for pair in "${SEED_TEMPLATES[@]}"; do
-        src="${pair%%:*}"; dst="${pair##*:}"
-        [ -f "$src" ] || continue
-        [ -e "$dst" ] && continue
-        mkdir -p "$(dirname "$dst")"
-        cp "$src" "$dst"
-        echo -e "${YELLOW}--> Seeded ${dst} from template${NC}"
+        _seed_file "${pair%%:*}" "${pair##*:}"
     done
+}
+
+# teosd reads teos.toml from its data dir (mounted at /home/teos/.teos); with no
+# file rust-teos silently falls back to compiled-in defaults - api_bind
+# 127.0.0.1, no Tor, bitcoind on localhost - and comes up unreachable at its
+# pinned transit address. Seed the Bastion template (which carries api_bind
+# 10.254.0.11 / tor_control_host 10.254.0.2) when teosd is about to start and
+# the operator has no teos.toml of their own yet. Overridable for tests.
+TEOS_SEED_SRC="${TEOS_SEED_SRC:-stack-bitcoin/config/teos.toml}"
+TEOS_SEED_DST="${TEOS_SEED_DST:-stack-bitcoin/data/teos/teos.toml}"
+seed_teos_config() {
+    _seed_file "$TEOS_SEED_SRC" "$TEOS_SEED_DST"
 }
 
 # Mint an RTL access rune from CLN when there isn't one yet. RTL reads
@@ -434,6 +452,9 @@ ensure_rtl_rune() {
         return 0
     fi
     rune=$(printf '%s\n' "$out" | sed -n 's/^rune=//p' | head -1)
+    # Tolerate a JSON response too (if a CLN build ignores -F for createrune).
+    [ -n "$rune" ] || rune=$(printf '%s' "$out" \
+        | sed -n 's/.*"rune"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
     if [ -z "$rune" ]; then
         echo -e "${YELLOW}[!] Could not parse a rune from CLN output - skipped.${NC}"
         return 0

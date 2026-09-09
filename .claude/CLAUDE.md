@@ -167,7 +167,9 @@ stack-network   creates bastion-transit + the bastion-tor-data volume, runs tor
 stack-bitcoin   bitcoind, lightningd, rtl  (+ teosd only with --with-watchtower;
      │          it carries the "watchtower" compose profile). On up, ./bastion
      │          seeds data/rtl/RTL-Config.json + mints the RTL access.rune from
-     │          CLN - both only if absent.
+     │          CLN - both only if absent. With --with-watchtower it also seeds
+     │          data/teos/teos.toml from config/teos.toml (else teosd would run
+     │          on rust-teos defaults, unreachable at its pinned transit IP).
 stack-monitor   self-contained (own network, no transit)
 stack-web       self-contained
 stack-ai        ccr + codedeck-bridge

@@ -21,6 +21,7 @@ EOF
 b() {
   BASTION_SKIP_ENV_LINKS=1 CONFIG_FILE="$WORK/bastion.conf" \
   RTL_RUNE_FILE="$WORK/rune" RTL_RUNE_RETRIES=1 RTL_RUNE_WAIT=0 \
+  TEOS_SEED_DST="$WORK/teos.toml" \
   ./bastion "$@" </dev/null 2>&1
 }
 
@@ -109,6 +110,20 @@ out=$(b down web); assert_contains "$out" "COMPOSE_PROFILES=watchtower" "down ac
 out=$(b stop web); assert_contains "$out" "COMPOSE_PROFILES=watchtower" "stop activates all profiles for teardown"
 out=$(b build --with-watchtower stack-bitcoin); assert_contains "$out" "TEOS" "build --with-watchtower force-builds teosd"
 out=$(b build stack-bitcoin); assert_not_contains "$out" "TEOS" "plain build skips teosd"
+
+echo "== teos.toml is seeded only when teosd is about to start =="
+rm -f "$WORK/teos.toml"
+out=$(b up bitcoin); assert_ok test '!' -e "$WORK/teos.toml"   # plain up -> no teosd -> no seed
+assert_not_contains "$out" "Seeded $WORK/teos.toml" "plain 'up' does not seed teos.toml"
+out=$(b up --with-watchtower bitcoin)
+assert_ok test -f "$WORK/teos.toml"
+assert_contains "$out" "Seeded $WORK/teos.toml" "'up --with-watchtower' seeds teos.toml when absent"
+assert_eq "$(head -1 "$WORK/teos.toml")" "$(head -1 stack-bitcoin/config/teos.toml)" "seeded teos.toml is the Bastion template verbatim"
+# second run: file present -> left alone
+printf 'OPERATOR EDIT\n' > "$WORK/teos.toml"
+out=$(b up --with-watchtower bitcoin)
+assert_eq "$(cat "$WORK/teos.toml")" "OPERATOR EDIT" "an existing teos.toml is never overwritten on re-run"
+rm -f "$WORK/teos.toml"
 
 echo "== RTL rune bootstrap (via 'up') =="
 rm -f "$WORK/rune"
