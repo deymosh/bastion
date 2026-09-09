@@ -134,15 +134,17 @@ stack-ai/Dockerfile.ccr             # CCR fix branch plus Claude Code
 ### AI Stack
 
 The AI stack builds Claude Code Router from the `fix/log-body.worker.js` branch of
-`deymosh/claude-code-router`, including its Docker worker fix. CCR includes Claude
-Code and runs as root because its upstream Docker entrypoint writes the Nginx
-configuration at startup. CodeDeck+ uses the published
-`ghcr.io/deymosh/codedeck-plus-bridge:v0.11.1` image, runs as its own non-root user,
-and routes Claude Code requests through CCR at `http://ccr:8080`.
+the project's CCR fork (`CCR_REPOSITORY` in `stack-ai/Dockerfile.ccr`), including
+its Docker worker fix, and bakes in an OAuth token refresher so the login stays
+valid without manual re-auth. CCR includes Claude Code and runs as root because
+its upstream Docker entrypoint writes the Nginx configuration at startup.
+CodeDeck+ uses its published bridge image (`ghcr.io/deymosh/codedeck-plus-bridge`),
+runs as its own non-root user, and routes Claude Code requests through CCR at
+`http://ccr:8080`.
 
-AI state is persisted under `stack-ai/data/`. CCR provider credentials are configured
-in the CCR UI; CodeDeck's Claude OAuth token is a separate credential used by the
-bridge.
+AI state is persisted under `stack-ai/data/`. CCR authenticates with an
+interactive `claude` login stored under `stack-ai/data/ccr/.claude/`; CodeDeck's
+Claude OAuth token is a separate credential used by the bridge.
 
 Before starting Bastion, add these values to the generated `bastion.conf`:
 
@@ -296,7 +298,10 @@ Each stack has a private Docker subnet. Cross-stack dependencies use the restric
 - Change default passwords (Grafana: admin:admin, Pi-hole, Bitcoin RPC)
 - Keep `.gitignore` protected
 - Use Wireguard for remote access
-- Restrict host port `3001` (CLN REST) to the WireGuard subnet; Zeus should connect through VPN
+- CLN REST (`3001`) and the CCR UI (`3458`) are published on the host so VPN
+  clients can reach them at the host LAN IP, or by a Pi-hole local-DNS name
+  (e.g. `http://bastion.node:3001`). Lock those host ports to the WireGuard
+  interface/subnet in the host firewall; never expose them to the Internet.
 
 ## 📊 Versions
 

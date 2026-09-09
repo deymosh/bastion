@@ -16,6 +16,14 @@ The stack creates its private `bastion-network` subnet (`10.10.0.0/24`)
 and the cross-stack `bastion-transit` subnet (`10.254.0.0/24`). Only services
 that need cross-stack communication join the transit network.
 
+## Local DNS
+
+Pi-hole can hold a local-DNS record that maps a friendly name to the host's LAN
+IP (for example `bastion.node` -> `192.168.x.x`). Panels and APIs published on
+host ports - RTL (`3000`), Grafana (`4001`), CLN REST (`3001`), the CCR UI
+(`3458`), Pi-hole (`8081`) - are then reachable over the VPN by name, e.g.
+`http://bastion.node:3001`, instead of a bare IP.
+
 ## Commands
 
 ```bash
@@ -42,10 +50,16 @@ Values come from the root `bastion.conf` through `.env` on Linux:
 Persistent WireGuard and Pi-hole state lives under `data/`. Keep it intact when
 troubleshooting or upgrading.
 
-After migrating an existing installation, review generated WireGuard peer files
-and Pi-hole's persisted DNS configuration. They are runtime state and are ignored
-by Git; the Compose values are updated for new deployments, but existing generated
-files may need to be regenerated or updated during the maintenance window.
+### Migrating from the old flat network
+
+Earlier deployments put every service on a single `bastion-network` at
+`10.0.0.0/24`. The network keeps its name but the subnet is now `10.10.0.0/24`,
+and Docker will not reconcile a subnet change on an existing network. `./bastion
+up` detects the stale network and stops with instructions; `./bastion up
+--recreate-networks` brings the stacks down and drops it so it is recreated with
+the new subnet. After migrating, review generated WireGuard peer files and
+Pi-hole's persisted DNS configuration - they are runtime state, ignored by Git,
+and may need regenerating.
 
 To change Tor settings, edit `config/torrc` and restart Tor:
 
