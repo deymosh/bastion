@@ -395,8 +395,8 @@ TUI_VIEW="main"
 TUI_STACK_BC=""       # breadcrumb tail
 TUI_FOCUS="menu"      # menu | status  - which pane the arrow keys drive
 TUI_STATUS_OFF=0      # scroll offset of the status pane when focused
-TUI_STATUS_TOTAL=0    # rows the status pane last laid out (set by tui_render_right)
-TUI_STATUS_MAXOFF=0   # highest valid scroll offset for that layout (ditto)
+TUI_STATUS_MAXOFF=0   # highest valid scroll offset for the last layout drawn
+                      # (published by tui_render_right, read by tui_status_scroll)
 
 # Switch views. Always resets the selection, returns focus to the menu, and
 # forces a full repaint so the breadcrumb and menu never show stale content.
@@ -478,7 +478,6 @@ tui_render_right() {
         lines=("${compact[@]}")
     fi
     local total=${#lines[@]}
-    TUI_STATUS_TOTAL=$total
 
     # Row CONTENT_BOT is always the footer/indicator line, so the content
     # viewport is avail-1 rows - never avail. maxoff must use the same figure or
