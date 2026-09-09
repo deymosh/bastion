@@ -88,7 +88,11 @@ tui_update_layout() {
     LINES=$(tput lines 2>/dev/null || echo 24)
     [ "$COLS" -lt 60 ] && COLS=60
     [ "$LINES" -lt 16 ] && LINES=16
-    LEFT_W=$(( COLS * 38 / 100 )); [ "$LEFT_W" -lt 30 ] && LEFT_W=30
+    # The left pane carries the wide content (long config-var names + values);
+    # the status pane is short lines. Give the menu the larger share, but cap
+    # the status pane so it stays useful on a very wide terminal.
+    LEFT_W=$(( COLS * 60 / 100 )); [ "$LEFT_W" -lt 30 ] && LEFT_W=30
+    [ $(( COLS - LEFT_W )) -gt 46 ] && LEFT_W=$(( COLS - 46 ))
     _LW=$(( LEFT_W - 3 ))                 # writable width of the left column
     RIGHT_X=$(( LEFT_W + 2 ))
     RIGHT_W=$(( COLS - RIGHT_X - 1 ))
@@ -498,7 +502,10 @@ tui_build_config_cache() {
     CONFIG_CACHE_DIRTY=0
     CONFIG_IDS=(); CONFIG_LABELS=()
     local k v shown kw vw
-    kw=22; [ "$_LW" -lt 40 ] && kw=$(( _LW / 2 ))
+    # Key column = the longest managed name, capped so values keep room.
+    kw=0; for k in "${MANAGED_VARS[@]}"; do [ "${#k}" -gt "$kw" ] && kw=${#k}; done
+    local cap=$(( _LW - 14 )); [ "$cap" -lt 12 ] && cap=12
+    [ "$kw" -gt "$cap" ] && kw=$cap
     vw=$(( _LW - kw - 1 )); [ "$vw" -lt 6 ] && vw=6
     for k in "${MANAGED_VARS[@]}"; do
         v=$(read_env_var "$k")
