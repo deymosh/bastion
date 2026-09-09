@@ -139,6 +139,9 @@ tui_read_key() {
                 case "$c3" in
                     A) _KEY="up" ;; B) _KEY="down" ;;
                     C) _KEY="right" ;; D) _KEY="left" ;;
+                    H) _KEY="home" ;; F) _KEY="end" ;;
+                    5) IFS= read -rsn1 -t 0.06 _ || true; _KEY="pgup" ;;
+                    6) IFS= read -rsn1 -t 0.06 _ || true; _KEY="pgdn" ;;
                     *) _KEY="esc" ;;
                 esac
             else _KEY="esc"; fi ;;
@@ -207,23 +210,58 @@ tui_prompt() {
     [ -z "$buf" ] && printf '%s' "$def" || printf '%s' "$buf"
 }
 
-# tui_message "title" "body..."   (body may contain newlines)
+# tui_message "title" "body..."   scrollable pager; up/down/pgup/pgdn scroll,
+# any other key closes. Body may contain newlines.
 tui_message() {
     local title="$1" body="$2"
     TUI_NEED_FRAME=1; tui_draw_frame; tui_render_right
-    _at "$CONTENT_TOP" 3; printf '%b%s%b' "${T_BOLD}${T_ACCENT}" "$title" "$T_RESET"
-    _at $(( CONTENT_TOP + 1 )) 3; printf '%b%s%b' "$T_LINE" "$TUI_RULE_L" "$T_RESET"
-    local r=$(( CONTENT_TOP + 2 ))
-    local wrapped; wrapped=$(printf '%s\n' "$body" | fold -s -w "$_LW")
-    while IFS= read -r line; do
-        [ "$r" -gt $(( CONTENT_BOT - 1 )) ] && break
-        _at "$r" 3; _clr_to; printf '%b%s%b' "$T_MENU" "$line" "$T_RESET"
-        r=$((r+1))
-    done <<< "$wrapped"
-    _at "$CONTENT_BOT" 3; printf '%bPress any key to continue%b' "$T_MENU_DIM" "$T_RESET"
+
+    local mlines=() line
+    while IFS= read -r line; do mlines+=("$line"); done < <(printf '%s\n' "$body" | fold -s -w "$_LW")
+    local total=${#mlines[@]}
+    local top=$(( CONTENT_TOP + 2 ))
+    local avail=$(( CONTENT_BOT - top )); [ "$avail" -lt 1 ] && avail=1
+    local off=0 maxoff=$(( total - avail )); [ "$maxoff" -lt 0 ] && maxoff=0
+
     tui_flush_input
     stty -icanon min 1 time 0 2>/dev/null || true
-    IFS= read -rsn1    # any key; value goes to $REPLY, unused
+    local k a b r i
+    while :; do
+        [ "$off" -gt "$maxoff" ] && off=$maxoff
+        [ "$off" -lt 0 ] && off=0
+        _at "$CONTENT_TOP" 3; _clr_to; printf '%b%s%b' "${T_BOLD}${T_ACCENT}" "${title:0:_LW}" "$T_RESET"
+        _at $(( CONTENT_TOP + 1 )) 3; _clr_to; printf '%b%s%b' "$T_LINE" "$TUI_RULE_L" "$T_RESET"
+        r=$top
+        for (( i=off; i<total && r<=CONTENT_BOT-1; i++, r++ )); do
+            _at "$r" 3; _clr_to; printf '%b%s%b' "$T_MENU" "${mlines[$i]}" "$T_RESET"
+        done
+        for (( ; r<=CONTENT_BOT-1; r++ )); do _at "$r" 3; _clr_to; done
+        _at "$CONTENT_BOT" 3; _clr_to
+        if [ "$total" -gt "$avail" ]; then
+            printf '%b%d/%d  up/down scroll - any other key closes%b' "$T_MENU_DIM" \
+                "$(( off + avail < total ? off + avail : total ))" "$total" "$T_RESET"
+        else
+            printf '%bPress any key to continue%b' "$T_MENU_DIM" "$T_RESET"
+        fi
+
+        IFS= read -rsn1 k || break
+        case "$k" in
+            $'\x1b')
+                IFS= read -rsn1 -t 0.05 a || { break; }
+                [ "$a" = "[" ] || [ "$a" = "O" ] || break     # bare ESC closes
+                IFS= read -rsn1 -t 0.05 b || true
+                case "$b" in
+                    A) off=$(( off - 1 )) ;;
+                    B) off=$(( off + 1 )) ;;
+                    5) IFS= read -rsn1 -t 0.05 _ || true; off=$(( off - avail + 1 )) ;;
+                    6) IFS= read -rsn1 -t 0.05 _ || true; off=$(( off + avail - 1 )) ;;
+                    H) off=0 ;;
+                    F) off=$maxoff ;;
+                    *) break ;;
+                esac ;;
+            *) break ;;
+        esac
+    done
     stty -icanon min 0 time 0 2>/dev/null || true
     TUI_NEED_FRAME=1; TUI_NEED_MENU=1; TUI_NEED_RIGHT=1
 }
@@ -336,7 +374,35 @@ tui_refresh_status() {
 # --- Frame + panes ---------------------------------------------------
 TUI_NEED_FRAME=1; TUI_NEED_MENU=1; TUI_NEED_RIGHT=1
 TUI_VIEW="main"
-TUI_STACK_BC=""   # breadcrumb tail
+TUI_STACK_BC=""       # breadcrumb tail
+TUI_FOCUS="menu"      # menu | status  - which pane the arrow keys drive
+TUI_STATUS_OFF=0      # scroll offset of the status pane when focused
+TUI_STATUS_TOTAL=0    # rows the status pane last laid out (set by tui_render_right)
+
+# Switch views. Always resets the selection, returns focus to the menu, and
+# forces a full repaint so the breadcrumb and menu never show stale content.
+_tui_goto() {
+    TUI_VIEW="$1"
+    MENU_SEL=0; MENU_OFF=0
+    TUI_FOCUS="menu"
+    TUI_NEED_FRAME=1; TUI_NEED_MENU=1; TUI_NEED_RIGHT=1
+}
+
+# Scroll the status pane (only meaningful while TUI_FOCUS=status).
+tui_status_scroll() {
+    local avail=$(( CONTENT_BOT - CONTENT_TOP + 1 )) step=1
+    case "$1" in pgup|pgdn) step=$(( avail > 2 ? avail - 1 : 1 )) ;; esac
+    case "$1" in
+        up|pgup)   TUI_STATUS_OFF=$(( TUI_STATUS_OFF - step )) ;;
+        down|pgdn) TUI_STATUS_OFF=$(( TUI_STATUS_OFF + step )) ;;
+        home)      TUI_STATUS_OFF=0 ;;
+        end)       TUI_STATUS_OFF=$TUI_STATUS_TOTAL ;;
+    esac
+    local maxoff=$(( TUI_STATUS_TOTAL - avail )); [ "$maxoff" -lt 0 ] && maxoff=0
+    [ "$TUI_STATUS_OFF" -gt "$maxoff" ] && TUI_STATUS_OFF=$maxoff
+    [ "$TUI_STATUS_OFF" -lt 0 ] && TUI_STATUS_OFF=0
+    TUI_NEED_RIGHT=1
+}
 
 tui_draw_frame() {
     [ "$TUI_NEED_FRAME" = 1 ] || return 0
@@ -358,17 +424,28 @@ tui_draw_frame() {
     _at 3 "$RIGHT_X"; printf '%b%s%b' "$T_LINE" "$TUI_RULE_R" "$T_RESET"
     # hint bar
     _at "$LINES" 3
-    printf '%b %b↑↓%b move  %b⏎%b select  %b␣%b toggle  %b←/esc%b back  %bq%b quit %b' \
-        "$T_BAR_BG" "$T_ACCENT" "$T_SUB" "$T_ACCENT" "$T_SUB" "$T_ACCENT" "$T_SUB" \
-        "$T_ACCENT" "$T_SUB" "$T_ACCENT" "$T_SUB" "$T_RESET"
+    if [ "$TUI_FOCUS" = status ]; then
+        printf '%b %b↑↓%b scroll status  %bs/esc%b back to menu  %bq%b quit %b' \
+            "$T_BAR_BG" "$T_ACCENT" "$T_SUB" "$T_ACCENT" "$T_SUB" "$T_ACCENT" "$T_SUB" "$T_RESET"
+    else
+        printf '%b %b↑↓%b move  %b⏎%b select  %b␣%b toggle  %bs%b status  %besc%b back  %bq%b quit %b' \
+            "$T_BAR_BG" "$T_ACCENT" "$T_SUB" "$T_ACCENT" "$T_SUB" "$T_ACCENT" "$T_SUB" \
+            "$T_ACCENT" "$T_SUB" "$T_ACCENT" "$T_SUB" "$T_ACCENT" "$T_SUB" "$T_RESET"
+    fi
     TUI_NEED_MENU=1; TUI_NEED_RIGHT=1
 }
 
 tui_render_right() {
     [ "$TUI_NEED_RIGHT" = 1 ] || return 0
     TUI_NEED_RIGHT=0
+
+    local focused=0; [ "$TUI_FOCUS" = status ] && focused=1
     _at 2 "$RIGHT_X"
-    printf '%b%b%-*s%b' "$T_BAR_BG" "${T_BOLD}${T_TITLE}" "$RIGHT_W" "  Status" "$T_RESET"
+    if [ "$focused" = 1 ]; then
+        printf '%b%b%-*s%b' "$T_SEL_BG" "${T_BOLD}${T_TITLE}" "$RIGHT_W" "  Status  (scrolling)" "$T_RESET"
+    else
+        printf '%b%b%-*s%b' "$T_BAR_BG" "${T_BOLD}${T_TITLE}" "$RIGHT_W" "  Status  -  press s" "$T_RESET"
+    fi
 
     local avail=$(( CONTENT_BOT - CONTENT_TOP + 1 ))
     local lines=("${TUI_STATUS_LINES[@]}")
@@ -378,21 +455,35 @@ tui_render_right() {
         for ln in "${lines[@]}"; do [ -n "$ln" ] && compact+=("$ln"); done
         lines=("${compact[@]}")
     fi
+    local total=${#lines[@]}
+    TUI_STATUS_TOTAL=$total
 
-    local total=${#lines[@]} shown
-    if [ "$total" -le "$avail" ]; then shown=$total; else shown=$(( avail - 1 )); fi
+    # clamp the scroll offset (a probe rebuild can shrink the list under us)
+    local maxoff=$(( total - avail )); [ "$maxoff" -lt 0 ] && maxoff=0
+    [ "$TUI_STATUS_OFF" -gt "$maxoff" ] && TUI_STATUS_OFF=$maxoff
+    [ "$TUI_STATUS_OFF" -lt 0 ] && TUI_STATUS_OFF=0
+    [ "$focused" = 0 ] && TUI_STATUS_OFF=0        # only scroll while focused
 
-    local r=$CONTENT_TOP i
-    for (( i=0; i<shown; i++, r++ )); do
+    local overflow=0; [ "$total" -gt $(( TUI_STATUS_OFF + avail )) ] && overflow=1
+    local body_rows=$avail
+    { [ "$overflow" = 1 ] || [ "$TUI_STATUS_OFF" -gt 0 ]; } && body_rows=$(( avail - 1 ))
+
+    local r=$CONTENT_TOP i=$TUI_STATUS_OFF n=0
+    for (( ; i<total && n<body_rows; i++, n++, r++ )); do
         _at "$r" "$RIGHT_X"; _erase "$RIGHT_W"
         _at "$r" "$RIGHT_X"; printf '%b' "${lines[$i]}"
     done
-    if [ "$total" -gt "$avail" ]; then
-        _at "$CONTENT_BOT" "$RIGHT_X"; _erase "$RIGHT_W"
-        _at "$CONTENT_BOT" "$RIGHT_X"; printf '%b... +%d more - widen the window%b' "$T_MENU_DIM" "$(( total - shown ))" "$T_RESET"
-        r=$(( CONTENT_BOT + 1 ))
+    for (( ; r<CONTENT_BOT; r++ )); do _at "$r" "$RIGHT_X"; _erase "$RIGHT_W"; done
+
+    _at "$CONTENT_BOT" "$RIGHT_X"; _erase "$RIGHT_W"; _at "$CONTENT_BOT" "$RIGHT_X"
+    if [ "$overflow" = 1 ] && [ "$focused" = 1 ]; then
+        printf '%bv  more below - down to scroll%b' "$T_MENU_DIM" "$T_RESET"
+    elif [ "$overflow" = 1 ]; then
+        printf '%b... +%d more - press s to scroll%b' "$T_MENU_DIM" "$(( total - TUI_STATUS_OFF - body_rows ))" "$T_RESET"
+    elif [ "$TUI_STATUS_OFF" -gt 0 ]; then
+        printf '%b^  top with Home%b' "$T_MENU_DIM" "$T_RESET"
     fi
-    for (( ; r<=CONTENT_BOT; r++ )); do _at "$r" "$RIGHT_X"; _erase "$RIGHT_W"; done
+    [ "$TUI_STATUS_OFF" -gt 0 ] && { _at "$CONTENT_TOP" $(( COLS - 2 )); printf '%b^%b' "$T_MENU_DIM" "$T_RESET"; }
 }
 
 # --- Menu model ----------------------------------------------------
@@ -573,9 +664,9 @@ tui_dispatch() {
                 deploy|stop|down|build)
                     STACK_ACTION="$id"
                     local s; for s in "${STACKS[@]}"; do STACK_PICK[$s]=1; done
-                    MENU_SEL=0; MENU_OFF=0; TUI_VIEW="stacks" ;;
-                logs)   MENU_SEL=0; MENU_OFF=0; TUI_VIEW="logs" ;;
-                config) MENU_SEL=0; MENU_OFF=0; TUI_VIEW="config"; CONFIG_CACHE_DIRTY=1 ;;
+                    _tui_goto stacks ;;
+                logs)   _tui_goto logs ;;
+                config) _tui_goto config; CONFIG_CACHE_DIRTY=1 ;;
                 status)
                     TUI_STATUS_AT=0; tui_refresh_status
                     tui_message "Status" "$(docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Networks}}' 2>&1)" ;;
@@ -617,11 +708,21 @@ Bring those down first, or clear ${NETWORK_STACK} from the selection. (The CLI h
     return 0
 }
 
+# esc / left move one level up. On the main view they do nothing - only `q`
+# (or the Quit item) leaves the TUI.
 tui_back() {
     case "$TUI_VIEW" in
-        main) return 1 ;;
-        *) TUI_VIEW="main"; MENU_SEL=0; MENU_OFF=0; TUI_NEED_MENU=1; return 0 ;;
+        main) : ;;
+        *)    _tui_goto main ;;
     esac
+}
+
+# Toggle which pane the arrow keys drive. The hint bar lives in the frame, so a
+# focus change forces a frame repaint.
+tui_toggle_focus() {
+    if [ "$TUI_FOCUS" = status ]; then TUI_FOCUS=menu
+    else TUI_FOCUS=status; TUI_STATUS_OFF=0; fi
+    TUI_NEED_FRAME=1; TUI_NEED_MENU=1; TUI_NEED_RIGHT=1
 }
 
 # --- Main loop ---------------------------------------------------
@@ -635,16 +736,33 @@ tui_main() {
         tui_render_menu
         tui_render_right
         tui_read_key
+
+        # Status pane has focus: arrows scroll it, s/esc/left return to the menu.
+        if [ "$TUI_FOCUS" = status ]; then
+            case "$_KEY" in
+                _timeout)               tui_refresh_status ;;
+                up|down|pgup|pgdn|home|end) tui_status_scroll "$_KEY" ;;
+                char:s|tab|left|esc)    tui_toggle_focus ;;
+                q)                      break ;;
+            esac
+            continue
+        fi
+
         case "$_KEY" in
             _timeout) tui_refresh_status ;;
             up)   MENU_SEL=$(( MENU_SEL - 1 )); [ "$MENU_SEL" -lt 0 ] && MENU_SEL=$(( ${#MENU_IDS[@]} - 1 )); TUI_NEED_MENU=1 ;;
             down) MENU_SEL=$(( MENU_SEL + 1 )); [ "$MENU_SEL" -ge "${#MENU_IDS[@]}" ] && MENU_SEL=0; TUI_NEED_MENU=1 ;;
+            pgup) MENU_SEL=$(( MENU_SEL - 5 )); [ "$MENU_SEL" -lt 0 ] && MENU_SEL=0; TUI_NEED_MENU=1 ;;
+            pgdn) MENU_SEL=$(( MENU_SEL + 5 )); [ "$MENU_SEL" -ge "${#MENU_IDS[@]}" ] && MENU_SEL=$(( ${#MENU_IDS[@]} - 1 )); TUI_NEED_MENU=1 ;;
+            home) MENU_SEL=0; TUI_NEED_MENU=1 ;;
+            end)  MENU_SEL=$(( ${#MENU_IDS[@]} - 1 )); TUI_NEED_MENU=1 ;;
             enter) tui_dispatch || break ;;
             space)
                 [ "$TUI_VIEW" = stacks ] && { local id="${MENU_IDS[$MENU_SEL]}"; [ "$id" != "__run" ] && tui_stack_toggle_ok "$id" && STACK_PICK[$id]=$(( 1 - ${STACK_PICK[$id]:-0} )); TUI_NEED_MENU=1; } ;;
             char:a)
                 [ "$TUI_VIEW" = stacks ] && { local s; for s in "${STACKS[@]}"; do STACK_PICK[$s]=1; done; TUI_NEED_MENU=1; } ;;
-            left|esc) tui_back || break ;;
+            char:s|tab) tui_toggle_focus ;;
+            left|esc) tui_back ;;
             q) break ;;
         esac
     done
