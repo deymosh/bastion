@@ -31,19 +31,22 @@ services:
       transit:
         ipv4_address: 10.253.0.2
 
+  # alpine/socat: socat is the ENTRYPOINT, no `apk add`, no shell - the mock is
+  # listening the instant the container starts (deterministic, no network pull
+  # at runtime). A plain accept-and-close is all the reachability probe needs.
   cln_mock:                 # CLN's pinned transit slot (cln_config bind-addr, -> .10)
-    image: alpine:3
-    command: ["sh", "-c", "apk add -q socat && exec socat TCP-LISTEN:9735,fork,reuseaddr SYSTEM:'printf reachable'"]
+    image: alpine/socat:1.8.1.3
+    command: ["-T1", "TCP-LISTEN:9735,fork,reuseaddr", "SYSTEM:true"]
     networks: { transit: { ipv4_address: 10.253.0.10 } }
 
   teos_mock:               # TEOS's pinned transit slot (teos.toml api_bind, -> .11)
-    image: alpine:3
-    command: ["sh", "-c", "apk add -q socat && exec socat TCP-LISTEN:9814,fork,reuseaddr SYSTEM:'printf reachable'"]
+    image: alpine/socat:1.8.1.3
+    command: ["-T1", "TCP-LISTEN:9814,fork,reuseaddr", "SYSTEM:true"]
     networks: { transit: { ipv4_address: 10.253.0.11 } }
 
   btc_mock:               # a per-stack-subnet address: tor must NOT reach this
-    image: alpine:3
-    command: ["sh", "-c", "apk add -q socat && exec socat TCP-LISTEN:9814,fork,reuseaddr SYSTEM:'printf reachable'"]
+    image: alpine/socat:1.8.1.3
+    command: ["-T1", "TCP-LISTEN:9814,fork,reuseaddr", "SYSTEM:true"]
     networks: { isolated: { ipv4_address: 10.19.0.5 } }
 
 networks:

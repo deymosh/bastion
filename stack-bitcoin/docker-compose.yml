@@ -8,12 +8,11 @@ services:
       dockerfile: Dockerfile.lightningd
     container_name: lightningd
     restart: unless-stopped
-    # Ordering only: with bcli disabled and trustedcoin as the chain backend,
-    # CLN does not query bitcoind, but this keeps a sane start order if the
-    # operator re-enables bcli. Cross-stack ordering (Tor) is handled by
-    # ./bastion up waiting for the tor container to be healthy.
-    depends_on:
-      - bitcoind
+    # No depends_on bitcoind: the chain backend is trustedcoin (bcli disabled),
+    # so CLN never queries bitcoind, and a hard dependency would make
+    # `docker compose up lightningd` also start a full bitcoind sync - the one
+    # thing the local-testing workflow must avoid. `./bastion up` still starts
+    # bitcoind (it is in the stack) and waits for tor to be healthy first.
     logging:
       driver: "json-file"
       options:

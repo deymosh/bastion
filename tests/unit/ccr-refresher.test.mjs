@@ -39,7 +39,11 @@ async function runRefresher({ credentials, tokenUrl, ms = 2500, env = {} }) {
   child.stderr.on("data", (d) => (out += d));
   await new Promise((r) => setTimeout(r, ms));
   child.kill("SIGKILL");
-  const after = existsSync(credFile) ? JSON.parse(readFileSync(credFile, "utf8")) : null;
+  let after = null;
+  if (existsSync(credFile)) {
+    const raw = readFileSync(credFile, "utf8");
+    try { after = JSON.parse(raw); } catch { after = raw; }
+  }
   rmSync(dir, { recursive: true, force: true });
   return { out, after };
 }
@@ -49,6 +53,15 @@ test("no credentials file -> idle, no crash, no file created", async () => {
   assert.match(out, /idle/i);
   assert.equal(after, null);
   assert.doesNotMatch(out, /unexpected error|TypeError|ReferenceError/);
+});
+
+test("malformed JSON credentials -> idle (no 60s hot loop), file untouched", async () => {
+  const { out, after } = await runRefresher({ credentials: "{ not json", ms: 3500 });
+  assert.match(out, /not valid JSON/i);
+  assert.doesNotMatch(out, /refreshing|refreshed OK|token endpoint/i, "no refresh attempt");
+  // interval is 1s; a "transient" would re-log every retry. "idle" logs once.
+  assert.equal((out.match(/not valid JSON/g) || []).length, 1, "logged once, not looping");
+  assert.equal(after, "{ not json");
 });
 
 test("API-key style file (no claudeAiOauth) -> idle, file untouched", async () => {

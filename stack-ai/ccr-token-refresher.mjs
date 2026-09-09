@@ -81,8 +81,11 @@ async function tick() {
   try {
     data = JSON.parse(raw);
   } catch {
-    logOnce("bad-json", "credentials file is not valid JSON - idle");
-    return "transient";
+    // A half-written file resolves within seconds; a persistently malformed
+    // one is the operator's to fix. Either way, recheck at the normal
+    // interval - no point hammering it every MIN_RETRY_MS.
+    logOnce("bad-json", "credentials file is not valid JSON - idle until it parses");
+    return "idle";
   }
 
   const oauth = data && typeof data === "object" ? data.claudeAiOauth : null;

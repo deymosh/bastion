@@ -41,8 +41,10 @@ Procedure:
 
 1. `docker compose -f stack-network/docker-compose.yml up -d tor` and wait for
    `docker inspect --format '{{.State.Health.Status}}' tor` = `healthy`.
-2. Start only `lightningd` (a Compose profile / an explicit service name), with a
-   throwaway data directory — see §3 for the volume.
+2. `docker compose -f stack-bitcoin/docker-compose.yml up -d lightningd` — this
+   starts *only* `lightningd` (it has no `depends_on`), with a throwaway data
+   directory (see §3 for the volume). If you ever add a `depends_on: bitcoind`,
+   pass `--no-deps` or you will start a full-chain sync.
 3. Expect: container joins `bastion-bitcoin` + `bastion-transit`; connects to the
    Tor control port at `10.254.0.2:9051`; `trustedcoin` begins syncing headers.
 4. `docker exec lightningd lightning-cli getinfo` → returns; `getinfo` shows the

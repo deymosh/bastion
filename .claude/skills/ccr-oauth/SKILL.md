@@ -49,7 +49,7 @@ contents.
 Standard OAuth2 refresh, no auth header:
 
 ```
-POST https://claude.ai/v1/oauth/token
+POST https://platform.claude.com/v1/oauth/token
 Content-Type: application/x-www-form-urlencoded
 
 grant_type=refresh_token
@@ -57,13 +57,15 @@ client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e
 refresh_token=<current refreshToken>
 ```
 
+Both constants were read out of the bundled `@anthropic-ai/claude-code` binary
+(`CLIENT_ID:"9d1c250a-…"` next to `https://platform.claude.com/…`). The
+refresher lets you override them (`CCR_OAUTH_TOKEN_URL`, `CCR_OAUTH_CLIENT_ID`)
+if a future CLI moves them — re-check with:
+`grep -aoE 'CLIENT_ID:"[0-9a-f-]{36}"|https://[a-z.]+/v1/oauth/token' /usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe`
+
 Response (200): `{ "access_token", "refresh_token", "expires_in" }` — the refresh
 token **rotates**, so the new one must be written back. `expires_in` is seconds
 (~36000). Compute `expiresAt = Date.now() + expires_in*1000`.
-
-**Verify the endpoint + `client_id` against the baked-in CLI** rather than
-trusting these constants blindly:
-`grep -rhoE '(client_id|oauth/token|[0-9a-f-]{36})' /usr/local/lib/node_modules/@anthropic-ai/claude-code/ | sort -u`.
 
 Error handling:
 - `4xx` with `invalid_grant` → the refresh token is dead; an operator must

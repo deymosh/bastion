@@ -35,6 +35,15 @@ YELLOW='\033[0;33m'
 NC='\033[0m' 
 
 # --- LOGIC ---
+
+# Emit "KEY='value'" with the value single-quoted so the file stays safe to
+# source: a value like "a b; rm -rf ~" or "$(...)" is data, not code. Empty
+# values become KEY='' . read_env_var() strips the surrounding quotes on read.
+_wc_kv() {
+    local v=${2//\'/\'\\\'\'}
+    printf "%s='%s'\n" "$1" "$v"
+}
+
 write_config() {
     local temp_file extra_file
     temp_file=$(mktemp "${CONFIG_FILE}.XXXXXX")
@@ -70,51 +79,51 @@ write_config() {
         echo
         echo "# Network"
         echo "# Public address or DNS name used by WireGuard clients."
-        printf 'WIREGUARD_SERVERURL=%s\n' "$WIREGUARD_SERVERURL"
+        _wc_kv WIREGUARD_SERVERURL "$WIREGUARD_SERVERURL"
         echo "# UDP port exposed by the WireGuard server."
-        printf 'WIREGUARD_SERVERPORT=%s\n' "$WIREGUARD_SERVERPORT"
+        _wc_kv WIREGUARD_SERVERPORT "$WIREGUARD_SERVERPORT"
         echo "# Number of WireGuard peer profiles to generate."
-        printf 'WIREGUARD_PEERS=%s\n' "$WIREGUARD_PEERS"
+        _wc_kv WIREGUARD_PEERS "$WIREGUARD_PEERS"
         echo
         echo "# Bitcoin and Core Lightning"
         echo "# Alias announced by the Core Lightning node."
-        printf 'NODE_ALIAS=%s\n' "$NODE_ALIAS"
+        _wc_kv NODE_ALIAS "$NODE_ALIAS"
         echo
         echo "# Host and access defaults"
         echo "# Container and host timezone."
-        printf 'TIMEZONE=%s\n' "$TIMEZONE"
+        _wc_kv TIMEZONE "$TIMEZONE"
         echo "# Host UID/GID used by services that support non-root execution."
-        printf 'USER_ID=%s\n' "$USER_ID"
-        printf 'GROUP_ID=%s\n' "$GROUP_ID"
+        _wc_kv USER_ID "$USER_ID"
+        _wc_kv GROUP_ID "$GROUP_ID"
         echo "# Pi-hole web administration password."
-        printf 'PIHOLE_PASSWORD=%s\n' "$PIHOLE_PASSWORD"
+        _wc_kv PIHOLE_PASSWORD "$PIHOLE_PASSWORD"
         echo
         echo "# Optional Bastion services"
         echo "# LXMF identity allowed to access the bridge."
-        printf 'LXMF_ALLOWED_IDENTITY=%s\n' "$LXMF_ALLOWED_IDENTITY"
+        _wc_kv LXMF_ALLOWED_IDENTITY "$LXMF_ALLOWED_IDENTITY"
         echo
         echo "# CodeDeck+"
         echo "# Comma-separated trusted Nostr relay URLs."
-        printf 'CODEDECK_RELAYS=%s\n' "$CODEDECK_RELAYS"
+        _wc_kv CODEDECK_RELAYS "$CODEDECK_RELAYS"
         echo "# SOCKS5 proxy used for CodeDeck relay connections."
-        printf 'CODEDECK_TOR_PROXY_URL=%s\n' "$CODEDECK_TOR_PROXY_URL"
+        _wc_kv CODEDECK_TOR_PROXY_URL "$CODEDECK_TOR_PROXY_URL"
         echo "# Optional comma-separated Git repositories cloned into CodeDeck workspaces."
-        printf 'GIT_REPO=%s\n' "$GIT_REPO"
+        _wc_kv GIT_REPO "$GIT_REPO"
         echo "# Optional Git identity used by CodeDeck."
-        printf 'GIT_USER=%s\n' "$GIT_USER"
-        printf 'GIT_EMAIL=%s\n' "$GIT_EMAIL"
+        _wc_kv GIT_USER "$GIT_USER"
+        _wc_kv GIT_EMAIL "$GIT_EMAIL"
         echo
         echo "# Claude Code Router"
         echo "# Authentication token for the CCR web UI."
-        printf 'CCR_WEB_AUTH_TOKEN=%s\n' "$CCR_WEB_AUTH_TOKEN"
+        _wc_kv CCR_WEB_AUTH_TOKEN "$CCR_WEB_AUTH_TOKEN"
         echo "# 1 lets Claude Code populate its model picker from the gateway's /v1/models."
-        printf 'CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=%s\n' "$CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"
+        _wc_kv CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY "$CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"
         echo
         echo "# CodeDeck Claude authentication"
         echo "# Required by CodeDeck+; keep this file private."
-        printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\n' "$CLAUDE_CODE_OAUTH_TOKEN"
+        _wc_kv CLAUDE_CODE_OAUTH_TOKEN "$CLAUDE_CODE_OAUTH_TOKEN"
         echo "# Optional GitHub token for CodeDeck repository operations."
-        printf 'GITHUB_TOKEN=%s\n' "$GITHUB_TOKEN"
+        _wc_kv GITHUB_TOKEN "$GITHUB_TOKEN"
         if [ -s "$extra_file" ]; then
             echo
             echo "# Additional custom variables"
@@ -147,18 +156,21 @@ config_var_is_secret() {
     esac
 }
 
-# Read one managed value straight from the config file (no sourcing).
+# Read one managed value straight from the config file (no sourcing). Decodes
+# the KEY='...' form write_config produces (including '\'' -> ' un-escaping),
+# and tolerates a legacy unquoted or double-quoted value.
 read_env_var() {
     [ -f "$CONFIG_FILE" ] || return 0
-    awk -v key="$1" '
-        { line = $0; sub(/^[[:space:]]*export[[:space:]]+/, "", line) }
-        line ~ "^" key "=" {
-            sub("^" key "=", "", line)
-            gsub(/^["'\'']|["'\'']$/, "", line)
-            print line
-            exit
-        }
-    ' "$CONFIG_FILE"
+    local line val
+    line=$(grep -m1 -E "^[[:space:]]*(export[[:space:]]+)?$1=" "$CONFIG_FILE" 2>/dev/null) || return 0
+    val=${line#*=}
+    if [[ $val == \'*\' ]]; then
+        val=${val:1:${#val}-2}
+        val=${val//\'\\\'\'/\'}
+    elif [[ $val == \"*\" ]]; then
+        val=${val:1:${#val}-2}
+    fi
+    printf '%s' "$val"
 }
 
 # Validate a proposed value for a managed key. Prints an error and returns 1 on

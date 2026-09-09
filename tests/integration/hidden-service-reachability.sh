@@ -45,16 +45,29 @@ if [ "$s" != healthy ]; then
   "${COMPOSE[@]}" logs tor | tail -30
   exit 1
 fi
-sleep 5   # the alpine mocks apk-add socat on start
 
 probe() { # ip port -> REACHABLE | unreachable
   "${COMPOSE[@]}" exec -T tor timeout 5 bash -c "cat < /dev/null > /dev/tcp/$1/$2" 2>/dev/null \
     && echo REACHABLE || echo unreachable
 }
 
+# The alpine/socat mocks listen immediately, but the container process still
+# needs a beat to schedule; poll a mock that MUST be reachable instead of a
+# fixed sleep.
+for _ in $(seq 1 20); do
+  [ "$(probe 10.253.0.10 9735)" = REACHABLE ] && break
+  sleep 1
+done
+
 fail=0
 expect() { # label ip port want
-  local got; got=$(probe "$2" "$3")
+  local got
+  for _ in 1 2 3; do        # a want=REACHABLE that isn't yet may just need a moment
+    got=$(probe "$2" "$3")
+    [ "$got" = "$4" ] && break
+    [ "$4" = unreachable ] && break
+    sleep 1
+  done
   if [ "$got" = "$4" ]; then printf '  \033[32mok\033[0m   %-46s %s\n' "$1" "$got"
   else printf '  \033[31mFAIL\033[0m %-46s got %s, want %s\n' "$1" "$got" "$4"; fail=1; fi
 }

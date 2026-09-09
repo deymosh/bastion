@@ -74,9 +74,21 @@ first=$(cat "$CONFIG_FILE")
 write_config
 second=$(cat "$CONFIG_FILE")
 assert_eq "$first" "$second" "write_config is idempotent"
-assert_contains "$first" "NODE_ALIAS=ci-node"   "write_config emits a managed value"
+assert_contains "$first" "NODE_ALIAS='ci-node'" "write_config emits a managed value, single-quoted"
 assert_contains "$first" "MY_CUSTOM=keepme"     "carries over a user's non-managed var"
 assert_contains "$first" "# Additional custom variables" "non-managed vars land under their section"
+
+echo "== a value with shell metachars survives a write -> source round-trip =="
+: > "$CONFIG_FILE"
+for _v in "${MANAGED_VARS[@]}"; do printf -v "$_v" '%s' ''; done
+# shellcheck disable=SC2034
+GIT_USER="a b; touch $WORK/PWNED"; PIHOLE_PASSWORD="x'\"'\"'y"; NODE_ALIAS='n'
+write_config
+( set -a; source <(sed 's/^export //g' "$CONFIG_FILE" | grep -v '^[[:space:]]*#'); set +a
+  assert_eq "$GIT_USER" "a b; touch $WORK/PWNED" "sourcing the written file keeps the value literal" )
+assert_ok test '!' -e "$WORK/PWNED"            # the ; touch never ran
+assert_eq "$(read_env_var GIT_USER)"        "a b; touch $WORK/PWNED" "read_env_var round-trips a metachar value"
+assert_eq "$(read_env_var PIHOLE_PASSWORD)" "x'\"'\"'y"              "read_env_var round-trips an embedded quote"
 
 echo "== every \${VAR} the compose files interpolate is managed or has a default =="
 missing=""

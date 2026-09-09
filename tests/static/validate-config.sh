@@ -28,10 +28,13 @@ done
 # bitcoind reaches Tor by DNS name, not IP - assert that, not a literal.
 have '\-proxy=tor:9050' "$BC" && ok "bitcoind -proxy uses the tor DNS name" \
   || bad "bitcoind -proxy is not 'tor:9050'"
-# No config anywhere may still point at the pre-migration flat network.
-stale=$(grep -RlE '10\.0\.0\.[0-9]' stack-*/config stack-*/docker-compose.yml stack-bitcoin/scripts 2>/dev/null \
-  | grep -v '10\.0\.0\.0/' || true)
-[ -z "$stale" ] && ok "no stale 10.0.0.x addresses" || bad "stale 10.0.0.x in: $(echo "$stale" | paste -sd' ' -)"
+# No config anywhere may still point at a host on the pre-migration flat
+# network. Match 10.0.0.<host> (host 1-255) but not the 10.0.0.0/N CIDR, and
+# grep content (grep -n), not just filenames.
+stale=$(grep -RnE '10\.0\.0\.[1-9][0-9]*([^0-9/]|$)' \
+          stack-*/config stack-*/docker-compose.yml stack-bitcoin/scripts 2>/dev/null || true)
+[ -z "$stale" ] && ok "no stale 10.0.0.x host addresses" \
+  || bad "stale 10.0.0.x: $(printf '%s' "$stale" | head -3 | paste -sd'; ' -)"
 
 echo "== Hidden-service forward targets are on bastion-transit =="
 # CLN advertises cln_config's bind-addr to Tor; it must be the pinned transit IP.
