@@ -48,6 +48,8 @@ tui_init() {
         exit 1
     fi
     tui_setup_theme
+    set +m 2>/dev/null || true            # no "[1]+ Done" noise from the status probe
+    TUI_STATUS_TMP=$(mktemp 2>/dev/null || printf '%s' "${TMPDIR:-/tmp}/bastion-tui.$$")
     _tui_saved_stty=$(stty -g 2>/dev/null || true)
     stty -echo -icanon time 0 min 0 2>/dev/null || true
     printf '%s' "${E}[?1049h${E}[?25l"   # alt screen, hide cursor
@@ -61,6 +63,8 @@ tui_init() {
 tui_cleanup() {
     [ "$TUI_ACTIVE" = 1 ] || return 0
     TUI_ACTIVE=0
+    [ "$TUI_STATUS_JOB" != 0 ] && kill "$TUI_STATUS_JOB" 2>/dev/null
+    [ -n "$TUI_STATUS_TMP" ] && rm -f "$TUI_STATUS_TMP" "${TUI_STATUS_TMP}.ok" "${TUI_STATUS_TMP}.done"
     printf '%s' "${E}[?25h${E}[?1049l"   # show cursor, leave alt screen
     [ -n "$_tui_saved_stty" ] && stty "$_tui_saved_stty" 2>/dev/null || stty sane 2>/dev/null || true
     trap - EXIT WINCH INT TERM
@@ -90,6 +94,12 @@ tui_update_layout() {
     RIGHT_W=$(( COLS - RIGHT_X - 1 ))
     CONTENT_TOP=4
     CONTENT_BOT=$(( LINES - 2 ))
+    # Pre-render the horizontal rules once per layout change - drawing them with
+    # $(_rep ...) on every frame forks a subshell each time, which is the bulk of
+    # the redraw cost on Git Bash / Docker Desktop.
+    TUI_RULE_L=$(_rep '─' "$_LW")
+    TUI_RULE_R=$(_rep '─' "$RIGHT_W")
+    TUI_RULE_TOP=$(_rep '─' $(( COLS - 2 )))
     TUI_RESIZED=0
     TUI_NEED_FRAME=1; TUI_NEED_MENU=1; TUI_NEED_RIGHT=1
 }
@@ -101,8 +111,13 @@ _erase() { printf '%s' "${E}[${1}X"; }
 # Erase the left content column (from col 3 to the divider).
 _clr_to() { printf '%s' "${E}[${_LW:-40}X"; }
 
-# repeat a single-cell string N times
-_rep() { local s=$1 n=$2 o=''; while [ "$n" -gt 0 ]; do o+=$s; n=$((n-1)); done; printf '%s' "$o"; }
+# repeat a single-cell string N times (printf-pad + replace, no per-char loop)
+_rep() {
+    local s=$1 n=$2 pad
+    [ "$n" -le 0 ] && return 0
+    printf -v pad '%*s' "$n" ''
+    printf '%s' "${pad// /$s}"
+}
 
 # --- Input -------------------------------------------------------------
 _KEY=""
@@ -197,7 +212,7 @@ tui_message() {
     local title="$1" body="$2"
     TUI_NEED_FRAME=1; tui_draw_frame; tui_render_right
     _at "$CONTENT_TOP" 3; printf '%b%s%b' "${T_BOLD}${T_ACCENT}" "$title" "$T_RESET"
-    _at $(( CONTENT_TOP + 1 )) 3; printf '%b%s%b' "$T_LINE" "$(_rep '─' "$_LW")" "$T_RESET"
+    _at $(( CONTENT_TOP + 1 )) 3; printf '%b%s%b' "$T_LINE" "$TUI_RULE_L" "$T_RESET"
     local r=$(( CONTENT_TOP + 2 ))
     local wrapped; wrapped=$(printf '%s\n' "$body" | fold -s -w "$_LW")
     while IFS= read -r line; do
@@ -236,53 +251,86 @@ declare -A STACK_OF_CONTAINER=(
     [ccr]=ai [codedeck-bridge]=ai
 )
 TUI_STATUS_LINES=()
-TUI_STATUS_AT=-10
+TUI_STATUS_AT=-999
+TUI_STATUS_EVERY=4          # seconds between container probes
+TUI_STATUS_TMP=""           # set by tui_init
+TUI_STATUS_JOB=0            # pid of an in-flight probe, 0 if none
+TUI_DOCKER_OK=1
 
-tui_refresh_status() {
-    local now=$SECONDS
-    # Throttle, but always run the first time (before we have any lines).
-    if [ "${#TUI_STATUS_LINES[@]}" -gt 0 ] && [ $(( now - TUI_STATUS_AT )) -lt 2 ]; then
+# Turn the probe output file into TUI_STATUS_LINES. Pure bash - no subshell per
+# container (the old grep/printf-per-row was most of the redraw cost).
+_tui_status_parse() {
+    local n s status pad grp c
+    local -A st=() ss=()
+    if [ -s "$TUI_STATUS_TMP" ]; then
+        while IFS='|' read -r n s status; do
+            [ -n "$n" ] || continue
+            st["$n"]="$s"; ss["$n"]="$status"
+        done < "$TUI_STATUS_TMP"
+    fi
+
+    TUI_STATUS_LINES=()
+    if [ "$TUI_DOCKER_OK" = 1 ]; then
+        TUI_STATUS_LINES+=("${T_SUB}docker:${T_RESET} ${T_OK}up${T_RESET}")
+    else
+        TUI_STATUS_LINES+=("${T_SUB}docker:${T_RESET} ${T_ERR}down${T_RESET}")
+        TUI_NEED_RIGHT=1
         return 0
     fi
-    TUI_STATUS_AT=$now
-    TUI_STATUS_LINES=()
 
-    local dock="up"
-    docker info >/dev/null 2>&1 || dock="down"
-    TUI_STATUS_LINES+=("${T_SUB}docker:${T_RESET} $([ "$dock" = up ] && printf '%bup%b' "$T_OK" "$T_RESET" || printf '%bdown%b' "$T_ERR" "$T_RESET")")
-
-    if [ "$dock" = down ]; then TUI_NEED_RIGHT=1; return 0; fi
-
-    local raw; raw=$(docker ps -a --format '{{.Names}}|{{.State}}|{{.Status}}' 2>/dev/null)
-    local -A st=() ss=()
-    while IFS='|' read -r n s status; do
-        [ -n "$n" ] || continue
-        st["$n"]="$s"; ss["$n"]="$status"
-    done <<< "$raw"
-
-    local grp
     for grp in network bitcoin monitor web ai; do
-        TUI_STATUS_LINES+=("")
-        TUI_STATUS_LINES+=("${T_BOLD}${T_ACCENT}stack-${grp}${T_RESET}")
-        local c found=0
+        TUI_STATUS_LINES+=("" "${T_BOLD}${T_ACCENT}stack-${grp}${T_RESET}")
+        local found=0
         for c in "${!STACK_OF_CONTAINER[@]}"; do
             [ "${STACK_OF_CONTAINER[$c]}" = "$grp" ] || continue
             found=1
-            local s="${st[$c]:-}" mark col
-            case "$s" in
+            local cs="${st[$c]:-}" cstat="${ss[$c]:-}" mark col label
+            case "$cs" in
                 running)
-                    if printf '%s' "${ss[$c]}" | grep -qi 'healthy'; then mark='●'; col="$T_OK"
-                    elif printf '%s' "${ss[$c]}" | grep -qi 'unhealthy'; then mark='●'; col="$T_ERR"
-                    else mark='●'; col="$T_OK"; fi ;;
-                exited|dead) mark='○'; col="$T_MENU_DIM" ;;
-                restarting|paused) mark='◐'; col="$T_WARN" ;;
-                *) mark='·'; col="$T_MENU_DIM"; s="absent" ;;
+                    if [[ ${cstat,,} == *unhealthy* ]]; then mark='●'; col="$T_ERR"; label="unhealthy"
+                    elif [[ ${cstat,,} == *"(healthy)"* ]]; then mark='●'; col="$T_OK"; label="healthy"
+                    else mark='●'; col="$T_OK"; label="running"; fi ;;
+                exited|dead)       mark='○'; col="$T_MENU_DIM"; label="$cs" ;;
+                restarting|paused) mark='◐'; col="$T_WARN";     label="$cs" ;;
+                *)                 mark='·'; col="$T_MENU_DIM"; label="absent" ;;
             esac
-            TUI_STATUS_LINES+=("  ${col}${mark}${T_RESET} ${T_MENU}$(printf '%-16s' "$c")${T_RESET}${T_MENU_DIM}${s}${T_RESET}")
+            printf -v pad '%-16s' "$c"
+            TUI_STATUS_LINES+=("  ${col}${mark}${T_RESET} ${T_MENU}${pad}${T_RESET}${T_MENU_DIM}${label}${T_RESET}")
         done
-        [ "$found" = 0 ] && TUI_STATUS_LINES+=("  ${T_MENU_DIM}(no containers)${T_RESET}")
+        [ "$found" = 0 ] && TUI_STATUS_LINES+=("  ${T_MENU_DIM}(none)${T_RESET}")
     done
     TUI_NEED_RIGHT=1
+}
+
+# Non-blocking: a background `docker ps` writes to a temp file; we adopt the
+# result on a later tick. The main loop never stalls on Docker.
+tui_refresh_status() {
+    local now=$SECONDS
+
+    if [ "$TUI_STATUS_JOB" != 0 ] && [ -f "${TUI_STATUS_TMP}.done" ]; then
+        wait "$TUI_STATUS_JOB" 2>/dev/null || true
+        TUI_STATUS_JOB=0
+        [ -f "${TUI_STATUS_TMP}.ok" ] && TUI_DOCKER_OK=1 || TUI_DOCKER_OK=0
+        rm -f "${TUI_STATUS_TMP}.done"
+        _tui_status_parse
+    elif [ "$TUI_STATUS_JOB" != 0 ] && ! kill -0 "$TUI_STATUS_JOB" 2>/dev/null \
+         && [ $(( now - TUI_STATUS_AT )) -ge $(( TUI_STATUS_EVERY * 3 )) ]; then
+        TUI_STATUS_JOB=0        # probe vanished without a marker - let a new one start
+    fi
+
+    if [ "$TUI_STATUS_JOB" = 0 ] && [ $(( now - TUI_STATUS_AT )) -ge "$TUI_STATUS_EVERY" ]; then
+        TUI_STATUS_AT=$now
+        rm -f "${TUI_STATUS_TMP}.ok" "${TUI_STATUS_TMP}.done"
+        { docker ps -a --format '{{.Names}}|{{.State}}|{{.Status}}' > "$TUI_STATUS_TMP" 2>/dev/null \
+            && : > "${TUI_STATUS_TMP}.ok"
+          : > "${TUI_STATUS_TMP}.done"; } &
+        TUI_STATUS_JOB=$!
+    fi
+
+    if [ "${#TUI_STATUS_LINES[@]}" -eq 0 ]; then
+        TUI_STATUS_LINES=("${T_MENU_DIM}scanning containers...${T_RESET}")
+        TUI_NEED_RIGHT=1
+    fi
 }
 
 # --- Frame + panes ---------------------------------------------------
@@ -295,8 +343,8 @@ tui_draw_frame() {
     TUI_NEED_FRAME=0
     printf '%s' "${E}[2J"
     # top / bottom borders
-    _at 1 1; printf '%b┌%s┐%b' "$T_LINE" "$(_rep '─' $(( COLS - 2 )))" "$T_RESET"
-    _at "$LINES" 1; printf '%b└%s┘%b' "$T_LINE" "$(_rep '─' $(( COLS - 2 )))" "$T_RESET"
+    _at 1 1; printf '%b┌%s┐%b' "$T_LINE" "$TUI_RULE_TOP" "$T_RESET"
+    _at "$LINES" 1; printf '%b└%s┘%b' "$T_LINE" "$TUI_RULE_TOP" "$T_RESET"
     local r
     for (( r=2; r<LINES; r++ )); do
         _at "$r" 1; printf '%b│%b' "$T_LINE" "$T_RESET"
@@ -306,8 +354,8 @@ tui_draw_frame() {
     # title bar (row 2) + separator (row 3). ASCII only so printf width == columns.
     local titletxt="  BASTION  //  ${TUI_STACK_BC:-Dashboard}"
     _at 2 2; printf '%b%b%-*s%b' "$T_BAR_BG" "${T_BOLD}${T_TITLE}" "$LEFT_W" "${titletxt:0:LEFT_W}" "$T_RESET"
-    _at 3 2; printf '%b%s%b' "$T_LINE" "$(_rep '─' "$_LW")" "$T_RESET"
-    _at 3 "$RIGHT_X"; printf '%b%s%b' "$T_LINE" "$(_rep '─' "$RIGHT_W")" "$T_RESET"
+    _at 3 2; printf '%b%s%b' "$T_LINE" "$TUI_RULE_L" "$T_RESET"
+    _at 3 "$RIGHT_X"; printf '%b%s%b' "$T_LINE" "$TUI_RULE_R" "$T_RESET"
     # hint bar
     _at "$LINES" 3
     printf '%b %b↑↓%b move  %b⏎%b select  %b␣%b toggle  %b←/esc%b back  %bq%b quit %b' \
@@ -321,16 +369,34 @@ tui_render_right() {
     TUI_NEED_RIGHT=0
     _at 2 "$RIGHT_X"
     printf '%b%b%-*s%b' "$T_BAR_BG" "${T_BOLD}${T_TITLE}" "$RIGHT_W" "  Status" "$T_RESET"
-    local r=$CONTENT_TOP i=0
-    for (( i=0; i<${#TUI_STATUS_LINES[@]} && r<=CONTENT_BOT; i++, r++ )); do
+
+    local avail=$(( CONTENT_BOT - CONTENT_TOP + 1 ))
+    local lines=("${TUI_STATUS_LINES[@]}")
+    # Doesn't fit? drop the blank spacer rows first so more content survives.
+    if [ "${#lines[@]}" -gt "$avail" ]; then
+        local compact=() ln
+        for ln in "${lines[@]}"; do [ -n "$ln" ] && compact+=("$ln"); done
+        lines=("${compact[@]}")
+    fi
+
+    local total=${#lines[@]} shown
+    if [ "$total" -le "$avail" ]; then shown=$total; else shown=$(( avail - 1 )); fi
+
+    local r=$CONTENT_TOP i
+    for (( i=0; i<shown; i++, r++ )); do
         _at "$r" "$RIGHT_X"; _erase "$RIGHT_W"
-        _at "$r" "$RIGHT_X"; printf '%b' "${TUI_STATUS_LINES[$i]}"
+        _at "$r" "$RIGHT_X"; printf '%b' "${lines[$i]}"
     done
+    if [ "$total" -gt "$avail" ]; then
+        _at "$CONTENT_BOT" "$RIGHT_X"; _erase "$RIGHT_W"
+        _at "$CONTENT_BOT" "$RIGHT_X"; printf '%b... +%d more - widen the window%b' "$T_MENU_DIM" "$(( total - shown ))" "$T_RESET"
+        r=$(( CONTENT_BOT + 1 ))
+    fi
     for (( ; r<=CONTENT_BOT; r++ )); do _at "$r" "$RIGHT_X"; _erase "$RIGHT_W"; done
 }
 
 # --- Menu model ----------------------------------------------------
-MENU_IDS=(); MENU_LABELS=(); MENU_SEL=0; MENU_TITLE=""
+MENU_IDS=(); MENU_LABELS=(); MENU_SEL=0; MENU_OFF=0; MENU_TITLE=""
 declare -A STACK_PICK=()
 
 # Config rows are expensive to build (one file read per key), so cache them and
@@ -404,14 +470,28 @@ tui_build_menu() {
 tui_render_menu() {
     [ "$TUI_NEED_MENU" = 1 ] || return 0
     TUI_NEED_MENU=0
+
+    local count=${#MENU_IDS[@]}
+    local top=$(( CONTENT_TOP + 2 ))
+    local vis=$(( CONTENT_BOT - top + 1 )); [ "$vis" -lt 1 ] && vis=1
+
+    # Scroll the window so MENU_SEL stays visible; clamp the offset.
+    [ "$MENU_SEL" -lt "$MENU_OFF" ] && MENU_OFF=$MENU_SEL
+    [ "$MENU_SEL" -ge $(( MENU_OFF + vis )) ] && MENU_OFF=$(( MENU_SEL - vis + 1 ))
+    local maxoff=$(( count - vis )); [ "$maxoff" -lt 0 ] && maxoff=0
+    [ "$MENU_OFF" -gt "$maxoff" ] && MENU_OFF=$maxoff
+    [ "$MENU_OFF" -lt 0 ] && MENU_OFF=0
+
     _at "$CONTENT_TOP" 3; _clr_to
-    printf '%b%s%b' "$T_SUB" "${MENU_TITLE:0:_LW}" "$T_RESET"
-    local r=$(( CONTENT_TOP + 2 )) i
-    for (( i=0; i<${#MENU_IDS[@]} && r<=CONTENT_BOT; i++, r++ )); do
+    local title="$MENU_TITLE"
+    [ "$count" -gt "$vis" ] && title="$title  ($(( MENU_SEL + 1 ))/$count)"
+    printf '%b%s%b' "$T_SUB" "${title:0:_LW}" "$T_RESET"
+
+    local r=$top i
+    for (( i=MENU_OFF; i<count && r<=CONTENT_BOT; i++, r++ )); do
         _at "$r" 3; _clr_to
         local label="${MENU_LABELS[$i]:0:_LW}"
         if [ "$i" -eq "$MENU_SEL" ]; then
-            # paint a full-width highlight, then overprint the text on top
             _at "$r" 3; printf '%b%*s%b' "$T_SEL_BG" "$_LW" "" "$T_RESET"
             _at "$r" 4; printf '%b%b%s%b' "$T_SEL_BG" "${T_BOLD}${T_TITLE}" "$label" "$T_RESET"
         else
@@ -419,6 +499,10 @@ tui_render_menu() {
         fi
     done
     for (( ; r<=CONTENT_BOT; r++ )); do _at "$r" 3; _clr_to; done
+
+    # more-above / more-below markers at the right edge of the menu column
+    [ "$MENU_OFF" -gt 0 ] && { _at "$top" $(( LEFT_W - 1 )); printf '%b^%b' "$T_MENU_DIM" "$T_RESET"; }
+    [ $(( MENU_OFF + vis )) -lt "$count" ] && { _at "$CONTENT_BOT" $(( LEFT_W - 1 )); printf '%bv%b' "$T_MENU_DIM" "$T_RESET"; }
 }
 
 # --- Actions ------------------------------------------------------
@@ -489,9 +573,9 @@ tui_dispatch() {
                 deploy|stop|down|build)
                     STACK_ACTION="$id"
                     local s; for s in "${STACKS[@]}"; do STACK_PICK[$s]=1; done
-                    MENU_SEL=0; TUI_VIEW="stacks" ;;
-                logs)   MENU_SEL=0; TUI_VIEW="logs" ;;
-                config) MENU_SEL=0; TUI_VIEW="config"; CONFIG_CACHE_DIRTY=1 ;;
+                    MENU_SEL=0; MENU_OFF=0; TUI_VIEW="stacks" ;;
+                logs)   MENU_SEL=0; MENU_OFF=0; TUI_VIEW="logs" ;;
+                config) MENU_SEL=0; MENU_OFF=0; TUI_VIEW="config"; CONFIG_CACHE_DIRTY=1 ;;
                 status)
                     TUI_STATUS_AT=0; tui_refresh_status
                     tui_message "Status" "$(docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Networks}}' 2>&1)" ;;
@@ -536,7 +620,7 @@ Bring those down first, or clear ${NETWORK_STACK} from the selection. (The CLI h
 tui_back() {
     case "$TUI_VIEW" in
         main) return 1 ;;
-        *) TUI_VIEW="main"; MENU_SEL=0; TUI_NEED_MENU=1; return 0 ;;
+        *) TUI_VIEW="main"; MENU_SEL=0; MENU_OFF=0; TUI_NEED_MENU=1; return 0 ;;
     esac
 }
 
