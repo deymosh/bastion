@@ -91,4 +91,17 @@ assert_contains "$out" "Removing: stack-web" "down of another stack is untouched
 assert_not_contains "$out" "Refusing" "down stack-web is not refused while stack-bitcoin runs"
 assert_eq "$rc" 0 "down stack-web exits 0"
 
+echo "== versions =="
+out=$(b versions); rc=$?
+assert_eq "$rc" 0 "versions exits 0"
+for _s in stack-network stack-bitcoin stack-monitor stack-web stack-ai; do
+  assert_contains "$out" "$_s" "versions groups by $_s"
+done
+assert_contains "$out" "pihole/pihole:" "versions shows the pihole image pin"
+assert_contains "$out" "@sha256:"       "versions shows a digest pin"
+assert_contains "$out" "ccr" "versions lists the ccr service"
+# with a stubbed 'running' state the state column is populated, not 'absent'
+out=$(MOCK_INSPECT=running b versions)
+assert_contains "$out" "running" "versions reflects container state from docker inspect"
+
 finish

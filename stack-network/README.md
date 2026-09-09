@@ -23,13 +23,20 @@ The stack creates its private `bastion-network` subnet (`10.10.0.0/24`)
 and the cross-stack `bastion-transit` subnet (`10.254.0.0/24`). Only services
 that need cross-stack communication join the transit network.
 
-## Local DNS
+## Local DNS & the access model
 
-Pi-hole can hold a local-DNS record that maps a friendly name to the host's LAN
-IP (for example `bastion.node` -> `192.168.x.x`). Panels and APIs published on
-host ports - RTL (`3000`), Grafana (`4001`), CLN REST (`3001`), the CCR UI
-(`3458`), Pi-hole (`8081`) - are then reachable over the VPN by name, e.g.
-`http://bastion.node:3001`, instead of a bare IP.
+Pi-hole holds a local-DNS record that maps a friendly name to the host's LAN IP
+(for example `bastion.node` -> `192.168.x.x`). Every Hub service - the hub
+(`80`), RTL (`3000`), CLN REST (`3001`), the CCR UI (`3458`), Portainer (`4000`),
+Grafana (`4001`), Prometheus (`9090`), Pi-hole (`8081`) - is published on
+`0.0.0.0` on purpose, so it is reachable **over WireGuard, from localhost, and
+from the LAN** by that name.
+
+Because the ports are open on every interface, the **host firewall** is the
+access-control layer. `docs/firewall.md` documents a reference nftables ruleset and a ufw recipe that
+allows these ports from the WireGuard subnet and the LAN and drops them
+everywhere else (never expose them to the internet - only `51820/udp` faces the
+WAN). See the "Access model & firewall" section of the root `README.md`.
 
 ## Commands
 

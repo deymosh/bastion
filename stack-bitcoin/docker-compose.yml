@@ -44,7 +44,8 @@ services:
       - --clboss-auto-close=false
 
   bitcoind:
-    image: lncm/bitcoind:v26.0
+    # Version tag + digest. Pinned 2026-09-09.
+    image: lncm/bitcoind:v26.0@sha256:2a335ea0e77106fc8768cade374808485a43825a6b4a17e85dd36d4acd931b22
     container_name: bitcoind
     restart: unless-stopped
     user: "${USER_ID}:${GROUP_ID}"
@@ -80,7 +81,8 @@ services:
       - -rpcbind=0.0.0.0
 
   rtl:
-    image: shahanafarooqui/rtl:v0.15.8
+    # Version tag + digest. Pinned 2026-09-09.
+    image: shahanafarooqui/rtl:v0.15.8@sha256:54131152cba02a968d83fcc89c07426bfb979372f743649ba1e2626426a34dc0
     container_name: rtl
     restart: unless-stopped
     depends_on:

@@ -46,7 +46,9 @@ docker compose -f ./stack-bitcoin/docker-compose.yml logs -f lightningd
 
 Use `docker compose stop` for a temporary stop. Do not use `down`, remove data
 folders, or change wallet/plugin configuration without a backup and a recovery
-plan.
+plan. The full procedure - what is irreplaceable, how to back up, how to restore,
+how to move to a new host, and why the `.onion` stays stable - is in
+[../docs/disaster-recovery.md](../docs/disaster-recovery.md). Read it first.
 
 ## Configuration and state
 

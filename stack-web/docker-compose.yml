@@ -2,7 +2,8 @@ name: stack-web
 
 services:
   hub:
-    image: nginx:alpine
+    # Pinned by digest (nginx 1.31.5-alpine as of 2026-09-09; tag kept for readability).
+    image: nginx:1.31.5-alpine@sha256:72ba65eb42c10344912a84ff42408db7d34f2feb642204570ab8fc5ffd29f1d3
     container_name: hub
     restart: unless-stopped
     volumes:

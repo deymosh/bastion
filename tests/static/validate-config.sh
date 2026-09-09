@@ -77,6 +77,20 @@ have '^CookieAuthFile ' "$TORRC" && ok "torrc sets an explicit CookieAuthFile" \
 have 'chmod 0750 /data/.tor' stack-network/Dockerfile.tor && ok "Dockerfile.tor pre-creates /data/.tor 0750" \
   || bad "Dockerfile.tor does not pre-create /data/.tor with mode 0750"
 
+echo "== Image pinning / no stray Tor publish =="
+# Tor SOCKS/control are bound to 10.254.0.2 in torrc; nothing should publish them.
+pub=$(grep -REn '^\s*-\s*"[^"]*(:| )905[01]([:/"]|$)' stack-*/docker-compose.yml 2>/dev/null || true)
+[ -z "$pub" ] && ok "no compose file publishes host ports 9050/9051" \
+  || bad "a compose file still publishes 9050/9051: $(printf '%s' "$pub" | head -1)"
+# Every pulled image (has a '/', i.e. not a locally-built bare name) is digest-pinned.
+unpinned=$(grep -REn '^\s*image:\s*[^#]*/[^#]*$' stack-*/docker-compose.yml 2>/dev/null | grep -v '@sha256:' || true)
+[ -z "$unpinned" ] && ok "every pulled image is pinned by @sha256 digest" \
+  || bad "unpinned pulled image(s): $(printf '%s' "$unpinned" | head -2 | paste -sd'; ' -)"
+# CCR is built from a commit, not a moving branch.
+ccr_ref=$(grep -oE 'CCR_REF:\s*\S+' stack-ai/docker-compose.yml | awk '{print $2}')
+[[ "$ccr_ref" =~ ^[0-9a-f]{40}$ ]] && ok "CCR_REF is a 40-hex commit ($ccr_ref)" \
+  || bad "CCR_REF is not a commit SHA: '$ccr_ref'"
+
 echo "== Submodule tracking =="
 have 'branch = bastion-integration' .gitmodules && ok ".gitmodules tracks rust-teos bastion-integration" \
   || bad ".gitmodules does not pin rust-teos to bastion-integration"

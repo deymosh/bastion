@@ -26,6 +26,8 @@ Bastion is a deliberate Docker environment for the services that matter:
 
 Lightning nodes handle real funds. Software is provided as-is. **Use only at your own risk.** See [CLN security docs](https://docs.corelightning.org/).
 
+Before you run this with real funds, read **[docs/disaster-recovery.md](docs/disaster-recovery.md)** (what to back up, how to restore, how to move hosts) and set up the host firewall ([docs/firewall.md](docs/firewall.md)).
+
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -102,17 +104,41 @@ runs the plain path; the dashboard only opens on a real terminal.
 
 | Service | Port | Location | Version |
 |---------|------|----------|---------|
-| **Hub** (Bastion operations hub) | 80 | http://localhost | - |
-| RTL (Lightning UI) | 3000 | http://localhost:3000 | v0.15.8 |
-| Grafana | 4001 | http://localhost:4001 | latest |
-| Portainer | 4000 | https://localhost:4000 | latest |
-| Prometheus | 9090 | http://localhost:9090 | latest |
-| Pi-hole | 8081 | http://localhost:8081/admin | latest |
-| CLN REST API | 3001 | http://localhost:3001 | (CLN native) |
-| CCR management UI | 3458 | http://localhost:3458 | pinned fix branch  |
-| Wireguard VPN | 51820/udp | External | latest |
+| **Hub** (Bastion operations hub) | 80 | http://bastion.node | nginx 1.31.5-alpine |
+| RTL (Lightning UI) | 3000 | http://bastion.node:3000 | v0.15.8 |
+| Grafana | 4001 | http://bastion.node:4001 | 13.2.1 |
+| Portainer | 4000 | https://bastion.node:4000 | 2.45.0 |
+| Prometheus | 9090 | http://bastion.node:9090 | v3.14.0 |
+| Pi-hole | 8081 | http://bastion.node:8081/admin | 2026.07.2 |
+| CLN REST API | 3001 | http://bastion.node:3001 | (CLN native) |
+| CCR management UI | 3458 | http://bastion.node:3458 | pinned fix commit |
+| Wireguard VPN | 51820/udp | External (WAN) | 1.0.20260223-r0-ls121 |
 
-The Hub links to the available panels above using whatever hostname you're currently browsing with (localhost, LAN IP, WireGuard IP, or a Tor address), so you don't need to remember each port. CCR is included in the Hub and remains protected by its own web authentication.
+Image versions are pinned by digest; `./bastion versions` shows the pin and what
+is actually running. Bitcoin Core (`v26.0`) and the built images
+(`lightningd-custom`, `teosd`, `tor-custom`, `bastion-claude-code-router`) are
+not on this list — they carry no published UI.
+
+### Access model & firewall
+
+Every service above is published on `0.0.0.0` **by design**, so you can reach it
+three ways:
+
+- **over WireGuard** — the recommended path from outside the LAN;
+- **from `localhost`** on the host itself;
+- **from the trusted LAN** — e.g. a desktop on the same network.
+
+Pi-hole holds a local-DNS record (`bastion.node → <host LAN IP>`) so the Hub and
+every panel work by name from all three. The Hub itself links panels using
+whatever hostname you are browsing with, so you never need to remember a port.
+
+Because the ports are open on every interface, **the host firewall is the access
+control** — this is not optional in production. [docs/firewall.md](docs/firewall.md)
+gives a ready-to-use nftables ruleset and a `ufw` recipe that allow these ports
+from the WireGuard subnet and the LAN and drop them everywhere else, in
+particular from any WAN interface / router port-forward. Only `51820/udp`
+(WireGuard) is meant to face the internet. Portainer (port `4000`) mounts the
+Docker socket — firewall it the most tightly of all.
 
 **Defaults (change immediately):**
 - Grafana: `admin:admin`
@@ -143,13 +169,14 @@ bastion.conf                        # GENERATED - in .gitignore
 stack-*/.env                        # SYMLINKS - in .gitignore
 stack-*/data/                       # Volumes - in .gitignore
 stack-ai/docker-compose.yml        # CCR + CodeDeck+ integration
-stack-ai/Dockerfile.ccr             # CCR fix branch plus Claude Code
+stack-ai/Dockerfile.ccr             # CCR pinned commit + Claude Code
 ```
 
 ### AI Stack
 
-The AI stack builds Claude Code Router from the `fix/log-body.worker.js` branch of
-the project's CCR fork (`CCR_REPOSITORY` in `stack-ai/Dockerfile.ccr`), including
+The AI stack builds Claude Code Router from a **pinned commit** of the project's
+CCR fork (`CCR_REF` / `CCR_REPOSITORY` in `stack-ai/Dockerfile.ccr`; bump with
+`gh api repos/deymosh/claude-code-router/commits/<branch> --jq .sha`), including
 its Docker worker fix, and bakes in an OAuth token refresher so the login stays
 valid without manual re-auth. CCR includes Claude Code and runs as root because
 its upstream Docker entrypoint writes the Nginx configuration at startup.

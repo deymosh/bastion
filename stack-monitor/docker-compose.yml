@@ -2,10 +2,14 @@ name: stack-monitor
 
 services:
   portainer:
-    image: portainer/portainer-ce:latest
+    # Pinned by digest (tag kept for readability). Pinned 2026-09-09.
+    image: portainer/portainer-ce:2.45.0@sha256:511f3f06c96fe3b993ebeaafde311c1959cae73a7ef825dba6397d51b450dffa
     container_name: portainer
     restart: unless-stopped
     volumes:
+      # Portainer needs the Docker socket to manage containers - this is
+      # container-escape-equivalent. Firewall port 4000 tightly (WireGuard + LAN
+      # only, never WAN); a docker-socket-proxy in front is the planned upgrade.
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data
     ports:
@@ -15,7 +19,8 @@ services:
         ipv4_address: 10.30.0.2
 
   grafana:
-    image: grafana/grafana:latest
+    # Pinned by digest (tag kept for readability). Pinned 2026-09-09.
+    image: grafana/grafana:13.2.1@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283
     container_name: grafana
     restart: unless-stopped
     ports:
@@ -27,7 +32,8 @@ services:
         ipv4_address: 10.30.0.3
 
   node-exporter:
-    image: prom/node-exporter:latest
+    # Pinned by digest (tag kept for readability). Pinned 2026-09-09.
+    image: prom/node-exporter:v1.12.1@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0
     container_name: node-exporter
     restart: unless-stopped
     volumes:
@@ -43,7 +49,8 @@ services:
         ipv4_address: 10.30.0.4
 
   prometheus:
-    image: prom/prometheus:latest
+    # Pinned by digest (tag kept for readability). Pinned 2026-09-09.
+    image: prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0
     container_name: prometheus
     restart: unless-stopped
     ports:

@@ -126,13 +126,20 @@ blocks the run and explains why.
   per-stack subnet. Any service that must be reachable *through* Tor (inbound
   onion) has to advertise a `bastion-transit` address. Keep these three IPs and
   their config references in sync.
-- **Intentional design — do not "fix" it:** CLN REST (`3001`) and CCR (`3458`)
-  are published on `0.0.0.0` on the host on purpose. A WireGuard client reaches
-  them at the host's LAN IP (or a Pi-hole local-DNS name such as
-  `bastion.node`); the **host firewall** is the access-control layer. Do not
-  revert these to `127.0.0.1:` bindings.
+- **Intentional design — do not "fix" it:** every Hub-listed service is published
+  on `0.0.0.0` on the host on purpose — the hub (`80`), RTL (`3000`), CLN REST
+  (`3001`), CCR (`3458`), Portainer (`4000`), Grafana (`4001`), Prometheus
+  (`9090`). The maintainer wants each reachable three ways: over WireGuard, from
+  `localhost` on the host, and from the trusted LAN — keyed by a Pi-hole
+  local-DNS record (`bastion.node` → host LAN IP). The **host firewall** is the
+  access-control layer (`docs/firewall.md` is the reference; it is not
+  optional in production). Do not switch any of these to `127.0.0.1:` bindings.
+  This does **not** extend to `bitcoind` RPC, the Tor SOCKS/control ports, or any
+  other internal endpoint — those are never published.
 - Do not downgrade a pinned image tag / toolchain version to work around a build
-  failure — fix the root cause.
+  failure — fix the root cause. Pulled images are pinned `repo:<version>@sha256:…`;
+  bump the version *and* re-resolve the digest together. `./bastion versions`
+  shows the pin vs. what is running.
 
 ## Architecture / boot order
 

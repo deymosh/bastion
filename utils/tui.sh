@@ -526,9 +526,10 @@ tui_build_menu() {
         main)
             TUI_STACK_BC="Dashboard"
             MENU_TITLE="Main menu"
-            MENU_IDS=(deploy stop down build logs config status audit quit)
+            MENU_IDS=(deploy stop down build logs config status versions audit quit)
             MENU_LABELS=("▸ Deploy stacks" "■ Stop stacks" "⨯ Down (remove)" "⚒ Build images" \
-                         "☰ Logs" "≡ Configuration" "● Status" "∑ Profitability audit" "× Quit")
+                         "☰ Logs" "≡ Configuration" "● Status" "⛭ Image versions" \
+                         "∑ Profitability audit" "× Quit")
             ;;
         stacks)
             TUI_STACK_BC="Select stacks // ${STACK_ACTION}"
@@ -677,6 +678,8 @@ tui_dispatch() {
                 status)
                     TUI_STATUS_AT=0; tui_refresh_status
                     tui_message "Status" "$(docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Networks}}' 2>&1)" ;;
+                versions)
+                    tui_message "Image versions" "$(do_versions 2>&1)" ;;
                 audit)
                     tui_suspend bash -c 'python3 ./stack-bitcoin/scripts/node-audit.py 2>&1 | less -R || python3 ./stack-bitcoin/scripts/node-audit.py' ;;
                 quit) return 1 ;;

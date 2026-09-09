@@ -1,3 +1,12 @@
+# EXPERIMENTAL - not wired into `./bastion up` (ENABLE_LXMF_BRIDGE=false by
+# default in services/bastion-daemon.sh). This host-side RNS/LXMF bridge predates
+# the transit-network migration and is currently broken: it expects the Tor
+# control port on the host and reads the control cookie from
+# stack-bitcoin/data/tor/ (Tor now lives in stack-network with the cookie in the
+# bastion-tor-data volume), and it targets 10.0.0.1:4242 on the old flat network.
+# It needs a rewrite as a container on bastion-transit (or a SimpleX-over-Tor
+# replacement) before it can be used again. Left in tree as a reference only.
+
 import os
 import sys
 import time

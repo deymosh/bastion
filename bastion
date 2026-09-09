@@ -45,6 +45,7 @@ usage() {
     echo -e "  ${BOLD}build${NC}   [stack...] -> Build images without starting"
     echo -e "  ${BOLD}logs${NC}    [stack...] -> Tail logs"
     echo -e "  ${CYAN}status${NC}             -> Show running containers and networks"
+    echo -e "  ${CYAN}versions${NC}           -> Show the image pin vs. what is running"
     echo -e "  ${CYAN}audit${NC}              -> Node profitability audit"
     echo -e "  ${CYAN}tui${NC}                -> Force the interactive dashboard"
     echo -e ""
@@ -254,6 +255,38 @@ do_logs() {
     docker compose "${args[@]}" logs -f --tail=50
 }
 
+# service<TAB>image for each service in a compose file, in file order.
+_compose_service_images() {
+    awk '
+        /^  [A-Za-z0-9_-]+:[[:space:]]*$/ { svc=$1; sub(/:$/, "", svc); next }
+        /^    image:[[:space:]]/ && svc != "" { print svc "\t" $2; svc="" }
+    ' "$1"
+}
+
+# Show the image each service is pinned to, and - when the container is up - the
+# digest actually running, so a drift is obvious. Reuses STACKS from config.sh.
+do_versions() {
+    echo -e "${CYAN}${BOLD}Images - configured pin vs. running:${NC}"
+    local stack svc cfg st rid created rdig
+    for stack in "${STACKS[@]}"; do
+        echo -e "\n${BOLD}${stack}${NC}"
+        while IFS=$'\t' read -r svc cfg; do
+            [ -n "$svc" ] || continue
+            st=$(docker inspect -f '{{.State.Status}}' "$svc" 2>/dev/null || true)
+            rid=$(docker inspect -f '{{.Image}}' "$svc" 2>/dev/null || true)
+            created=""; rdig=""
+            if [ -n "$rid" ]; then
+                created=$(docker image inspect -f '{{.Created}}' "$rid" 2>/dev/null | cut -c1-10)
+                rdig=$(docker image inspect -f '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' "$rid" 2>/dev/null)
+            fi
+            printf '  %-16s %-9s %-11s %s\n' "$svc" "${st:-absent}" "${created:--}" "$cfg"
+            if [ -n "$rdig" ] && [ "${cfg##*@}" != "$cfg" ] && [ "${rdig##*@}" != "${cfg##*@}" ]; then
+                printf '  %b%-16s %-9s %-11s drift -> running %s%b\n' "$YELLOW" "" "" "" "${rdig##*@}" "$NC"
+            fi
+        done < <(_compose_service_images "./$stack/docker-compose.yml")
+    done
+}
+
 # Entry points used by the TUI (utils/tui.sh).
 bastion_stack_action() {
     local action="$1"; shift
@@ -320,6 +353,10 @@ case "$CMD" in
         print_header
         echo -e "${CYAN}${BOLD}[?] Current Environment Status:${NC}"
         docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Networks}}"
+        ;;
+    versions)
+        print_header
+        do_versions
         ;;
     audit)
         if [ -f "$AUDIT_SCRIPT" ]; then

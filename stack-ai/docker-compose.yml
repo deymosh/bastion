@@ -6,8 +6,10 @@ services:
       context: .
       dockerfile: Dockerfile.ccr
       args:
-        CCR_REF: fix/log-body.worker.js
-    image: bastion-claude-code-router:local
+        # Pin to a commit, not a branch: the branch head moves under us. Bump
+        # with `gh api repos/deymosh/claude-code-router/commits/<branch> --jq .sha`.
+        CCR_REF: ec9fc53436d4602b9617ee68269895f9e141aa99
+    image: bastion-claude-code-router:ec9fc53
     container_name: ccr
     restart: unless-stopped
     environment:
@@ -30,7 +32,8 @@ services:
         ipv4_address: 10.50.0.2
 
   codedeck-bridge:
-    image: ghcr.io/deymosh/codedeck-plus-bridge:v0.11.1
+    # Pinned by digest (version tag kept for readability). Pinned 2026-09-09.
+    image: ghcr.io/deymosh/codedeck-plus-bridge:v0.11.1@sha256:c7cb907258cc3503027d9b344d510411a7ed2e88f98a5258af214f0626b06c74
     container_name: codedeck-bridge
     restart: unless-stopped
     depends_on:

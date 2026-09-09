@@ -21,6 +21,7 @@ case "$1 $2" in
   "images -q")         printf '%s\n' "${MOCK_IMAGE_ID:-}" ;;
   "image inspect")     printf '%s\n' "${MOCK_IMAGE_LABEL:-}" ;;
   "inspect --format")  printf '%s\n' "${MOCK_HEALTH:-healthy}" ;;   # wait_for_health
+  "inspect -f")        printf '%s\n' "${MOCK_INSPECT:-}" ;;         # do_versions
   "compose "*)         echo "  (compose no-op: ${*:2})" ; exit 0 ;;
   "ps "*|"ps")         printf '%s\n' ${MOCK_PS_NAMES:-} ;;
 esac
