@@ -77,15 +77,24 @@ Run `./bastion` with no arguments on a terminal for the interactive dashboard
 use the subcommands:
 
 ```bash
-./bastion up       [stack ...]   # Start stacks in order (default: all)
-./bastion stop     [stack ...]   # Stop services (reverse order)
-./bastion down     [stack ...]   # Remove containers (reverse order)
-./bastion build    [stack ...]   # Build images without starting
-./bastion logs     [stack ...]   # Tail logs
-./bastion status                 # Show containers and networks
-./bastion audit                  # Check node profitability
-./bastion tui                    # Force the dashboard
+./bastion up       [stack ...]        # Start stacks in order (default: all)
+./bastion stop     [stack | container]# Stop a stack set, or one container
+./bastion down     [stack ...]        # Remove containers (reverse order)
+./bastion build    [stack ...]        # Build images without starting
+./bastion logs     [stack | container]# Tail logs
+./bastion restart  <container>        # Restart one container
+./bastion start    <container>        # Start one stopped container
+./bastion exec     <container> -- ... # Run a command in a container
+./bastion shell    <container>        # Shell into a container
+./bastion ps                          # Every container: state + health + stack
+./bastion status                      # docker ps table
+./bastion versions                    # Image pin vs. running
+./bastion audit                       # Check node profitability
+./bastion tui                         # Force the dashboard
 ```
+
+`docker compose` never needs to be run by hand: the per-container verbs above
+(and the TUI's **Containers** view) cover restart / stop / start / logs / shell.
 
 A stack name may be given with or without the `stack-` prefix
 (`./bastion up web ai`). On `up`, `--recreate-networks` drops a stale

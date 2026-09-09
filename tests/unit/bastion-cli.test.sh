@@ -127,6 +127,39 @@ assert_eq "$rc" 0 "up still succeeds when the rune could not be minted"
 assert_ok test '!' -e "$WORK/rune"
 : > "$WORK/rune"   # restore the no-op sentinel for later tests
 
+echo "== per-container operations =="
+out=$(b ps); rc=$?
+assert_eq "$rc" 0 "ps exits 0"
+assert_contains "$out" "CONTAINER" "ps prints a header"
+for _c in pihole lightningd grafana hub ccr; do assert_contains "$out" "$_c" "ps lists $_c"; done
+# restart routes to the container's own compose project
+out=$(b restart grafana)
+assert_contains "$out" "restart grafana" "restart calls 'compose ... restart grafana'"
+assert_contains "$out" "stack-monitor/docker-compose.yml" "restart uses the container's stack compose file"
+out=$(b start rtl);   assert_contains "$out" "start rtl"   "start routes to the container"
+# exec passes the command through (after an optional --)
+out=$(b exec ccr -- printenv HOME); assert_contains "$out" "exec ccr printenv HOME" "exec forwards the command"
+out=$(b exec ccr printenv HOME);    assert_contains "$out" "exec ccr printenv HOME" "exec works without the -- separator"
+# shell resolves bash-or-sh inside the container
+out=$(b shell hub); assert_contains "$out" "exec bash || exec sh" "shell tries bash then sh"
+# a single container name on 'stop'/'logs' takes the container path; a stack name still works
+out=$(b stop grafana); assert_contains "$out" "Stopping" "stop <container> uses the container path"
+assert_contains "$out" "stop grafana" "stop <container> stops just that service"
+out=$(b stop monitor); assert_contains "$out" "Stopping: stack-monitor" "stop <stack> still stops the whole stack"
+# unknown names
+out=$(b restart nope); rc=$?; assert_contains "$out" "usage:" "restart with an unknown name errors"; assert_eq "$rc" 1 "restart unknown exits 1"
+out=$(b exec ccr); rc=$?; assert_contains "$out" "usage:" "exec with no command errors"; assert_eq "$rc" 1 "exec without a command exits 1"
+
+echo "== per-container network guard =="
+out=$(MOCK_PS_NAMES='ccr grafana' b stop tor); rc=$?
+assert_contains "$out" "Refusing to stop tor" "stopping a stack-network container is refused while others run"
+assert_eq "$rc" 1 "the refusal exits 1"
+out=$(MOCK_PS_NAMES='ccr grafana' b stop tor --force)
+assert_contains "$out" "force" "--force downgrades the container guard"
+assert_contains "$out" "stop tor" "--force lets the container stop"
+out=$(MOCK_PS_NAMES='' b stop tor); assert_contains "$out" "stop tor" "no guard when nothing else runs"
+out=$(MOCK_PS_NAMES='ccr grafana' b restart grafana); assert_not_contains "$out" "Refusing" "a non-network container is never guarded"
+
 echo "== versions =="
 out=$(b versions); rc=$?
 assert_eq "$rc" 0 "versions exits 0"

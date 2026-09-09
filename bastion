@@ -40,19 +40,24 @@ print_header() {
 usage() {
     print_header
     echo -e "${YELLOW}${BOLD}COMMANDS:${NC}"
-    echo -e "  ${GREEN}up${NC}      [stack...] -> Deploy stacks in order (default: all)"
-    echo -e "  ${YELLOW}stop${NC}    [stack...] -> Stop containers (reverse order)"
-    echo -e "  ${RED}down${NC}    [stack...] -> Stop and remove containers (reverse order)"
-    echo -e "  ${BOLD}build${NC}   [stack...] -> Build images without starting"
-    echo -e "  ${BOLD}logs${NC}    [stack...] -> Tail logs"
-    echo -e "  ${CYAN}status${NC}             -> Show running containers and networks"
-    echo -e "  ${CYAN}versions${NC}           -> Show the image pin vs. what is running"
-    echo -e "  ${CYAN}audit${NC}              -> Node profitability audit"
-    echo -e "  ${CYAN}tui${NC}                -> Force the interactive dashboard"
+    echo -e "  ${GREEN}up${NC}      [stack...]     -> Deploy stacks in order (default: all)"
+    echo -e "  ${YELLOW}stop${NC}    [stack|ctr...] -> Stop stacks, or a single container"
+    echo -e "  ${RED}down${NC}    [stack...]     -> Stop and remove containers (reverse order)"
+    echo -e "  ${BOLD}build${NC}   [stack...]     -> Build images without starting"
+    echo -e "  ${BOLD}logs${NC}    [stack|ctr...] -> Tail logs (a stack set, or one container)"
+    echo -e "  ${GREEN}restart${NC} <container>    -> Restart one container"
+    echo -e "  ${GREEN}start${NC}   <container>    -> Start one stopped container"
+    echo -e "  ${BOLD}exec${NC}    <ctr> -- <cmd> -> Run a command in a container"
+    echo -e "  ${BOLD}shell${NC}   <container>    -> Open a shell in a container"
+    echo -e "  ${CYAN}ps${NC}                     -> Every Bastion container: state + health + stack"
+    echo -e "  ${CYAN}status${NC}                 -> docker ps table"
+    echo -e "  ${CYAN}versions${NC}               -> Image pin vs. what is running"
+    echo -e "  ${CYAN}audit${NC}                  -> Node profitability audit"
+    echo -e "  ${CYAN}tui${NC}                    -> Force the interactive dashboard"
     echo -e ""
     echo -e "${YELLOW}${BOLD}FLAGS:${NC}"
     echo -e "  ${BOLD}--recreate-networks${NC} -> On 'up', drop a stale bastion-network (old subnet) first"
-    echo -e "  ${BOLD}--force${NC}, ${BOLD}-f${NC}          -> Allow 'stop'/'down' of stack-network while other stacks run"
+    echo -e "  ${BOLD}--force${NC}, ${BOLD}-f${NC}         -> Allow 'stop'/'down' of stack-network while other stacks run"
     echo -e "  ${BOLD}--with-watchtower${NC}   -> Also run teosd (your own watchtower); off by default"
     echo -e ""
     echo -e "${YELLOW}${BOLD}STACKS:${NC}"
@@ -270,6 +275,75 @@ do_logs() {
     docker compose "${args[@]}" logs -f --tail=50
 }
 
+# --- Per-container operations (so `docker compose` is never run by hand) ---
+_is_container() { [ -n "${CONTAINER_STACK[$1]:-}" ]; }
+_is_stack() {
+    local w="$1"; case "$w" in stack-*) : ;; *) w="stack-$w" ;; esac
+    _contains "$w" "${STACKS[@]}"
+}
+
+# Refuse to stop/restart a stack-network container (tor, pihole, ...) while some
+# other stack still has containers up; --force overrides. Returns 0 to proceed.
+_network_container_guard() {
+    local c="$1" action="$2" others
+    [ "${CONTAINER_STACK[$c]:-}" = "$NETWORK_STACK" ] || return 0
+    others=$(running_stacks | grep -v "^${NETWORK_STACK}\$" | paste -sd' ' -)
+    [ -z "$others" ] && return 0
+    if [ "${FORCE:-0}" = 1 ]; then
+        echo -e "${YELLOW}${BOLD}[!] --force: ${action} ${c} with these still up -> ${others}${NC}"
+        return 0
+    fi
+    echo -e "${RED}${BOLD}[✘] Refusing to ${action} ${c} (part of ${NETWORK_STACK}) while other stacks run:${NC}" >&2
+    echo -e "    ${BOLD}${others}${NC}" >&2
+    echo -e "    ${c} underpins Tor / bastion-transit. Bring those down first, or pass ${BOLD}--force${NC}." >&2
+    return 1
+}
+
+# do_container <action> <container> [args...]
+do_container() {
+    local action="$1" c="$2"; shift 2
+    local stack="${CONTAINER_STACK[$c]:-}"
+    if [ -z "$stack" ]; then
+        echo -e "${RED}[✘] Unknown container: $c${NC}" >&2
+        echo -e "    Known: $(printf '%s ' "${!CONTAINER_STACK[@]}" | tr ' ' '\n' | sort | paste -sd' ' -)" >&2
+        return 1
+    fi
+    local cf="./$stack/docker-compose.yml"
+    export COMPOSE_PROFILES="$ALL_PROFILES"   # so opt-in services are addressable
+
+    case "$action" in
+        stop|restart) _network_container_guard "$c" "$action" || return 1 ;;
+    esac
+
+    case "$action" in
+        restart) echo -e "${CYAN}--> Restarting ${BOLD}$c${NC}"; docker compose -f "$cf" restart "$c" ;;
+        stop)    echo -e "${RED}--> Stopping ${BOLD}$c${NC}";    docker compose -f "$cf" stop "$c" ;;
+        start)   echo -e "${GREEN}--> Starting ${BOLD}$c${NC}";  docker compose -f "$cf" start "$c" ;;
+        logs)    echo -e "${CYAN}${BOLD}[!] Logs for $c (Ctrl-C to stop):${NC}"
+                 docker compose -f "$cf" logs -f --tail=100 "$c" ;;
+        exec)    MSYS_NO_PATHCONV=1 docker compose -f "$cf" exec "$c" "$@" ;;
+        shell)   echo -e "${CYAN}--> Shell in ${BOLD}$c${NC} (exit to leave)${NC}"
+                 MSYS_NO_PATHCONV=1 docker compose -f "$cf" exec "$c" \
+                     sh -c 'command -v bash >/dev/null 2>&1 && exec bash || exec sh' ;;
+        *) echo -e "${RED}[✘] Unknown container action: $action${NC}" >&2; return 1 ;;
+    esac
+}
+
+# Flat table of every Bastion container: state + health + owning stack.
+do_ps() {
+    printf '  %-16s %-10s %-12s %s\n' "CONTAINER" "STATE" "HEALTH" "STACK"
+    local stack svc info st hl
+    for stack in "${STACKS[@]}"; do
+        while IFS=$'\t' read -r svc _; do
+            [ -n "$svc" ] || continue
+            info=$(docker inspect -f '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}-{{end}}' "$svc" 2>/dev/null) || info="absent|-"
+            info=${info//[$'\n\r']/}
+            st=${info%%|*}; hl=${info##*|}
+            printf '  %-16s %-10s %-12s %s\n' "$svc" "${st:-absent}" "${hl:--}" "$stack"
+        done < <(_compose_service_images "./$stack/docker-compose.yml")
+    done
+}
+
 # service<TAB>image for each service in a compose file, in file order.
 _compose_service_images() {
     awk '
@@ -287,8 +361,8 @@ do_versions() {
         echo -e "\n${BOLD}${stack}${NC}"
         while IFS=$'\t' read -r svc cfg; do
             [ -n "$svc" ] || continue
-            st=$(docker inspect -f '{{.State.Status}}' "$svc" 2>/dev/null || true)
-            rid=$(docker inspect -f '{{.Image}}' "$svc" 2>/dev/null || true)
+            st=$(docker inspect -f '{{.State.Status}}' "$svc" 2>/dev/null || true); st=${st//[$'\n\r']/}
+            rid=$(docker inspect -f '{{.Image}}' "$svc" 2>/dev/null || true); rid=${rid//[$'\n\r']/}
             created=""; rdig=""
             if [ -n "$rid" ]; then
                 created=$(docker image inspect -f '{{.Created}}' "$rid" 2>/dev/null | cut -c1-10)
@@ -313,6 +387,7 @@ bastion_stack_action() {
     esac
 }
 bastion_stack_logs() { do_logs "$@"; }
+bastion_container_action() { do_container "$@"; }   # TUI Containers view
 
 # --- EXECUTION ---
 
@@ -368,10 +443,47 @@ case "$CMD" in
         print_header
         do_up "${SELECTED_STACKS[@]}"
         ;;
-    stop|down|build|logs)
+    stop|logs)
+        # A single known container name -> operate on that container; otherwise
+        # treat the args as a stack list (backward compatible).
+        if [ "$#" -eq 1 ] && _is_container "$1" && ! _is_stack "$1"; then
+            print_header
+            do_container "$CMD" "$1"
+        else
+            resolve_stacks "$@"
+            print_header
+            "do_${CMD}" "${SELECTED_STACKS[@]}"
+        fi
+        ;;
+    down|build)
         resolve_stacks "$@"
         print_header
         "do_${CMD}" "${SELECTED_STACKS[@]}"
+        ;;
+    restart|start)
+        if [ "$#" -ne 1 ] || ! _is_container "$1"; then
+            echo -e "${RED}[✘] usage: $0 $CMD <container>${NC}" >&2; exit 1
+        fi
+        print_header
+        do_container "$CMD" "$1"
+        ;;
+    exec)
+        _ec="${1:-}"; shift || true
+        [ "${1:-}" = "--" ] && shift
+        if [ -z "$_ec" ] || ! _is_container "$_ec" || [ "$#" -eq 0 ]; then
+            echo -e "${RED}[✘] usage: $0 exec <container> [--] <cmd> [args...]${NC}" >&2; exit 1
+        fi
+        do_container exec "$_ec" "$@"
+        ;;
+    shell)
+        if [ "$#" -ne 1 ] || ! _is_container "$1"; then
+            echo -e "${RED}[✘] usage: $0 shell <container>${NC}" >&2; exit 1
+        fi
+        do_container shell "$1"
+        ;;
+    ps)
+        print_header
+        do_ps
         ;;
     status)
         print_header

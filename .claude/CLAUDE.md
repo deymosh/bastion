@@ -35,15 +35,25 @@ The maintainer's dev host is **Windows** (Docker Desktop, Git Bash); the
 deployment target is **Linux**. Bash syntax is identical either way.
 
 ```bash
-./bastion                 # no args + a TTY -> interactive TUI
-./bastion up [stack...]   # deploy all stacks in order, or just the named ones
-./bastion stop [stack...] # stop (reverse order)
-./bastion down [stack...] # stop + remove (reverse order)
-./bastion status          # docker ps table
-./bastion build [stack...]# build images without starting
-./bastion logs [stack...] # tail logs
-./bastion audit           # node profitability audit (python)
+./bastion                       # no args + a TTY -> interactive TUI
+./bastion up [stack...]         # deploy all stacks in order, or just the named ones
+./bastion stop [stack|ctr...]   # stop a stack set (reverse order) or one container
+./bastion down [stack...]       # stop + remove (reverse order)
+./bastion build [stack...]      # build images without starting
+./bastion logs [stack|ctr...]   # tail logs
+./bastion restart|start <ctr>   # per-container lifecycle
+./bastion exec <ctr> -- <cmd>   # run a command in a container
+./bastion shell <ctr>           # shell into a container (bash if present, else sh)
+./bastion ps                    # every container: state + health + owning stack
+./bastion status                # docker ps table
+./bastion versions              # image pin vs. running
+./bastion audit                 # node profitability audit (python)
 ```
+
+A single container name on `stop`/`logs` uses the per-container path; a stack
+name keeps the stack behaviour. `restart`/`stop` of a `stack-network` container
+hit the same "other stacks running" guard as the stack-level `stop`
+(`--force` overrides). `docker compose` should never need to be run by hand.
 
 Any non-TTY invocation (`services/bastion-daemon.sh`, cron, a pipe) runs the
 plain path — the TUI never launches without an interactive terminal.

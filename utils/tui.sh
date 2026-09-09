@@ -298,6 +298,7 @@ TUI_STATUS_EVERY=4          # seconds between container probes
 TUI_STATUS_TMP=""           # set by tui_init
 TUI_STATUS_JOB=0            # pid of an in-flight probe, 0 if none
 TUI_DOCKER_OK=1
+declare -A TUI_CSTATE=()    # container -> "running(healthy)" / "exited" / "absent"
 
 # Turn the probe output file into TUI_STATUS_LINES. Pure bash - no subshell per
 # container (the old grep/printf-per-row was most of the redraw cost).
@@ -310,6 +311,17 @@ _tui_status_parse() {
             st["$n"]="$s"; ss["$n"]="$status"
         done < "$TUI_STATUS_TMP"
     fi
+    # A compact per-container state string for the Containers view.
+    TUI_CSTATE=()
+    for c in "${!STACK_OF_CONTAINER[@]}"; do
+        if [ -n "${st[$c]:-}" ]; then
+            TUI_CSTATE["$c"]="${st[$c]}"
+            [[ "${ss[$c]:-}" == *"(healthy)"* ]] && TUI_CSTATE["$c"]="running (healthy)"
+            [[ "${ss[$c]:-}" == *unhealthy* ]]   && TUI_CSTATE["$c"]="running (unhealthy)"
+        else
+            TUI_CSTATE["$c"]="absent"
+        fi
+    done
 
     TUI_STATUS_LINES=()
     if [ "$TUI_DOCKER_OK" = 1 ]; then
@@ -492,7 +504,16 @@ tui_render_right() {
 
 # --- Menu model ----------------------------------------------------
 MENU_IDS=(); MENU_LABELS=(); MENU_SEL=0; MENU_OFF=0; MENU_TITLE=""
+CONTAINER_SEL=""                       # container chosen in the Containers view
 declare -A STACK_PICK=()
+
+# Container names of a stack, in compose-file order (reuses ./bastion's helper).
+_tui_stack_containers() {
+    local svc _rest
+    while IFS=$'\t' read -r svc _rest; do
+        [ -n "$svc" ] && printf '%s\n' "$svc"
+    done < <(_compose_service_images "./$1/docker-compose.yml")
+}
 
 # Config rows are expensive to build (one file read per key), so cache them and
 # only rebuild when the view is (re-)entered or a value is saved.
@@ -526,9 +547,9 @@ tui_build_menu() {
         main)
             TUI_STACK_BC="Dashboard"
             MENU_TITLE="Main menu"
-            MENU_IDS=(deploy stop down build logs config status versions audit quit)
+            MENU_IDS=(deploy stop down build containers logs config status versions audit quit)
             MENU_LABELS=("▸ Deploy stacks" "■ Stop stacks" "⨯ Down (remove)" "⚒ Build images" \
-                         "☰ Logs" "≡ Configuration" "● Status" "⛭ Image versions" \
+                         "▦ Containers" "☰ Logs" "≡ Configuration" "● Status" "⛭ Image versions" \
                          "∑ Profitability audit" "× Quit")
             ;;
         stacks)
@@ -560,6 +581,26 @@ tui_build_menu() {
             local s
             for s in "${STACKS[@]}"; do MENU_IDS+=("$s"); MENU_LABELS+=("  $s"); done
             MENU_IDS+=("__all"); MENU_LABELS+=("  all stacks")
+            ;;
+        containers)
+            TUI_STACK_BC="Containers"
+            MENU_TITLE="[enter] act on a container"
+            local st cpad
+            for s in "${STACKS[@]}"; do
+                local c
+                for c in $(_tui_stack_containers "$s"); do
+                    MENU_IDS+=("$c")
+                    st="${TUI_CSTATE[$c]:-?}"
+                    printf -v cpad '%-16s' "$c"
+                    MENU_LABELS+=("  ${cpad}${st}")
+                done
+            done
+            ;;
+        container_actions)
+            TUI_STACK_BC="Containers // ${CONTAINER_SEL}"
+            MENU_TITLE="${CONTAINER_SEL} - ${TUI_CSTATE[$CONTAINER_SEL]:-?}"
+            MENU_IDS=(restart stop start logs shell)
+            MENU_LABELS=("↻ Restart" "■ Stop" "▶ Start" "☰ Logs (Ctrl-C to return)" "❯ Shell")
             ;;
     esac
     [ "$MENU_SEL" -ge "${#MENU_IDS[@]}" ] && MENU_SEL=$(( ${#MENU_IDS[@]} - 1 ))
@@ -673,6 +714,7 @@ tui_dispatch() {
                     STACK_ACTION="$id"
                     local s; for s in "${STACKS[@]}"; do STACK_PICK[$s]=1; done
                     _tui_goto stacks ;;
+                containers) _tui_goto containers ;;
                 logs)   _tui_goto logs ;;
                 config) _tui_goto config; CONFIG_CACHE_DIRTY=1 ;;
                 status)
@@ -714,6 +756,20 @@ Bring those down first, or clear ${NETWORK_STACK} from the selection. (The CLI h
         logs)
             local target=("$id"); [ "$id" = "__all" ] && target=("${STACKS[@]}")
             tui_suspend bastion_stack_logs "${target[@]}" ;;
+        containers)
+            CONTAINER_SEL="$id"
+            _tui_goto container_actions ;;
+        container_actions)
+            case "$id" in
+                logs|shell)
+                    tui_suspend bastion_container_action "$id" "$CONTAINER_SEL" ;;
+                restart|stop|start)
+                    if tui_confirm "${id} container ${CONTAINER_SEL} ?" y; then
+                        tui_suspend bastion_container_action "$id" "$CONTAINER_SEL"
+                        tui_message "Done" "'${id}' finished for ${CONTAINER_SEL}."
+                        TUI_STATUS_AT=0
+                    fi ;;
+            esac ;;
     esac
     return 0
 }
@@ -722,8 +778,9 @@ Bring those down first, or clear ${NETWORK_STACK} from the selection. (The CLI h
 # (or the Quit item) leaves the TUI.
 tui_back() {
     case "$TUI_VIEW" in
-        main) : ;;
-        *)    _tui_goto main ;;
+        main)              : ;;
+        container_actions) _tui_goto containers ;;
+        *)                 _tui_goto main ;;
     esac
 }
 
