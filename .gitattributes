@@ -1,0 +1,23 @@
+# Normalise line endings: everything is LF in the repo, regardless of the OS
+# it was authored on. Shell scripts and container entrypoints in particular
+# must be LF or they break inside Linux images.
+* text=auto eol=lf
+
+*.sh    text eol=lf
+*.mjs   text eol=lf
+*.cjs   text eol=lf
+*.js    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.json  text eol=lf
+*.toml  text eol=lf
+*.conf  text eol=lf
+*.md    text eol=lf
+bastion text eol=lf
+*entrypoint* text eol=lf
+
+# The submodule manages its own attributes.
+rust-teos/** -text
+
+*.png   binary
+*.svg   text eol=lf
