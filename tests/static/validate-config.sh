@@ -141,6 +141,18 @@ have 'run/secrets/ccr_web_auth_token'            stack-ai/ccr-entrypoint-wrapper
 have 'file: \.\./secrets/claude_code_oauth_token' stack-ai/docker-compose.yml && ok "claude_code_oauth_token declared from ../secrets/" || bad "claude_code_oauth_token not a file: secret"
 have 'file: \.\./secrets/github_token'            stack-ai/docker-compose.yml && ok "github_token declared from ../secrets/" || bad "github_token not a file: secret"
 
+echo "== CCR runs unprivileged =="
+AI="stack-ai/docker-compose.yml"
+awk '/^  ccr:/{c=1} c&&/^  [a-z]/&&!/^  ccr:/{c=0} c&&/cap_drop:/{d=1} c&&d&&/- ALL/{ok=1} END{exit ok?0:1}' "$AI" \
+  && ok "ccr drops all capabilities" || bad "ccr does not cap_drop ALL"
+awk '/^  ccr:/{c=1} c&&/^  [a-z]/&&!/^  ccr:/{c=0} c&&/no-new-privileges:true/{ok=1} END{exit ok?0:1}' "$AI" \
+  && ok "ccr sets no-new-privileges" || bad "ccr is missing no-new-privileges:true"
+have 'PUID: \$\{USER_ID' "$AI" && ok "ccr is told the host uid via PUID" || bad "ccr PUID is not wired to USER_ID"
+have 'exec gosu' stack-ai/ccr-entrypoint-wrapper.sh && ok "ccr wrapper gosu-drops to the run user" || bad "ccr wrapper does not drop privileges"
+have 'gosu' stack-ai/Dockerfile.ccr && ok "Dockerfile.ccr installs gosu" || bad "Dockerfile.ccr does not install gosu"
+have '^USER root' stack-ai/Dockerfile.ccr && bad "Dockerfile.ccr pins USER root" \
+  || ok "Dockerfile.ccr does not pin the runtime to root"
+
 echo "== Submodule tracking =="
 have 'branch = bastion-integration' .gitmodules && ok ".gitmodules tracks rust-teos bastion-integration" \
   || bad ".gitmodules does not pin rust-teos to bastion-integration"

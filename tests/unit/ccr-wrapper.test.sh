@@ -46,4 +46,22 @@ rm -f "$SECRET_ROOT/run/secrets/ccr_web_auth_token"
 out=$(timeout 5 env CCR_TOKEN_REFRESH=0 CCR_WEB_AUTH_TOKEN=from-the-env sh "$BIN/wrap2" 2>&1)
 assert_contains "$out" "token=[from-the-env]" "falls back to the env var when the secret file is absent"
 
+echo "== as root: chowns then gosu-drops to PUID/PGID =="
+# stub id/chown/gosu so we can watch the root path without actually being root.
+# The chown loop only fires for paths that exist, so make one.
+mkdir -p "$SECRET_ROOT/data"
+CHOWNABLE="$SECRET_ROOT/data"
+printf '#!/bin/sh\n[ "$1" = -u ] && { echo 0; exit 0; }\nexec /usr/bin/id "$@"\n' > "$BIN/id"; chmod +x "$BIN/id"
+printf '#!/bin/sh\necho "chown $*" >> "%s"\n'                        "$BIN/calls" > "$BIN/chown"; chmod +x "$BIN/chown"
+printf '#!/bin/sh\necho "gosu $1" >> "%s"; shift; exec "$@"\n'       "$BIN/calls" > "$BIN/gosu";  chmod +x "$BIN/gosu"
+: > "$BIN/calls"
+# point one chown target at our fixture dir so we can prove the loop runs
+sed "s#/data /app#$CHOWNABLE /app#" "$WRAP" > "$BIN/wrap3"
+out=$(timeout 5 env PATH="$BIN:$PATH" PUID=1234 PGID=5678 CCR_TOKEN_REFRESH=0 sh "$BIN/wrap3" 2>&1)
+calls=$(cat "$BIN/calls")
+assert_contains "$calls" "chown -R 1234:5678 $CHOWNABLE" "chowns an existing writable path to PUID:PGID"
+assert_contains "$calls" "gosu 1234:5678"                "drops to PUID:PGID via gosu"
+assert_contains "$out"   "CCR-STARTED"                   "still hands off to the upstream entrypoint"
+rm -f "$BIN/id" "$BIN/chown" "$BIN/gosu"
+
 finish

@@ -40,7 +40,7 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libstdc++6 nginx \
+    && apt-get install -y --no-install-recommends ca-certificates libstdc++6 nginx gosu \
     && npm install --global @anthropic-ai/claude-code \
     && rm -rf /var/lib/apt/lists/* /usr/local/lib/node_modules/npm /usr/local/include/node
 
@@ -55,10 +55,15 @@ COPY --from=source /src/docker/pm2.config.cjs ./docker/pm2.config.cjs
 COPY ccr-token-refresher.mjs /usr/local/bin/ccr-token-refresher.mjs
 COPY ccr-entrypoint-wrapper.sh /usr/local/bin/ccr-entrypoint-wrapper
 
+# The container starts as root only long enough for the wrapper to align
+# ownership of the writable paths and then drops to the unprivileged uid/gid
+# 1000 "node" user via gosu (see ccr-entrypoint-wrapper.sh). nginx needs a pid
+# path outside root-only /run, so move it into node-writable /var/lib/nginx.
 RUN chmod 0755 /usr/local/bin/ccr-entrypoint \
                 /usr/local/bin/ccr-entrypoint-wrapper \
                 /usr/local/bin/ccr-token-refresher.mjs \
-    && mkdir -p /data /run/nginx /var/lib/nginx /var/log/nginx
+    && mkdir -p /data /run/nginx /var/lib/nginx /var/log/nginx \
+    && sed -i 's#pid /run/nginx.pid;#pid /var/lib/nginx/nginx.pid;#' /etc/nginx/nginx.conf
 
 VOLUME ["/data"]
 EXPOSE 8080

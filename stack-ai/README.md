@@ -70,8 +70,15 @@ standalone Compose run, copy `.env.example` to `.env` and fill in the values.
 - `CODEDECK_TOR_PROXY_URL`: relay SOCKS5 proxy.
 - `GIT_REPO`, `GIT_USER`, `GIT_EMAIL`: optional workspace and Git settings.
 
-CCR runs as root because its upstream entrypoint writes Nginx configuration at
-startup; CodeDeck runs as a non-root user.
+Both containers run **unprivileged**. `ccr-entrypoint-wrapper.sh` starts as root
+only long enough to align ownership of the writable paths (nginx config/state,
+the `/data` bind mount) to the host uid/gid (`USER_ID`/`GROUP_ID`, passed as
+`PUID`/`PGID`), then drops to that user with `gosu` before running anything.
+The compose service adds `cap_drop: [ALL]` + `no-new-privileges:true`; the five
+`cap_add` entries are used only by the root wrapper at startup - the long-running
+nginx / pm2 / node processes hold no capabilities and run as the host user.
+Read-only rootfs is a possible future tightening (nginx writes to several
+locations that would each need a tmpfs).
 
 State is persisted under `data/`. Keep it intact to preserve CCR configuration,
 CodeDeck identity, pairings, sessions, and workspaces.

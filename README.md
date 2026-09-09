@@ -201,8 +201,9 @@ The AI stack builds Claude Code Router from a **pinned commit** of the project's
 CCR fork (`CCR_REF` / `CCR_REPOSITORY` in `stack-ai/Dockerfile.ccr`; bump with
 `gh api repos/deymosh/claude-code-router/commits/<branch> --jq .sha`), including
 its Docker worker fix, and bakes in an OAuth token refresher so the login stays
-valid without manual re-auth. CCR includes Claude Code and runs as root because
-its upstream Docker entrypoint writes the Nginx configuration at startup.
+valid without manual re-auth. CCR includes Claude Code and runs **unprivileged**
+(`cap_drop: ALL`, `no-new-privileges`): its entrypoint wrapper starts as root only
+to align file ownership to `USER_ID`/`GROUP_ID`, then `gosu`-drops to that user.
 CodeDeck+ uses its published bridge image (`ghcr.io/deymosh/codedeck-plus-bridge`),
 runs as its own non-root user, and routes Claude Code requests through CCR at
 `http://ccr:8080`.

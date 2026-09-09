@@ -12,7 +12,24 @@ services:
     image: bastion-claude-code-router:ec9fc53
     container_name: ccr
     restart: unless-stopped
+    # ccr-entrypoint-wrapper.sh aligns ownership then gosu-drops to uid/gid 1000.
+    # The added caps are only used at startup by the root wrapper (chown + the
+    # priv drop); the long-running nginx/pm2/node processes hold none.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
     environment:
+      # The wrapper starts as root, chowns the writable paths + data volume to
+      # this uid/gid, then gosu-drops to it. Matches the ./data/ccr owner.
+      PUID: ${USER_ID:-1000}
+      PGID: ${GROUP_ID:-1000}
       CCR_GATEWAY_HOST: 0.0.0.0
       CCR_WEB_HOST: 127.0.0.1
       CCR_PUBLIC_HOST: 127.0.0.1
