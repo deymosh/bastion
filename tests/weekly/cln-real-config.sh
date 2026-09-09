@@ -39,8 +39,14 @@ sed 's/10\.254\.0\./10.252.0./g' "$REAL_TORRC" > "$WORK/torrc"
 # --- derive the test cln_config -------------------------------------------
 # Only the chain backend and the workspace-specific plugins are changed; the
 # Tor lines are carried through with just the octet swap.
+#
+# /torport=9735 is appended to the statictor line: this test runs on regtest,
+# whose default Lightning port is 19846 (bitcoin/chainparams.c), so without it
+# the onion would advertise :19846. On the real node (network=bitcoin) the
+# default is already 9735. The forward target is :9735 either way.
 sed -E '
   s/10\.254\.0\./10.252.0./g;                              # transit octet
+  s#^(addr=statictor:[0-9.]+:[0-9]+)$#\1/torport=9735#;    # regtest port -> 9735
   s/^bitcoin-rpcconnect=.*/bitcoin-rpcconnect=10.252.0.3/;  # -> test bitcoind
   /^disable-plugin=bcli/d;                                  # regtest uses bcli
   \#^important-plugin=.*/trustedcoin#d;                     # backend is bcli
