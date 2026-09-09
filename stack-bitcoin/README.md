@@ -93,6 +93,9 @@ PeerSwap can affect funds and channel operations.
 `scripts/` holds operator helpers that are **not** wired into `./bastion`:
 
 - `amboss-healthcheck.sh` - signs a timestamp with CLN and posts a heartbeat to
-  a monitoring service over Tor. Only useful if you choose to use that service;
-  run it from cron if so. `TOR_PROXY` overrides the SOCKS endpoint.
+  Amboss.space over Tor. Every step runs inside the `lightningd` container, so
+  the host needs only Docker (no `jq`, no `curl`, no published Tor port). Opt-in;
+  run it from cron (`*/5 * * * *`) or set `ENABLE_AMBOSS_HEARTBEAT=true` for
+  `services/bastion-daemon.sh`. `TOR_PROXY` / `AMBOSS_URL` / `CLN_CONTAINER`
+  override the defaults. Note: it ties the node's identity to Amboss.
 - `node-audit.py` - routing profitability summary (also `./bastion audit`).

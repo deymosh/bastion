@@ -32,12 +32,14 @@ run_unit() {
   step "config.sh"          bash tests/unit/config-sh.test.sh
   step "bastion CLI"        bash tests/unit/bastion-cli.test.sh
   step "tui.sh (headless)"  bash tests/unit/tui.test.sh
+  step "amboss healthcheck" bash tests/unit/amboss-healthcheck.test.sh
   step "ccr entrypoint wrapper" bash tests/unit/ccr-wrapper.test.sh
   step "ccr token refresher" node_test tests/unit/ccr-refresher.test.mjs
 }
 
 run_integration() {
   step "hidden-service reachability" bash tests/integration/hidden-service-reachability.sh
+  step "per-container operations"    bash tests/integration/container-ops.sh
 }
 
 run_weekly() {

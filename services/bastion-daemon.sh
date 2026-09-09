@@ -28,6 +28,8 @@ SCB_HISTORY_DIR="$BACKUP_DEST/history"
 # Settings
 BACKUP_PLUGIN_COMPACT=false # Set to true if using backup plugin and want to compact it daily
 ENABLE_LXMF_BRIDGE=false # Set to true to enable the LXMF bridge (experimental)
+ENABLE_AMBOSS_HEARTBEAT=false # Set to true to post a signed heartbeat to Amboss
+AMBOSS_INTERVAL=300  # seconds between Amboss heartbeats
 CHECK_INTERVAL=3600  # 1 hour in seconds
 LAST_MAINTENANCE_DATE=""
 
@@ -117,10 +119,26 @@ start_LXMF_bridge() {
     fi
 }
 
+start_amboss_heartbeat() {
+    if [ "$ENABLE_AMBOSS_HEARTBEAT" = true ]; then
+        echo "[$(date)] Starting Amboss heartbeat (every ${AMBOSS_INTERVAL}s)..."
+        (
+            cd "$SCRIPT_DIR/.." || exit 1
+            while true; do
+                ./stack-bitcoin/scripts/amboss-healthcheck.sh || true
+                sleep "$AMBOSS_INTERVAL"
+            done
+        ) &
+    else
+        echo "[$(date)] Amboss heartbeat is disabled (ENABLE_AMBOSS_HEARTBEAT=false)."
+    fi
+}
+
 # --- 4. Main Execution Flow ---
 
 wait_for_cln
 start_LXMF_bridge
+start_amboss_heartbeat
 
 # Ensure the SCB file exists before starting the loop
 while [ ! -f "$SCB_SOURCE" ]; do
