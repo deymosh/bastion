@@ -11,7 +11,7 @@
 #   integration  hidden-service-reachability        (needs docker daemon, ~1m)
 ###############################################################################
 set -u
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 
 ALL=0; [ "${1:-}" = "--all" ] && ALL=1
 rc=0

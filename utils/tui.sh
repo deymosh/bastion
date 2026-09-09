@@ -20,7 +20,7 @@ tui_setup_theme() {
     case "${TERM:-}" in *256color*) c256=1 ;; esac
 
     E=$'\033'
-    T_RESET="${E}[0m"; T_BOLD="${E}[1m"; T_DIM="${E}[2m"
+    T_RESET="${E}[0m"; T_BOLD="${E}[1m"
     if [ "$c256" = 1 ]; then
         T_TITLE="${E}[38;5;15m";     T_SUB="${E}[38;5;245m"
         T_ACCENT="${E}[38;5;214m";   T_MENU="${E}[38;5;252m"
@@ -90,7 +90,6 @@ tui_update_layout() {
     RIGHT_W=$(( COLS - RIGHT_X - 1 ))
     CONTENT_TOP=4
     CONTENT_BOT=$(( LINES - 2 ))
-    CONTENT_H=$(( CONTENT_BOT - CONTENT_TOP + 1 ))
     TUI_RESIZED=0
     TUI_NEED_FRAME=1; TUI_NEED_MENU=1; TUI_NEED_RIGHT=1
 }
@@ -209,7 +208,7 @@ tui_message() {
     _at "$CONTENT_BOT" 3; printf '%bPress any key to continue%b' "$T_MENU_DIM" "$T_RESET"
     tui_flush_input
     stty -icanon min 1 time 0 2>/dev/null || true
-    local x=""; IFS= read -rsn1 x
+    IFS= read -rsn1    # any key; value goes to $REPLY, unused
     stty -icanon min 0 time 0 2>/dev/null || true
     TUI_NEED_FRAME=1; TUI_NEED_MENU=1; TUI_NEED_RIGHT=1
 }

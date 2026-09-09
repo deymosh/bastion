@@ -7,7 +7,7 @@
 # wired together. Run from the repo root: ./tests/validate-config.sh
 ###############################################################################
 set -u
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 
 pass=0 fail=0
 ok()   { printf '  \033[32mok\033[0m   %s\n' "$1"; pass=$((pass+1)); }

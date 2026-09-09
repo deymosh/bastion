@@ -15,7 +15,7 @@
 # Needs Docker + compose. Cleans up after itself. ~1 minute.
 ###############################################################################
 set -u
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 
 CREATED_NET=()
 cleanup() {
@@ -34,7 +34,7 @@ need_net bastion-bitcoin 10.20.0.0/24
 
 echo "== bringing up tor =="
 docker compose -f stack-network/docker-compose.yml up -d --build tor >/dev/null 2>&1 || { echo "could not start tor"; exit 1; }
-for i in $(seq 1 30); do
+for _ in $(seq 1 30); do
   [ "$(docker inspect -f '{{.State.Health.Status}}' tor 2>/dev/null)" = healthy ] && break
   sleep 2
 done

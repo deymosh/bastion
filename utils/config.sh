@@ -12,6 +12,10 @@
 #   Used internally by the main script bastion. Not meant to be run directly.
 ################################################################################
 
+# This file is a sourced library: many names below are consumed by ./bastion and
+# utils/tui.sh, not here, so shellcheck's "appears unused" is expected.
+# shellcheck disable=SC2034
+
 # --- CONFIGURATION ---
 PROJECT_NAME="BASTION"
 CONFIG_FILE="./bastion.conf"
