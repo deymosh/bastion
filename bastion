@@ -267,10 +267,8 @@ bastion_stack_action() {
 bastion_stack_logs() { do_logs "$@"; }
 
 # --- EXECUTION ---
-check_docker
-load_secrets
 
-# Strip global flags before command dispatch.
+# Strip global flags before dispatch.
 RECREATE_NETWORKS=0
 FORCE=0
 ARGS=()
@@ -282,22 +280,38 @@ for arg in "$@"; do
     esac
 done
 set -- "${ARGS[@]}"
+CMD="${1:-}"
 
-# No command + interactive terminal -> TUI. `tui` forces it.
-if { [ -z "$1" ] || [ "$1" = "tui" ]; } && [ -t 0 ] && [ -t 1 ]; then
+# Help needs neither Docker nor config - answer it before touching either.
+case "$CMD" in -h|--help|help) usage ;; esac
+
+# Load bastion.conf + defaults for every real command. This never prompts;
+# only commands that boot containers (below) call require_essentials.
+load_config
+
+# No command (or `tui`) on a real terminal -> interactive dashboard.
+if { [ -z "$CMD" ] || [ "$CMD" = "tui" ]; } && [ -t 0 ] && [ -t 1 ]; then
+    check_docker
     source ./utils/tui.sh
     tui_main
     exit 0
 fi
-if [ "$1" = "tui" ]; then
+if [ "$CMD" = "tui" ]; then
     echo -e "${RED}[✘] 'tui' needs an interactive terminal.${NC}"
     exit 1
 fi
-[ -z "$1" ] && usage
+[ -z "$CMD" ] && usage
 
-CMD="$1"; shift
+shift
+check_docker
 case "$CMD" in
-    up|stop|down|build|logs)
+    up)
+        require_essentials || exit 1
+        resolve_stacks "$@"
+        print_header
+        do_up "${SELECTED_STACKS[@]}"
+        ;;
+    stop|down|build|logs)
         resolve_stacks "$@"
         print_header
         "do_${CMD}" "${SELECTED_STACKS[@]}"

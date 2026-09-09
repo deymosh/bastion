@@ -18,7 +18,9 @@
 
 # --- CONFIGURATION ---
 PROJECT_NAME="BASTION"
-CONFIG_FILE="./bastion.conf"
+# Honour a pre-set CONFIG_FILE (the test suite points this at a scratch file);
+# default to the repo-root config otherwise.
+CONFIG_FILE="${CONFIG_FILE:-./bastion.conf}"
 # Deployment order is crucial: Network must be first.
 STACKS=("stack-network" "stack-bitcoin" "stack-monitor" "stack-web" "stack-ai")
 # The foundation stack: it creates the bastion-transit network and the
@@ -256,39 +258,26 @@ save_config() {
     link_stack_envs
 }
 
-load_secrets() {
-    echo -e "${CYAN}${BOLD}--> Loading Configuration...${NC}"
-    
+# Values that have no sensible default and that only matter when starting
+# containers. require_essentials() (below) is the only thing that asks for them,
+# and only for commands that boot a stack.
+BASTION_REQUIRED_VARS=(WIREGUARD_SERVERURL WIREGUARD_SERVERPORT NODE_ALIAS)
+
+# Load bastion.conf into the environment and fill in the generated defaults.
+# No prompts and no output on the happy path - safe to call for every command
+# (status, logs, the TUI, ...), not just "up". Re-writes the normalised file and
+# refreshes the per-stack .env links.
+load_config() {
     if [ ! -f "$CONFIG_FILE" ]; then
         touch "$CONFIG_FILE"
-        echo -e "${YELLOW}[!] Created empty $CONFIG_FILE${NC}"
+        echo -e "${YELLOW}[!] Created $CONFIG_FILE${NC}"
     fi
 
-    # Load variables into environment
     set -a
     # shellcheck disable=SC1090
     source <(sed 's/^export //g' "$CONFIG_FILE" | grep -v '^[[:space:]]*#')
     set +a
 
-    # Critical Prompts
-    if [ -z "$WIREGUARD_SERVERURL" ]; then
-        echo -e "${YELLOW}${BOLD}[!] Essential network configuration missing.${NC}"
-        echo -en "${CYAN}${BOLD}📝 Enter Public IP or Domain for Wireguard: ${NC}"
-        read -r WIREGUARD_SERVERURL
-    fi
-
-    if [ -z "$WIREGUARD_SERVERPORT" ]; then
-        echo -e "${YELLOW}${BOLD}[!] Essential network configuration missing.${NC}"
-        echo -en "${CYAN}${BOLD}📝 Enter Public Port for Wireguard: ${NC}"
-        read -r WIREGUARD_SERVERPORT
-    fi
-
-    if [ -z "$NODE_ALIAS" ]; then
-        echo -en "${CYAN}${BOLD}📝 Enter CLN Node Alias: ${NC}"
-        read -r NODE_ALIAS
-    fi
-
-    # Defaults and Auto-generation
     declare -A DEFAULTS=(
         ["TIMEZONE"]=$(cat /etc/timezone 2>/dev/null || echo "UTC")
         ["PIHOLE_PASSWORD"]=$(openssl rand -hex 8)
@@ -307,15 +296,53 @@ load_secrets() {
         ["GITHUB_TOKEN"]=""
     )
 
+    local var
     for var in "${!DEFAULTS[@]}"; do
-        if [ -z "${!var}" ]; then
-            export "$var"="${DEFAULTS[$var]}"
-            echo -e "${YELLOW}--> Generated default for $var${NC}"
-        fi
+        [ -z "${!var}" ] && export "$var"="${DEFAULTS[$var]}"
     done
 
     write_config
     link_stack_envs
+}
 
-    echo -e "${GREEN}${BOLD}[✔] Environment variables loaded.${NC}\n"
+# Ensure the no-default essentials are set. On a terminal, prompt for whatever is
+# missing (validated) and persist it; with no terminal, fail with instructions.
+# Call this only for commands that actually start containers.
+require_essentials() {
+    local var missing_vars=()
+    for var in "${BASTION_REQUIRED_VARS[@]}"; do
+        [ -z "${!var}" ] && missing_vars+=("$var")
+    done
+    [ "${#missing_vars[@]}" -eq 0 ] && return 0
+
+    if [ ! -t 0 ]; then
+        echo -e "${RED}${BOLD}[✘] Required configuration not set: ${missing_vars[*]}${NC}" >&2
+        echo -e "    Add them to ${BOLD}$CONFIG_FILE${NC}, or run ${BOLD}./bastion${NC} and open" >&2
+        echo -e "    the Configuration view, then retry." >&2
+        return 1
+    fi
+
+    echo -e "${YELLOW}${BOLD}[!] A few required values are not set yet.${NC}"
+    local val err prompt
+    for var in "${missing_vars[@]}"; do
+        case "$var" in
+            WIREGUARD_SERVERURL)  prompt="Public IP or domain for WireGuard" ;;
+            WIREGUARD_SERVERPORT) prompt="Public UDP port for WireGuard" ;;
+            NODE_ALIAS)           prompt="Core Lightning node alias" ;;
+            *)                    prompt="$var" ;;
+        esac
+        while :; do
+            echo -en "${CYAN}${BOLD}${prompt}: ${NC}"
+            read -r val
+            if [ -n "$val" ] && err=$(validate_env_value "$var" "$val"); then
+                export "$var"="$val"
+                break
+            fi
+            echo -e "${RED}  ${err:-a value is required}${NC}"
+        done
+    done
+
+    write_config
+    link_stack_envs
+    echo -e "${GREEN}[✔] Saved to $CONFIG_FILE.${NC}\n"
 }

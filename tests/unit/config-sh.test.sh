@@ -12,11 +12,16 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 export CONFIG_FILE="$WORK/bastion.conf"
 
-# We only want config.sh's helper functions, not load_secrets' prompts/symlinks.
+# We only want config.sh's helper functions, not the prompts / .env links.
 export BASTION_SKIP_ENV_LINKS=1
 STACKS=()
 # shellcheck disable=SC1091
 source utils/config.sh
+
+# Isolation guard: config.sh must honour the CONFIG_FILE we exported above, or
+# every write_config below would scribble into the real ./bastion.conf.
+echo "== test isolation =="
+assert_eq "$CONFIG_FILE" "$WORK/bastion.conf" "config.sh keeps our scratch CONFIG_FILE"
 
 echo "== config_var_is_secret =="
 assert_ok   config_var_is_secret PIHOLE_PASSWORD

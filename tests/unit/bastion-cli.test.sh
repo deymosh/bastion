@@ -19,9 +19,26 @@ EOF
 
 b() { BASTION_SKIP_ENV_LINKS=1 CONFIG_FILE="$WORK/bastion.conf" ./bastion "$@" </dev/null 2>&1; }
 
+# a config file that is missing the no-default essentials
+cat > "$WORK/bare.conf" <<'EOF'
+TIMEZONE=UTC
+EOF
+bare() { BASTION_SKIP_ENV_LINKS=1 CONFIG_FILE="$WORK/bare.conf" ./bastion "$@" </dev/null 2>&1; }
+
 echo "== command dispatch =="
 out=$(b);          rc=$?; assert_contains "$out" "COMMANDS:" "no args (non-TTY) prints usage"; assert_eq "$rc" 1 "usage exits 1"
 out=$(b boguscmd); rc=$?; assert_contains "$out" "COMMANDS:" "unknown command prints usage"
+
+echo "== config is only demanded when it is actually needed =="
+out=$(bare help);   rc=$?; assert_contains "$out" "COMMANDS:" "help works without config"; assert_not_contains "$out" "Required configuration" "help never asks for config"
+out=$(MOCK_DOCKER_INFO_RC=1 bare help); assert_not_contains "$out" "Docker daemon is not running" "help does not even check Docker"
+out=$(bare status); rc=$?; assert_not_contains "$out" "Required configuration" "status does not demand the essentials"
+out=$(bare logs web); assert_not_contains "$out" "Required configuration" "logs does not demand the essentials"
+out=$(bare up web);  rc=$?
+assert_contains "$out" "Required configuration not set" "up refuses when essentials are unset"
+assert_contains "$out" "WIREGUARD_SERVERURL" "names the missing keys"
+assert_eq "$rc" 1 "up with missing config exits 1"
+out=$(bare up web); assert_not_contains "$out" "Booting:" "up does not proceed without the essentials"
 
 echo "== per-stack resolution =="
 out=$(b up);                 assert_contains "$out" "Booting: stack-network stack-bitcoin stack-monitor stack-web stack-ai" "no list = all, canonical order"
