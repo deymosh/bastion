@@ -51,6 +51,11 @@ have 'ipv4_address:\s*10\.254\.0\.11' "$BC" && ok "teosd pinned to 10.254.0.11 o
   || bad "teosd is not pinned to 10.254.0.11 on bastion-transit"
 have '^tor_control_host\s*=\s*"10\.254\.0\.2"' "$TEOS" && ok "teos.toml tor_control_host = 10.254.0.2" \
   || bad "teos.toml tor_control_host is not 10.254.0.2"
+# teosd is opt-in: the service must carry the 'watchtower' compose profile so a
+# plain `./bastion up` does not start it.
+awk '/^  teosd:/{t=1} t&&/^  [a-z]/&&!/^  teosd:/{t=0} t&&/profiles:.*watchtower/{f=1} END{exit f?0:1}' "$BC" \
+  && ok "teosd carries the 'watchtower' compose profile (opt-in)" \
+  || bad "teosd is missing 'profiles: [watchtower]' - it would start by default"
 
 echo "== CLN <-> bitcoind wiring =="
 have '^bitcoin-rpcconnect=10\.20\.0\.3' "$CLN" && ok "cln_config bitcoin-rpcconnect = 10.20.0.3 (bitcoind)" \

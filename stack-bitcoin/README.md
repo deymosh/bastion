@@ -50,11 +50,34 @@ plan. The full procedure - what is irreplaceable, how to back up, how to restore
 how to move to a new host, and why the `.onion` stays stable - is in
 [../docs/disaster-recovery.md](../docs/disaster-recovery.md). Read it first.
 
+## Watchtower (teosd) is opt-in
+
+`teosd` runs **your own** watchtower - a service that watches *other* people's
+channels (e.g. for tower swaps). It is **not** started by `./bastion up`. Enable
+it with `./bastion up --with-watchtower` (or `BASTION_PROFILES=watchtower`); it
+carries the `watchtower` compose profile. `stop` / `down` always tear it down so
+it is never orphaned.
+
+Unrelated: the CLN `watchtower-client` plugin (breach protection *for this node*,
+pointed at an external tower URL) is always on and needs no local `teosd`.
+
+## First-run seeding (idempotent)
+
+On `./bastion up`, if they do not already exist:
+
+- `config/RTL-Config.json` is copied to `data/rtl/RTL-Config.json`.
+- `data/rtl/access.rune` is minted from CLN (`lightning-cli createrune`) and
+  written as `LIGHTNING_RUNE="<rune>"`, mode `600` - RTL reads it via `runePath`.
+  If CLN is not up yet this is skipped with a warning; re-run `./bastion up`.
+
+Anything that already exists is left exactly as it is - an established install is
+never touched.
+
 ## Configuration and state
 
 - `config/cln_config` controls CLN plugins, REST, Tor, and automation.
-- `config/RTL-Config.json` is a template copied to `data/rtl/` after initialization.
-- `config/teos.toml` is a template copied to `data/teos/` after initialization.
+- `config/RTL-Config.json` / `config/teos.toml` are templates; the live copies
+  under `data/` are seeded once (see above) and then owned by the operator.
 - `data/cln/`, `data/bitcoin/`, `data/rtl/`, and `data/teos/` are persistent state.
 - Tor runtime state lives in the external Docker volume `bastion-tor-data`, owned
   by `stack-network`. It only holds Tor's client cache; CLN and TEOS keep their

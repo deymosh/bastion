@@ -9,8 +9,9 @@
 # Usage:
 #   ./bastion                       # interactive TUI (needs a TTY)
 #   ./bastion up|stop|down|build|logs [stack ...]
-#   ./bastion status | audit | tui
+#   ./bastion status | versions | audit | tui
 #   ./bastion up --recreate-networks
+#   ./bastion up --with-watchtower  # also run teosd (off by default)
 #   ./bastion down stack-network --force
 #
 # stack-network is the foundation: every "up" brings it up first (it is added
@@ -52,6 +53,7 @@ usage() {
     echo -e "${YELLOW}${BOLD}FLAGS:${NC}"
     echo -e "  ${BOLD}--recreate-networks${NC} -> On 'up', drop a stale bastion-network (old subnet) first"
     echo -e "  ${BOLD}--force${NC}, ${BOLD}-f${NC}          -> Allow 'stop'/'down' of stack-network while other stacks run"
+    echo -e "  ${BOLD}--with-watchtower${NC}   -> Also run teosd (your own watchtower); off by default"
     echo -e ""
     echo -e "${YELLOW}${BOLD}STACKS:${NC}"
     for i in "${!STACKS[@]}"; do
@@ -161,6 +163,11 @@ resolve_stacks() {
 
 _contains() { local n="$1"; shift; local x; for x in "$@"; do [ "$x" = "$n" ] && return 0; done; return 1; }
 
+# Every compose profile Bastion knows about. `stop`/`down` activate all of them
+# so an opt-in service (e.g. teosd) is torn down even if the flag was omitted.
+ALL_PROFILES="watchtower"
+_profile_active() { case ",${COMPOSE_PROFILES:-}," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
+
 # stack-network owns the bastion-transit network and runs Tor; stack-bitcoin
 # (CLN/TEOS dial Tor over transit) and stack-ai (codedeck-bridge joins transit)
 # break the moment it goes away. Refuse a stop/down that targets stack-network
@@ -202,7 +209,10 @@ do_up() {
         preflight_networks || return 1
     fi
     if _contains stack-bitcoin "${stacks[@]}"; then
-        bash "$TEOS_BUILD_UTIL" || return 1
+        seed_runtime_config
+        if _profile_active watchtower; then
+            bash "$TEOS_BUILD_UTIL" || return 1
+        fi
     fi
     echo -e "${GREEN}${BOLD}[+] Booting: ${stacks[*]}${NC}"
     local stack
@@ -215,6 +225,9 @@ do_up() {
         if [ "$stack" = "stack-network" ]; then
             wait_for_health tor || return 1
         fi
+        if [ "$stack" = "stack-bitcoin" ]; then
+            ensure_rtl_rune
+        fi
     done
     echo -e "\n${GREEN}${BOLD}[✔] Up: ${stacks[*]}${NC}"
 }
@@ -222,6 +235,7 @@ do_up() {
 do_stop() {
     local stacks=("$@") i
     check_network_teardown stop "${stacks[@]}" || return 1
+    export COMPOSE_PROFILES="$ALL_PROFILES"   # also stop opt-in services
     echo -e "${RED}${BOLD}[-] Stopping: ${stacks[*]}${NC}"
     for (( i=${#stacks[@]}-1; i>=0; i-- )); do
         docker compose -f "./${stacks[$i]}/docker-compose.yml" stop
@@ -231,6 +245,7 @@ do_stop() {
 do_down() {
     local stacks=("$@") i
     check_network_teardown down "${stacks[@]}" || return 1
+    export COMPOSE_PROFILES="$ALL_PROFILES"   # also remove opt-in services
     echo -e "${RED}${BOLD}[-] Removing: ${stacks[*]}${NC}"
     for (( i=${#stacks[@]}-1; i>=0; i-- )); do
         docker compose -f "./${stacks[$i]}/docker-compose.yml" down
@@ -239,7 +254,7 @@ do_down() {
 
 do_build() {
     local stacks=("$@") stack
-    if _contains stack-bitcoin "${stacks[@]}"; then
+    if _contains stack-bitcoin "${stacks[@]}" && _profile_active watchtower; then
         bash "$TEOS_BUILD_UTIL" "force" || return 1
     fi
     for stack in "${stacks[@]}"; do
@@ -304,16 +319,25 @@ bastion_stack_logs() { do_logs "$@"; }
 # Strip global flags before dispatch.
 RECREATE_NETWORKS=0
 FORCE=0
+WITH_WATCHTOWER=0
 ARGS=()
 for arg in "$@"; do
     case "$arg" in
         --recreate-networks) RECREATE_NETWORKS=1 ;;
         --force|-f)          FORCE=1 ;;
+        --with-watchtower)   WITH_WATCHTOWER=1 ;;
         *) ARGS+=("$arg") ;;
     esac
 done
 set -- "${ARGS[@]}"
 CMD="${1:-}"
+
+# Compose profiles: --with-watchtower and/or BASTION_PROFILES (comma list) select
+# opt-in services. `docker compose` reads COMPOSE_PROFILES natively, so exporting
+# it here is all that is needed at the call sites.
+_profiles="${BASTION_PROFILES:-}"
+[ "$WITH_WATCHTOWER" = 1 ] && case ",$_profiles," in *,watchtower,*) : ;; *) _profiles="${_profiles:+$_profiles,}watchtower" ;; esac
+[ -n "$_profiles" ] && export COMPOSE_PROFILES="$_profiles"
 
 # Help needs neither Docker nor config - answer it before touching either.
 case "$CMD" in -h|--help|help) usage ;; esac

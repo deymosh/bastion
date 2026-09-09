@@ -33,7 +33,9 @@ LAST_MAINTENANCE_DATE=""
 
 echo "[$(date)] BASTION Master Daemon started."
 
-# Start BASTION services
+# Start BASTION services.
+# teosd (your own watchtower) is opt-in: export BASTION_PROFILES=watchtower in
+# this service's environment (or pass --with-watchtower below) if you run one.
 echo "[$(date)] Launching BASTION stack..."
 ./bastion up
 

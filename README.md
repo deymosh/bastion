@@ -59,7 +59,7 @@ docker compose -f ./stack-ai/docker-compose.yml up -d
 | Stack | Services | IPs |
 |-------|----------|-----|
 | **network** | unbound DNS, WireGuard VPN, Pi-hole, Tor | 10.10.0.2-3 + transit |
-| **bitcoin** | bitcoind, lightningd, RTL, TEOS | 10.20.0.2-5 + transit |
+| **bitcoin** | bitcoind, lightningd, RTL (TEOS opt-in) | 10.20.0.2-5 + transit |
 | **monitor** | prometheus, grafana, portainer, node-exporter | 10.30.0.2-5 |
 | **web** | Bastion operations hub | 10.40.0.2 |
 | **ai** | Claude Code Router, CodeDeck+ bridge | 10.50.0.2-3 + transit |
@@ -90,6 +90,13 @@ use the subcommands:
 A stack name may be given with or without the `stack-` prefix
 (`./bastion up web ai`). On `up`, `--recreate-networks` drops a stale
 `bastion-network` left from the old flat-network layout before starting.
+`--with-watchtower` (or `BASTION_PROFILES=watchtower`) also starts `teosd` -
+your own watchtower - which is otherwise off. `./bastion versions` shows the
+image pin vs. what is running.
+
+On a fresh install `./bastion up` seeds `data/rtl/RTL-Config.json` and mints an
+RTL access rune from CLN; both are created only if absent, so an existing
+install is untouched. See `stack-bitcoin/README.md`.
 
 `stack-network` is the foundation - it owns the `bastion-transit` network and
 runs Tor, which the Bitcoin and AI stacks attach to. `./bastion up` always

@@ -14,7 +14,7 @@ and `README.md`:
 | Stack | What it runs |
 |---|---|
 | `stack-network` | Pi-hole, `unbound`, WireGuard, **Tor** (owns the shared Tor volume + the `bastion-transit` network) |
-| `stack-bitcoin` | `bitcoind`, `lightningd` (CLN), RTL, `teosd` (watchtower) |
+| `stack-bitcoin` | `bitcoind`, `lightningd` (CLN), RTL; `teosd` (own watchtower, opt-in `--with-watchtower`) |
 | `stack-monitor` | Portainer, Prometheus, Grafana, node-exporter |
 | `stack-web` | `hub` (static nginx landing page) |
 | `stack-ai` | `ccr` (Claude Code Router), `codedeck-bridge` |
@@ -148,7 +148,10 @@ blocks the run and explains why.
 ```
 stack-network   creates bastion-transit + the bastion-tor-data volume, runs tor
      │          -> ./bastion waits for the tor container to become healthy
-stack-bitcoin   bitcoind, lightningd, rtl, teosd
+stack-bitcoin   bitcoind, lightningd, rtl  (+ teosd only with --with-watchtower;
+     │          it carries the "watchtower" compose profile). On up, ./bastion
+     │          seeds data/rtl/RTL-Config.json + mints the RTL access.rune from
+     │          CLN - both only if absent.
 stack-monitor   self-contained (own network, no transit)
 stack-web       self-contained
 stack-ai        ccr + codedeck-bridge

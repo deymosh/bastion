@@ -22,7 +22,8 @@ case "$1 $2" in
   "image inspect")     printf '%s\n' "${MOCK_IMAGE_LABEL:-}" ;;
   "inspect --format")  printf '%s\n' "${MOCK_HEALTH:-healthy}" ;;   # wait_for_health
   "inspect -f")        printf '%s\n' "${MOCK_INSPECT:-}" ;;         # do_versions
-  "compose "*)         echo "  (compose no-op: ${*:2})" ; exit 0 ;;
+  "exec "*)            printf '%s\n' "${MOCK_EXEC_OUT:-}" ; exit "${MOCK_EXEC_RC:-0}" ;;
+  "compose "*)         echo "  (compose no-op: ${*:2}) COMPOSE_PROFILES=${COMPOSE_PROFILES:-}" ; exit 0 ;;
   "ps "*|"ps")         printf '%s\n' ${MOCK_PS_NAMES:-} ;;
 esac
 exit 0

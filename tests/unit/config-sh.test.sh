@@ -105,4 +105,48 @@ while read -r ref; do
 done < <(grep -rhoE '\$\{[A-Za-z_][A-Za-z0-9_]*(:[-?+][^}]*)?\}' stack-*/docker-compose.yml | sort -u)
 assert_eq "$missing" "" "no undefaulted compose var is missing from MANAGED_VARS"
 
+echo "== seed_runtime_config is create-only / idempotent =="
+mkdir -p "$WORK/tpl"
+printf 'TEMPLATE\n' > "$WORK/tpl/src"
+SEED_TEMPLATES=("$WORK/tpl/src:$WORK/out/dst")
+seed_runtime_config >/dev/null
+assert_eq "$(cat "$WORK/out/dst" 2>/dev/null)" "TEMPLATE" "seeds a missing target from its template"
+mtime1=$(stat -c %Y "$WORK/out/dst" 2>/dev/null || stat -f %m "$WORK/out/dst")
+sleep 1
+seed_runtime_config >/dev/null
+mtime2=$(stat -c %Y "$WORK/out/dst" 2>/dev/null || stat -f %m "$WORK/out/dst")
+assert_eq "$mtime1" "$mtime2" "a second call does not rewrite an existing target"
+printf 'OPERATOR EDIT\n' > "$WORK/out/dst"
+seed_runtime_config >/dev/null
+assert_eq "$(cat "$WORK/out/dst")" "OPERATOR EDIT" "an existing target with different content is left untouched"
+rm -f "$WORK/tpl/src"
+SEED_TEMPLATES=("$WORK/tpl/src:$WORK/out/gone")
+seed_runtime_config >/dev/null
+echo "== a missing template seeds nothing =="
+assert_ok test '!' -e "$WORK/out/gone"
+
+echo "== ensure_rtl_rune =="
+mock_dir=$(mktemp -d)
+cat > "$mock_dir/docker" <<EOF
+#!/usr/bin/env bash
+[ "\$1 \$2" = "exec lightningd" ] && { printf '%s\n' "\${MOCK_EXEC_OUT:-}"; exit "\${MOCK_EXEC_RC:-0}"; }
+exit 0
+EOF
+chmod +x "$mock_dir/docker"; PATH="$mock_dir:$PATH"
+
+RTL_RUNE_FILE="$WORK/rune"; RTL_RUNE_RETRIES=2; RTL_RUNE_WAIT=0
+MOCK_EXEC_OUT=$'rune=abcDEF123\nunique_id=0' ensure_rtl_rune >/dev/null
+assert_eq "$(cat "$WORK/rune" 2>/dev/null)" 'LIGHTNING_RUNE="abcDEF123"' "writes the rune in LIGHTNING_RUNE= form"
+# POSIX modes only round-trip reliably on Linux (Windows maps them to ACLs).
+[ "$(uname -s)" = Linux ] && \
+  assert_eq "$(stat -c '%a' "$WORK/rune")" "600" "rune file is mode 600"
+MOCK_EXEC_OUT='rune=SHOULD_NOT_BE_USED' ensure_rtl_rune >/dev/null
+assert_eq "$(cat "$WORK/rune")" 'LIGHTNING_RUNE="abcDEF123"' "an existing rune is left untouched (early return)"
+rm -f "$WORK/rune"
+out=$(MOCK_EXEC_RC=1 MOCK_EXEC_OUT="" ensure_rtl_rune 2>&1); rc=$?
+assert_eq "$rc" 0 "returns 0 when CLN is unreachable (never aborts the boot)"
+assert_contains "$out" "CLN not reachable" "warns when the rune could not be minted"
+echo "== writes no file on failure =="
+assert_ok test '!' -e "$WORK/rune"
+
 finish

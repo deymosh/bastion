@@ -16,8 +16,13 @@ WIREGUARD_SERVERURL=example.com
 WIREGUARD_SERVERPORT=51820
 NODE_ALIAS=ci
 EOF
+: > "$WORK/rune"   # a pre-existing access.rune so ensure_rtl_rune no-ops in `b`
 
-b() { BASTION_SKIP_ENV_LINKS=1 CONFIG_FILE="$WORK/bastion.conf" ./bastion "$@" </dev/null 2>&1; }
+b() {
+  BASTION_SKIP_ENV_LINKS=1 CONFIG_FILE="$WORK/bastion.conf" \
+  RTL_RUNE_FILE="$WORK/rune" RTL_RUNE_RETRIES=1 RTL_RUNE_WAIT=0 \
+  ./bastion "$@" </dev/null 2>&1
+}
 
 # a config file that is missing the no-default essentials
 cat > "$WORK/bare.conf" <<'EOF'
@@ -90,6 +95,37 @@ out=$(MOCK_PS_NAMES='lightningd tor' b down web); rc=$?
 assert_contains "$out" "Removing: stack-web" "down of another stack is untouched by the guard"
 assert_not_contains "$out" "Refusing" "down stack-web is not refused while stack-bitcoin runs"
 assert_eq "$rc" 0 "down stack-web exits 0"
+
+echo "== teosd opt-in profile =="
+out=$(b up); assert_not_contains "$out" "TEOS" "plain 'up' does not build/start teosd"
+out=$(b up); assert_not_contains "$out" "COMPOSE_PROFILES=watchtower" "plain 'up' activates no profile"
+out=$(b up --with-watchtower)
+assert_contains "$out" "COMPOSE_PROFILES=watchtower" "--with-watchtower activates the profile for docker compose"
+assert_contains "$out" "TEOS" "--with-watchtower builds teosd before starting"
+out=$(BASTION_PROFILES=watchtower b up)
+assert_contains "$out" "COMPOSE_PROFILES=watchtower" "BASTION_PROFILES env also activates the profile"
+# stop/down activate the profile regardless so teosd is not orphaned
+out=$(b down web); assert_contains "$out" "COMPOSE_PROFILES=watchtower" "down activates all profiles for teardown"
+out=$(b stop web); assert_contains "$out" "COMPOSE_PROFILES=watchtower" "stop activates all profiles for teardown"
+out=$(b build --with-watchtower stack-bitcoin); assert_contains "$out" "TEOS" "build --with-watchtower force-builds teosd"
+out=$(b build stack-bitcoin); assert_not_contains "$out" "TEOS" "plain build skips teosd"
+
+echo "== RTL rune bootstrap (via 'up') =="
+rm -f "$WORK/rune"
+out=$(MOCK_EXEC_OUT=$'rune=abc123XYZ\nunique_id=0' b up bitcoin)
+assert_contains "$out" "Wrote $WORK/rune" "up mints the rune when absent"
+grep -q 'LIGHTNING_RUNE="abc123XYZ"' "$WORK/rune" && _t_ok "rune file has LIGHTNING_RUNE format" || _t_bad "rune file format wrong: $(cat "$WORK/rune")"
+[ "$(uname -s)" = Linux ] && { [ "$(stat -c '%a' "$WORK/rune")" = 600 ] && _t_ok "rune file is mode 600" || _t_bad "rune file not 600"; }
+# second run: file present -> ensure_rtl_rune returns early, no rewrite
+out=$(MOCK_EXEC_OUT=$'rune=SHOULDNOTUSE\nunique_id=0' b up bitcoin)
+grep -q 'LIGHTNING_RUNE="abc123XYZ"' "$WORK/rune" && _t_ok "existing rune left untouched on re-run" || _t_bad "rune was overwritten"
+# CLN not reachable -> warn, exit 0, no file
+rm -f "$WORK/rune"
+out=$(MOCK_EXEC_RC=1 MOCK_EXEC_OUT="" b up bitcoin); rc=$?
+assert_contains "$out" "CLN not reachable" "up warns when CLN is not ready"
+assert_eq "$rc" 0 "up still succeeds when the rune could not be minted"
+assert_ok test '!' -e "$WORK/rune"
+: > "$WORK/rune"   # restore the no-op sentinel for later tests
 
 echo "== versions =="
 out=$(b versions); rc=$?

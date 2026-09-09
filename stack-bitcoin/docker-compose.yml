@@ -101,6 +101,11 @@ services:
     image: teosd:latest
     container_name: teosd
     restart: always
+    # Opt-in: running your OWN watchtower for other nodes is not the default.
+    # `./bastion up --with-watchtower` (or BASTION_PROFILES=watchtower) starts it.
+    # The CLN `watchtower-client` plugin - breach protection FOR this node,
+    # pointed at an external tower - is unrelated and always on.
+    profiles: ["watchtower"]
     depends_on:
       bitcoind:
         condition: service_healthy

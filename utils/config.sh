@@ -346,3 +346,54 @@ require_essentials() {
     link_stack_envs
     echo -e "${GREEN}[✔] Saved to $CONFIG_FILE.${NC}\n"
 }
+
+# --- First-run seeding (idempotent, never touches an existing install) ------
+
+# template:target pairs, relative to the repo root. A target is seeded from its
+# template ONLY when the target does not exist yet - a populated data/ dir is
+# left exactly as it is.
+SEED_TEMPLATES=(
+    "stack-bitcoin/config/RTL-Config.json:stack-bitcoin/data/rtl/RTL-Config.json"
+)
+seed_runtime_config() {
+    local pair src dst
+    for pair in "${SEED_TEMPLATES[@]}"; do
+        src="${pair%%:*}"; dst="${pair##*:}"
+        [ -f "$src" ] || continue
+        [ -e "$dst" ] && continue
+        mkdir -p "$(dirname "$dst")"
+        cp "$src" "$dst"
+        echo -e "${YELLOW}--> Seeded ${dst} from template${NC}"
+    done
+}
+
+# Mint an RTL access rune from CLN when there isn't one yet. RTL reads
+# stack-bitcoin/data/rtl/access.rune as LIGHTNING_RUNE="<rune>" (runePath in
+# RTL-Config.json). Needs lightningd running; if it is not ready this warns and
+# returns 0 (RTL retries; `./bastion up` can be re-run). Never aborts the boot.
+RTL_RUNE_FILE="${RTL_RUNE_FILE:-stack-bitcoin/data/rtl/access.rune}"
+ensure_rtl_rune() {
+    [ -e "$RTL_RUNE_FILE" ] && return 0            # respect an existing install
+
+    echo -e "${CYAN}--> RTL: no access.rune yet - minting one from CLN...${NC}"
+    local i out rune
+    local tries="${RTL_RUNE_RETRIES:-20}" wait="${RTL_RUNE_WAIT:-2}"
+    for (( i=0; i<tries; i++ )); do
+        out=$(docker exec lightningd lightning-cli -F createrune 2>/dev/null) && [ -n "$out" ] && break
+        out=""; [ "$wait" -gt 0 ] && sleep "$wait"
+    done
+    if [ -z "$out" ]; then
+        echo -e "${YELLOW}[!] CLN not reachable yet - skipped. Re-run './bastion up' once it is,${NC}"
+        echo -e "${YELLOW}    or write ${RTL_RUNE_FILE} yourself as LIGHTNING_RUNE=\"<rune>\".${NC}"
+        return 0
+    fi
+    rune=$(printf '%s\n' "$out" | sed -n 's/^rune=//p' | head -1)
+    if [ -z "$rune" ]; then
+        echo -e "${YELLOW}[!] Could not parse a rune from CLN output - skipped.${NC}"
+        return 0
+    fi
+    mkdir -p "$(dirname "$RTL_RUNE_FILE")"
+    ( umask 077; printf 'LIGHTNING_RUNE="%s"\n' "$rune" > "$RTL_RUNE_FILE" )
+    chmod 600 "$RTL_RUNE_FILE" 2>/dev/null || true
+    echo -e "${GREEN}[✔] Wrote ${RTL_RUNE_FILE}${NC}"
+}
