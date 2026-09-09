@@ -68,20 +68,27 @@ Cross-stack services use the restricted `bastion-transit` network at
 
 ## ⚙️ Commands
 
-```bash
-./bastion up       # Start all stacks
-./bastion stop     # Stop services
-./bastion down     # Remove containers
-./bastion status   # Show containers
-./bastion audit    # Check node profitability
-./bastion logs     # Tail logs
-```
-
-Run one stack:
+Run `./bastion` with no arguments on a terminal for the interactive dashboard
+(stack picker, live status, config editor, log viewer). For scripts and cron,
+use the subcommands:
 
 ```bash
-docker compose -f ./stack-<name>/docker-compose.yml up -d
+./bastion up       [stack ...]   # Start stacks in order (default: all)
+./bastion stop     [stack ...]   # Stop services (reverse order)
+./bastion down     [stack ...]   # Remove containers (reverse order)
+./bastion build    [stack ...]   # Build images without starting
+./bastion logs     [stack ...]   # Tail logs
+./bastion status                 # Show containers and networks
+./bastion audit                  # Check node profitability
+./bastion tui                    # Force the dashboard
 ```
+
+A stack name may be given with or without the `stack-` prefix
+(`./bastion up web ai`). On `up`, `--recreate-networks` drops a stale
+`bastion-network` left from the old flat-network layout before starting.
+
+Any non-interactive invocation (a pipe, cron, `services/bastion-daemon.sh`)
+runs the plain path; the dashboard only opens on a real terminal.
 
 ## 🌐 Access
 

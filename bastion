@@ -3,11 +3,14 @@
 ################################################################################
 # BASTION - CLI Orchestrator
 #
-# This script is the main entry point for managing the BASTION stack.
-# It provides a simple CLI to start, stop, and monitor all services in the stack.
+# Main entry point for managing the Bastion stacks. Run with no arguments on a
+# terminal for the interactive TUI, or with a command for scripted use.
 #
 # Usage:
-#   $ ./bastion #COMMAND (empty for help)
+#   ./bastion                       # interactive TUI (needs a TTY)
+#   ./bastion up|stop|down|build|logs [stack ...]
+#   ./bastion status | audit | tui
+#   ./bastion up --recreate-networks
 ################################################################################
 
 # Import configuration and utilities
@@ -20,31 +23,35 @@ fi
 
 # --- HEADER ---
 HEADER_LINE="═══════════════════════════════════════════════════════"
-echo -e "${CYAN}${HEADER_LINE}${NC}"
-echo -e "${CYAN}${BOLD}                 🏴‍☠️  $PROJECT_NAME CLI                  ${NC}"
-echo -e "${CYAN}${BOLD}       Sovereign Infrastructure · Operations · AI     ${NC}"
-echo -e "${CYAN}${HEADER_LINE}${NC}"
+print_header() {
+    echo -e "${CYAN}${HEADER_LINE}${NC}"
+    echo -e "${CYAN}${BOLD}                 🏴‍☠️  $PROJECT_NAME CLI                  ${NC}"
+    echo -e "${CYAN}${BOLD}       Sovereign Infrastructure · Operations · AI     ${NC}"
+    echo -e "${CYAN}${HEADER_LINE}${NC}"
+}
 
 # --- HELPER FUNCTIONS ---
 usage() {
+    print_header
     echo -e "${YELLOW}${BOLD}COMMANDS:${NC}"
-    echo -e "  ${GREEN}up${NC}      -> Deploy all stacks in order"
-    echo -e "  ${YELLOW}stop${NC}    -> Stop all containers"
-    echo -e "  ${RED}down${NC}    -> Stop and remove all containers"
-    echo -e "  ${CYAN}status${NC}  -> Show running containers and IPs"
-    echo -e "  ${CYAN}audit${NC}   -> Run the Python Node Profitability Audit"
-    echo -e "  ${BOLD}build${NC}   -> Build all stacks without starting"
-    echo -e "  ${BOLD}logs${NC}    -> Tail logs from all stacks"
+    echo -e "  ${GREEN}up${NC}      [stack...] -> Deploy stacks in order (default: all)"
+    echo -e "  ${YELLOW}stop${NC}    [stack...] -> Stop containers (reverse order)"
+    echo -e "  ${RED}down${NC}    [stack...] -> Stop and remove containers (reverse order)"
+    echo -e "  ${BOLD}build${NC}   [stack...] -> Build images without starting"
+    echo -e "  ${BOLD}logs${NC}    [stack...] -> Tail logs"
+    echo -e "  ${CYAN}status${NC}             -> Show running containers and networks"
+    echo -e "  ${CYAN}audit${NC}              -> Node profitability audit"
+    echo -e "  ${CYAN}tui${NC}                -> Force the interactive dashboard"
     echo -e ""
     echo -e "${YELLOW}${BOLD}FLAGS:${NC}"
     echo -e "  ${BOLD}--recreate-networks${NC} -> On 'up', drop a stale bastion-network (old subnet) first"
     echo -e ""
-    echo -e "${YELLOW}${BOLD}STACKS MANAGED:${NC}"
+    echo -e "${YELLOW}${BOLD}STACKS:${NC}"
     for i in "${!STACKS[@]}"; do
         echo -e "  $((i+1)). ${STACKS[$i]}"
     done
     echo -e ""
-    echo -e "${BOLD}Example:${NC} $0 up"
+    echo -e "${BOLD}Examples:${NC} $0 up   |   $0 up stack-web stack-ai   |   $0 logs stack-bitcoin"
     exit 1
 }
 
@@ -117,6 +124,104 @@ preflight_networks() {
     return 1
 }
 
+# --- Stack selection --------------------------------------------------------
+# Populates SELECTED_STACKS (subset of STACKS, canonical order). No args = all.
+resolve_stacks() {
+    SELECTED_STACKS=()
+    if [ "$#" -eq 0 ]; then
+        SELECTED_STACKS=("${STACKS[@]}")
+        return 0
+    fi
+    local want s ok
+    for want in "$@"; do
+        # accept "web" as shorthand for "stack-web"
+        case "$want" in stack-*) : ;; *) want="stack-$want" ;; esac
+        ok=0
+        for s in "${STACKS[@]}"; do [ "$s" = "$want" ] && ok=1; done
+        if [ "$ok" -eq 0 ]; then
+            echo -e "${RED}[✘] Unknown stack: $want${NC}" >&2
+            echo -e "    Known: ${STACKS[*]}" >&2
+            exit 1
+        fi
+    done
+    for s in "${STACKS[@]}"; do
+        for want in "$@"; do
+            case "$want" in stack-*) : ;; *) want="stack-$want" ;; esac
+            [ "$s" = "$want" ] && SELECTED_STACKS+=("$s")
+        done
+    done
+}
+
+_contains() { local n="$1"; shift; local x; for x in "$@"; do [ "$x" = "$n" ] && return 0; done; return 1; }
+
+# --- Action bodies (operate on a stack list) ------------------------------
+do_up() {
+    local stacks=("$@")
+    preflight_networks || return 1
+    if _contains stack-bitcoin "${stacks[@]}"; then
+        bash "$TEOS_BUILD_UTIL" || return 1
+    fi
+    echo -e "${GREEN}${BOLD}[+] Booting: ${stacks[*]}${NC}"
+    local stack
+    for stack in "${stacks[@]}"; do
+        echo -e "${CYAN}--> Starting:${NC} ${BOLD}$stack${NC}"
+        if ! docker compose -f "./$stack/docker-compose.yml" up -d; then
+            echo -e "${RED}${BOLD}[✘] Failed to start $stack.${NC}"
+            return 1
+        fi
+        if [ "$stack" = "stack-network" ]; then
+            wait_for_health tor || return 1
+        fi
+    done
+    echo -e "\n${GREEN}${BOLD}[✔] Up: ${stacks[*]}${NC}"
+}
+
+do_stop() {
+    local stacks=("$@") i
+    echo -e "${RED}${BOLD}[-] Stopping: ${stacks[*]}${NC}"
+    for (( i=${#stacks[@]}-1; i>=0; i-- )); do
+        docker compose -f "./${stacks[$i]}/docker-compose.yml" stop
+    done
+}
+
+do_down() {
+    local stacks=("$@") i
+    echo -e "${RED}${BOLD}[-] Removing: ${stacks[*]}${NC}"
+    for (( i=${#stacks[@]}-1; i>=0; i-- )); do
+        docker compose -f "./${stacks[$i]}/docker-compose.yml" down
+    done
+}
+
+do_build() {
+    local stacks=("$@") stack
+    if _contains stack-bitcoin "${stacks[@]}"; then
+        bash "$TEOS_BUILD_UTIL" "force" || return 1
+    fi
+    for stack in "${stacks[@]}"; do
+        echo -e "${CYAN}--> Building:${NC} ${BOLD}$stack${NC}"
+        docker compose -f "./$stack/docker-compose.yml" build || return 1
+    done
+}
+
+do_logs() {
+    local stacks=("$@") args=()
+    local s; for s in "${stacks[@]}"; do args+=(-f "./$s/docker-compose.yml"); done
+    echo -e "${CYAN}${BOLD}[!] Logs (Ctrl-C to stop): ${stacks[*]}${NC}"
+    docker compose "${args[@]}" logs -f --tail=50
+}
+
+# Entry points used by the TUI (utils/tui.sh).
+bastion_stack_action() {
+    local action="$1"; shift
+    case "$action" in
+        deploy|up) do_up "$@" ;;
+        stop)      do_stop "$@" ;;
+        down)      do_down "$@" ;;
+        build)     do_build "$@" ;;
+    esac
+}
+bastion_stack_logs() { do_logs "$@"; }
+
 # --- EXECUTION ---
 check_docker
 load_secrets
@@ -132,42 +237,27 @@ for arg in "$@"; do
 done
 set -- "${ARGS[@]}"
 
-if [ -z "$1" ]; then
-    usage
+# No command + interactive terminal -> TUI. `tui` forces it.
+if { [ -z "$1" ] || [ "$1" = "tui" ]; } && [ -t 0 ] && [ -t 1 ]; then
+    source ./utils/tui.sh
+    tui_main
+    exit 0
 fi
+if [ "$1" = "tui" ]; then
+    echo -e "${RED}[✘] 'tui' needs an interactive terminal.${NC}"
+    exit 1
+fi
+[ -z "$1" ] && usage
 
-case "$1" in
-    up)
-        preflight_networks || exit 1
-        bash "$TEOS_BUILD_UTIL"
-        echo -e "${GREEN}${BOLD}[+] Booting Infrastructure...${NC}"
-        for stack in "${STACKS[@]}"; do
-            echo -e "${CYAN}--> Starting:${NC} ${BOLD}$stack${NC}"
-            if ! docker compose -f "./$stack/docker-compose.yml" up -d; then
-                echo -e "${RED}${BOLD}[✘] Failed to start $stack.${NC}"
-                exit 1
-            fi
-            if [ "$stack" = "stack-network" ]; then
-                wait_for_health tor || exit 1
-            fi
-        done
-        echo -e "\n${GREEN}${BOLD}[✔] $PROJECT_NAME is now LIVE.${NC}"
-        ;;
-    stop)
-        echo -e "${RED}${BOLD}[-] Stopping all stacks...${NC}"
-        for (( i=${#STACKS[@]}-1; i>=0; i-- )); do
-            docker compose -f "./${STACKS[$i]}/docker-compose.yml" stop
-        done
-        echo -e "\n${RED}${BOLD}✘ $PROJECT_NAME is OFFLINE.${NC}"
-        ;;
-    down)
-        echo -e "${RED}${BOLD}[-] Tearing down all stacks...${NC}"
-        for (( i=${#STACKS[@]}-1; i>=0; i-- )); do
-            docker compose -f "./${STACKS[$i]}/docker-compose.yml" down
-        done
-        echo -e "\n${RED}${BOLD}✘ $PROJECT_NAME has been REMOVED.${NC}"
+CMD="$1"; shift
+case "$CMD" in
+    up|stop|down|build|logs)
+        resolve_stacks "$@"
+        print_header
+        "do_${CMD}" "${SELECTED_STACKS[@]}"
         ;;
     status)
+        print_header
         echo -e "${CYAN}${BOLD}[?] Current Environment Status:${NC}"
         docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Networks}}"
         ;;
@@ -177,17 +267,6 @@ case "$1" in
         else
             echo -e "${RED}[✘] Error: Audit script not found at $AUDIT_SCRIPT${NC}"
         fi
-        ;;
-    build)
-        bash "$TEOS_BUILD_UTIL" "force"
-        for stack in "${STACKS[@]}"; do
-            docker compose -f "./$stack/docker-compose.yml" build
-        done
-        ;;
-    logs)
-        echo -e "${CYAN}${BOLD}[!] Attaching to Logs...${NC}"
-        # shellcheck disable=SC2046
-        docker compose $(printf -- "-f ./%s/docker-compose.yml " "${STACKS[@]}") logs -f --tail=50
         ;;
     *)
         usage

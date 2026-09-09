@@ -122,6 +122,96 @@ write_config() {
     rm -f "$extra_file"
 }
 
+# Managed configuration keys, in display order. Kept in sync with write_config's
+# section layout and the awk allowlist above. The interactive editor (utils/tui.sh)
+# iterates this.
+MANAGED_VARS=(
+    WIREGUARD_SERVERURL WIREGUARD_SERVERPORT WIREGUARD_PEERS
+    NODE_ALIAS
+    TIMEZONE USER_ID GROUP_ID PIHOLE_PASSWORD
+    LXMF_ALLOWED_IDENTITY
+    CODEDECK_RELAYS CODEDECK_TOR_PROXY_URL GIT_REPO GIT_USER GIT_EMAIL
+    CCR_WEB_AUTH_TOKEN CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY
+    CLAUDE_CODE_OAUTH_TOKEN GITHUB_TOKEN
+)
+
+# Keys whose value should be masked in any UI.
+config_var_is_secret() {
+    case "$1" in
+        PIHOLE_PASSWORD|CCR_WEB_AUTH_TOKEN|CLAUDE_CODE_OAUTH_TOKEN|GITHUB_TOKEN) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Read one managed value straight from the config file (no sourcing).
+read_env_var() {
+    [ -f "$CONFIG_FILE" ] || return 0
+    awk -v key="$1" '
+        { line = $0; sub(/^[[:space:]]*export[[:space:]]+/, "", line) }
+        line ~ "^" key "=" {
+            sub("^" key "=", "", line)
+            gsub(/^["'\'']|["'\'']$/, "", line)
+            print line
+            exit
+        }
+    ' "$CONFIG_FILE"
+}
+
+# Validate a proposed value for a managed key. Prints an error and returns 1 on
+# failure; returns 0 (silent) when acceptable. Empty is allowed for optional keys.
+validate_env_value() {
+    local key="$1" val="$2"
+    case "$key" in
+        WIREGUARD_SERVERPORT)
+            [[ "$val" =~ ^[0-9]+$ ]] && [ "$val" -ge 1 ] && [ "$val" -le 65535 ] \
+                || { echo "must be a port number 1-65535"; return 1; } ;;
+        WIREGUARD_PEERS|USER_ID|GROUP_ID)
+            [[ "$val" =~ ^[0-9]+$ ]] || { echo "must be a non-negative integer"; return 1; } ;;
+        WIREGUARD_SERVERURL)
+            [ -n "$val" ] || { echo "required (public IP or hostname)"; return 1; }
+            [[ "$val" =~ ^[A-Za-z0-9.:_-]+$ ]] || { echo "not a valid host/IP"; return 1; } ;;
+        NODE_ALIAS)
+            [ "${#val}" -le 32 ] || { echo "max 32 characters"; return 1; } ;;
+        TIMEZONE)
+            [[ "$val" =~ ^[A-Za-z0-9+_/-]+$ ]] || { echo "not a valid tz name (e.g. Europe/Madrid)"; return 1; } ;;
+        CODEDECK_TOR_PROXY_URL)
+            [ -z "$val" ] || [[ "$val" =~ ^socks5h?:// ]] \
+                || { echo "must start with socks5:// or socks5h://"; return 1; } ;;
+        CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY)
+            [[ "$val" =~ ^[01]$ ]] || { echo "must be 0 or 1"; return 1; } ;;
+        GIT_EMAIL)
+            [ -z "$val" ] || [[ "$val" =~ ^[^@[:space:]]+@[^@[:space:]]+$ ]] \
+                || { echo "not a valid email"; return 1; } ;;
+        CODEDECK_RELAYS)
+            if [ -n "$val" ]; then
+                local _r _old_ifs="$IFS"; IFS=','
+                for _r in $val; do
+                    _r="${_r#"${_r%%[![:space:]]*}"}"   # ltrim
+                    [[ "$_r" =~ ^wss?:// ]] || { IFS="$_old_ifs"; echo "comma-separated ws:// or wss:// URLs"; return 1; }
+                done
+                IFS="$_old_ifs"
+            fi ;;
+        *) : ;;  # free-form / optional
+    esac
+    return 0
+}
+
+# Symlink each stack's .env to the root config file.
+link_stack_envs() {
+    local stack
+    for stack in "${STACKS[@]}"; do
+        [ -d "./$stack" ] && ln -sf "../$CONFIG_FILE" "./$stack/.env"
+    done
+}
+
+# Persist the current environment to the config file and refresh the .env links.
+# Used by the interactive editor after changing a value.
+save_config() {
+    cp -f "$CONFIG_FILE" "${CONFIG_FILE}.bak" 2>/dev/null || true
+    write_config
+    link_stack_envs
+}
+
 load_secrets() {
     echo -e "${CYAN}${BOLD}--> Loading Configuration...${NC}"
     
@@ -181,13 +271,7 @@ load_secrets() {
     done
 
     write_config
-    
-    # Symlink .env files to stacks
-    for stack in "${STACKS[@]}"; do
-        if [ -d "./$stack" ]; then
-            ln -sf "../$CONFIG_FILE" "./$stack/.env"
-        fi
-    done
+    link_stack_envs
 
     echo -e "${GREEN}${BOLD}[✔] Environment variables loaded.${NC}\n"
 }
