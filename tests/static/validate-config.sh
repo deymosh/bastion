@@ -125,6 +125,22 @@ echo "== CONTAINER_STACK matches the compose files exactly =="
 ) && ok "CONTAINER_STACK is in exact sync with the compose service list" \
    || bad "CONTAINER_STACK has drifted from the compose files (see above)"
 
+echo "== Secrets are mounted files, not env vars =="
+# The four secrets must never appear as ${...} interpolations in a compose file
+# (comments excluded). `docker compose config` in compose-lint already checks
+# that every service `secrets:` entry resolves to a top-level declaration.
+sleak=$(grep -RhE -v '^[[:space:]]*#' stack-*/docker-compose.yml 2>/dev/null \
+        | grep -oE '\$\{(PIHOLE_PASSWORD|CCR_WEB_AUTH_TOKEN|CLAUDE_CODE_OAUTH_TOKEN|GITHUB_TOKEN)\}' || true)
+[ -z "$sleak" ] && ok "no secret is interpolated as an env var in a compose file" \
+  || bad "secret still passed as env: $sleak"
+# Each of the four is wired to its file-based delivery mechanism.
+have 'file: \.\./secrets/pihole_password'         "$NET" && ok "pihole_password declared from ../secrets/"       || bad "pihole_password not a file: secret"
+have 'WEBPASSWORD_FILE=pihole_password'           "$NET" && ok "pihole reads its password from /run/secrets"     || bad "pihole not wired to WEBPASSWORD_FILE"
+have 'file: \.\./secrets/ccr_web_auth_token'      stack-ai/docker-compose.yml && ok "ccr_web_auth_token declared from ../secrets/" || bad "ccr_web_auth_token not a file: secret"
+have 'run/secrets/ccr_web_auth_token'            stack-ai/ccr-entrypoint-wrapper.sh && ok "ccr wrapper reads the mounted CCR_WEB_AUTH_TOKEN" || bad "ccr wrapper does not read the mounted secret"
+have 'file: \.\./secrets/claude_code_oauth_token' stack-ai/docker-compose.yml && ok "claude_code_oauth_token declared from ../secrets/" || bad "claude_code_oauth_token not a file: secret"
+have 'file: \.\./secrets/github_token'            stack-ai/docker-compose.yml && ok "github_token declared from ../secrets/" || bad "github_token not a file: secret"
+
 echo "== Submodule tracking =="
 have 'branch = bastion-integration' .gitmodules && ok ".gitmodules tracks rust-teos bastion-integration" \
   || bad ".gitmodules does not pin rust-teos to bastion-integration"

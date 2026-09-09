@@ -265,12 +265,41 @@ link_stack_envs() {
     done
 }
 
-# Persist the current environment to the config file and refresh the .env links.
-# Used by the interactive editor after changing a value.
+# Derive one file per secret under secrets/ (git-ignored, mode 600, dir 700),
+# from the values in bastion.conf. bastion.conf stays the single file the
+# operator edits; this just projects the secrets into the shape Docker Compose
+# `secrets:` mounts, so a consuming container gets its secret as a file at
+# /run/secrets/<name> instead of a plaintext env var visible in `docker inspect`.
+# Rewrites a file only when its value changed. File name = lower-cased var name.
+# Lives next to CONFIG_FILE (so ./secrets in prod, and a scratch dir under a
+# test's CONFIG_FILE), which is exactly what the compose `file: ../secrets/<x>`
+# entries expect.
+SECRETS_DIR="${SECRETS_DIR:-$(dirname "${CONFIG_FILE:-./bastion.conf}")/secrets}"
+write_secret_files() {
+    mkdir -p "$SECRETS_DIR" && chmod 700 "$SECRETS_DIR" 2>/dev/null || true
+    local var name f val cur
+    for var in "${MANAGED_VARS[@]}"; do
+        config_var_is_secret "$var" || continue
+        name=$(printf '%s' "$var" | tr 'A-Z' 'a-z')
+        f="$SECRETS_DIR/$name"
+        val="${!var-}"
+        cur=""; [ -f "$f" ] && cur=$(cat "$f")
+        # Always materialise the file (Compose `file:` needs it to exist even
+        # when the value is empty), but only rewrite when the value changed.
+        if [ ! -f "$f" ] || [ "$val" != "$cur" ]; then
+            ( umask 177; printf '%s' "$val" > "$f" )
+            chmod 600 "$f" 2>/dev/null || true
+        fi
+    done
+}
+
+# Persist the current environment to the config file and refresh the .env links
+# and the derived secret files. Used by the interactive editor after a change.
 save_config() {
     cp -f "$CONFIG_FILE" "${CONFIG_FILE}.bak" 2>/dev/null || true
     write_config
     link_stack_envs
+    write_secret_files
 }
 
 # Values that have no sensible default and that only matter when starting
@@ -318,6 +347,7 @@ load_config() {
 
     write_config
     link_stack_envs
+    write_secret_files
 }
 
 # Ensure the no-default essentials are set. On a terminal, prompt for whatever is
@@ -359,6 +389,7 @@ require_essentials() {
 
     write_config
     link_stack_envs
+    write_secret_files
     echo -e "${GREEN}[✔] Saved to $CONFIG_FILE.${NC}\n"
 }
 

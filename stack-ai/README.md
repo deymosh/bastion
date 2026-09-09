@@ -52,7 +52,14 @@ Bastion normally supplies this stack from the root `bastion.conf` through
 `stack-ai/.env`. On Linux, that file is a symlink created by `./bastion`. For a
 standalone Compose run, copy `.env.example` to `.env` and fill in the values.
 
-- `CCR_WEB_AUTH_TOKEN`: required for the CCR management UI.
+- `CCR_WEB_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `GITHUB_TOKEN` are
+  **secrets**: `./bastion` writes them to `secrets/<name>` (repo root,
+  git-ignored, `600`) from `bastion.conf`, and the compose file mounts each as
+  a file under `/run/secrets/` for the one service that needs it - never a
+  plaintext env var. `ccr-entrypoint-wrapper.sh` reads
+  `/run/secrets/ccr_web_auth_token`; the CodeDeck+ bridge image reads
+  `/run/secrets/{claude_code_oauth_token,github_token}` itself. All three fall
+  back to the env var when the file is absent (standalone Compose runs).
 - `CLAUDE_CODE_OAUTH_TOKEN`: used by CodeDeck+ for Claude Code sessions.
 - `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY`: `1` lets Claude Code fill its
   `/model` picker from CCR's `/v1/models`. It makes no gateway request if

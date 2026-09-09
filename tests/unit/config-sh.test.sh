@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 ###############################################################################
 # Unit tests for utils/config.sh: read_env_var, validate_env_value,
-# config_var_is_secret, write_config idempotency, MANAGED_VARS coverage.
+# config_var_is_secret, write_config idempotency, MANAGED_VARS coverage,
+# seed_runtime_config, ensure_rtl_rune, write_secret_files.
 # Runs against a scratch CONFIG_FILE - never touches the real bastion.conf.
 ###############################################################################
+# Many vars below are read indirectly by the sourced utils/config.sh functions.
+# shellcheck disable=SC2034
 set -u
 cd "$(dirname "$0")/../.." || exit 1
 source tests/lib/assert.sh
@@ -102,7 +105,9 @@ while read -r ref; do
   case "$ref" in *:-*|*:\?*|*:+*) continue ;; esac   # has a default -> fine if unset
   name=$(printf '%s' "$ref" | sed -E 's/^\$\{([A-Za-z_][A-Za-z0-9_]*).*/\1/')
   case " ${MANAGED_VARS[*]} " in *" $name "*) : ;; *) missing="$missing $name" ;; esac
-done < <(grep -rhoE '\$\{[A-Za-z_][A-Za-z0-9_]*(:[-?+][^}]*)?\}' stack-*/docker-compose.yml | sort -u)
+# strip full-line comments first so a ${VAR} written in a comment can't count
+done < <(grep -rhE -v '^[[:space:]]*#' stack-*/docker-compose.yml \
+          | grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*(:[-?+][^}]*)?\}' | sort -u)
 assert_eq "$missing" "" "no undefaulted compose var is missing from MANAGED_VARS"
 
 echo "== seed_runtime_config is create-only / idempotent =="
@@ -148,5 +153,39 @@ assert_eq "$rc" 0 "returns 0 when CLN is unreachable (never aborts the boot)"
 assert_contains "$out" "CLN not reachable" "warns when the rune could not be minted"
 echo "== writes no file on failure =="
 assert_ok test '!' -e "$WORK/rune"
+
+echo "== write_secret_files derives one file per secret from the environment =="
+SECRETS_DIR="$WORK/secrets"
+PIHOLE_PASSWORD="s3cr3t/with=weird+chars"
+CCR_WEB_AUTH_TOKEN="ccrtok"
+CLAUDE_CODE_OAUTH_TOKEN=""            # unset optional secret -> empty file
+GITHUB_TOKEN="ghtok"
+write_secret_files
+for f in pihole_password ccr_web_auth_token claude_code_oauth_token github_token; do
+  assert_ok test -f "$SECRETS_DIR/$f"
+done
+assert_eq "$(cat "$SECRETS_DIR/pihole_password")" "s3cr3t/with=weird+chars" "value written verbatim (no quoting, no newline)"
+assert_eq "$(wc -c < "$SECRETS_DIR/pihole_password")" "23" "no trailing newline"
+assert_eq "$(cat "$SECRETS_DIR/claude_code_oauth_token")" "" "an unset secret becomes an empty file"
+[ "$(uname -s)" = Linux ] && {
+  assert_eq "$(stat -c '%a' "$SECRETS_DIR")" "700" "secrets dir is 700"
+  assert_eq "$(stat -c '%a' "$SECRETS_DIR/pihole_password")" "600" "secret file is 600"
+}
+# non-secret managed vars never get a file
+assert_ok test '!' -e "$SECRETS_DIR/node_alias"
+# rewrite only on change
+mtb=$(stat -c %Y "$SECRETS_DIR/github_token" 2>/dev/null || stat -f %m "$SECRETS_DIR/github_token")
+sleep 1; write_secret_files
+mta=$(stat -c %Y "$SECRETS_DIR/github_token" 2>/dev/null || stat -f %m "$SECRETS_DIR/github_token")
+assert_eq "$mtb" "$mta" "an unchanged value is not rewritten"
+GITHUB_TOKEN="rotated"; write_secret_files
+assert_eq "$(cat "$SECRETS_DIR/github_token")" "rotated" "a changed value is rewritten"
+# SECRETS_DIR follows CONFIG_FILE, so a scratch CONFIG_FILE keeps it out of the repo
+( export CONFIG_FILE="$WORK/x/bastion.conf"
+  unset SECRETS_DIR
+  # shellcheck disable=SC1091
+  source utils/config.sh
+  write_secret_files
+  assert_eq "$SECRETS_DIR" "$WORK/x/secrets" "SECRETS_DIR defaults next to CONFIG_FILE" )
 
 finish

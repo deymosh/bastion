@@ -17,7 +17,8 @@ services:
       CCR_WEB_HOST: 127.0.0.1
       CCR_PUBLIC_HOST: 127.0.0.1
       CCR_PUBLIC_PORT: 3458
-      CCR_WEB_AUTH_TOKEN: ${CCR_WEB_AUTH_TOKEN}
+      # CCR_WEB_AUTH_TOKEN is NOT an env var - ccr-entrypoint-wrapper.sh exports
+      # it from /run/secrets/ccr_web_auth_token (falls back to the env if set).
       CLAUDE_CONFIG_DIR: /data/.claude
       # OAuth token refresher (keeps .credentials.json fresh; no restart needed).
       CCR_TOKEN_REFRESH: ${CCR_TOKEN_REFRESH:-1}
@@ -25,6 +26,8 @@ services:
       CCR_REFRESH_SKEW_MS: ${CCR_REFRESH_SKEW_MS:-1800000}
     volumes:
       - ./data/ccr:/data
+    secrets:
+      - ccr_web_auth_token
     ports:
       - "3458:8080"
     networks:
@@ -55,12 +58,10 @@ services:
       CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: ${CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY:-1}
     secrets:
       - source: claude_code_oauth_token
-        target: claude_code_oauth_token
         uid: "1000"
         gid: "1000"
         mode: 0440
       - source: github_token
-        target: github_token
         uid: "1000"
         gid: "1000"
         mode: 0440
@@ -71,11 +72,16 @@ services:
         ipv4_address: 10.50.0.3
       transit:
 
+# Derived from bastion.conf by ./bastion (utils/config.sh write_secret_files);
+# git-ignored, mode 600. Delivered to the container as files under /run/secrets,
+# never as plaintext env vars.
 secrets:
+  ccr_web_auth_token:
+    file: ../secrets/ccr_web_auth_token
   claude_code_oauth_token:
-    environment: CLAUDE_CODE_OAUTH_TOKEN
+    file: ../secrets/claude_code_oauth_token
   github_token:
-    environment: GITHUB_TOKEN
+    file: ../secrets/github_token
 
 networks:
   net:

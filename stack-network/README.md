@@ -55,7 +55,9 @@ while other Bastion stacks are running. Tor state is kept in the Docker-managed
 Values come from the root `bastion.conf` through `.env` on Linux:
 
 - `TIMEZONE`
-- `PIHOLE_PASSWORD`
+- `PIHOLE_PASSWORD` - not passed as an env var: `./bastion` writes it to
+  `secrets/pihole_password` (git-ignored, `600`), the compose file mounts it at
+  `/run/secrets/pihole_password`, and Pi-hole reads it via `WEBPASSWORD_FILE`.
 - `WIREGUARD_SERVERURL`
 - `WIREGUARD_SERVERPORT`
 - `WIREGUARD_PEERS`

@@ -14,12 +14,17 @@ services:
     network_mode: host
     environment:
       - TZ=${TIMEZONE}
-      - FTLCONF_webserver_api_password=${PIHOLE_PASSWORD}
+      # Web password comes from a mounted secret, not a plaintext env var: the
+      # image reads /run/secrets/<WEBPASSWORD_FILE> when
+      # FTLCONF_webserver_api_password is unset (src/bash_functions.sh).
+      - WEBPASSWORD_FILE=pihole_password
       - FTLCONF_dns_upstreams=10.10.0.2#53
       - FTLCONF_webserver_port=8081o,443os,[::]:8081o,[::]:443os
     volumes:
       - './data/etc-pihole:/etc/pihole'
       - './data/etc-dnsmasq.d:/etc/dnsmasq.d'
+    secrets:
+      - pihole_password
     cap_add:
       - NET_ADMIN
 
@@ -101,3 +106,9 @@ networks:
 volumes:
   tor-data:
     name: bastion-tor-data
+
+# Derived from bastion.conf by ./bastion (utils/config.sh write_secret_files);
+# git-ignored, mode 600. Mounted at /run/secrets/<name>, never an env var.
+secrets:
+  pihole_password:
+    file: ../secrets/pihole_password

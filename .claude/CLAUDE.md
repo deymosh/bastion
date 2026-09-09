@@ -109,11 +109,17 @@ blocks the run and explains why.
 
 ## Absolute constraints (do not suggest workarounds)
 
-- **Never commit `bastion.conf`, any `stack-*/.env`, or anything under
-  `stack-*/data/`.** They hold live secrets — Pi-hole password, CCR web token,
-  Claude OAuth `accessToken`/`refreshToken` in
+- **Never commit `bastion.conf`, any `stack-*/.env`, `secrets/`, or anything
+  under `stack-*/data/`.** They hold live secrets — Pi-hole password, CCR web
+  token, Claude OAuth `accessToken`/`refreshToken` in
   `stack-ai/data/ccr/.claude/.credentials.json`, CLN state, HSM secret. They are
-  git-ignored; keep it that way.
+  git-ignored; keep it that way. `bastion.conf` is the operator's single source
+  of truth; `utils/config.sh write_secret_files` projects the four secret values
+  (see `config_var_is_secret`) into `secrets/<lower_name>` (mode 600) which the
+  compose files mount at `/run/secrets/<name>` — secrets reach a container as a
+  file, never a plaintext env var. Add a new secret → add it to
+  `config_var_is_secret`, wire the compose `secrets:` block, and the file is
+  created automatically.
 - **Never start `bitcoind` in dev** (see above).
 - **`rust-teos` is a submodule.** Any change to it is a real commit *inside* the
   submodule (on a branch of the fork) plus a pointer bump in the superproject.

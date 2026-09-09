@@ -164,12 +164,19 @@ Docker socket — firewall it the most tightly of all.
 
 ## 🛠️ Configuration
 
-`./bastion` creates and maintains an organized `bastion.conf`:
+`./bastion` creates and maintains an organized `bastion.conf` - the single file
+you edit:
 - **Interactive prompts:** Wireguard URL/port, CLN node alias
 - **Auto-generated:** TIMEZONE, PIHOLE_PASSWORD, USER_ID, GROUP_ID, CCR web token
 - **AI settings:** CodeDeck relay, Tor proxy, Git, Claude, and GitHub variables
 - **Idempotent:** managed variables are rewritten without duplicates on repeated runs
-- **Symlinks:** Each stack references `../bastion.conf` via `.env` on Linux
+- **Symlinks:** each stack references `../bastion.conf` via `.env` on Linux
+- **Secrets:** the four secret values (`PIHOLE_PASSWORD`, `CCR_WEB_AUTH_TOKEN`,
+  `CLAUDE_CODE_OAUTH_TOKEN`, `GITHUB_TOKEN`) are also projected into `secrets/`
+  (git-ignored, `600`) and delivered to the one service that needs each as a
+  **file** under `/run/secrets/…`, not a plaintext env var - so they never
+  appear in `docker inspect`. `bastion.conf` stays the source of truth;
+  `secrets/` is regenerated from it and rewritten only when a value changes.
 
 On Windows, use a real `.env` file in each stack directory if symlinks are not
 enabled. Keep credentials out of Git in every environment.
