@@ -39,7 +39,7 @@ write_config() {
     if [ -f "$CONFIG_FILE" ]; then
         awk '
             BEGIN {
-                split("WIREGUARD_SERVERURL WIREGUARD_SERVERPORT WIREGUARD_PEERS NODE_ALIAS TIMEZONE USER_ID GROUP_ID PIHOLE_PASSWORD LXMF_ALLOWED_IDENTITY CODEDECK_RELAYS CODEDECK_TOR_PROXY_URL GIT_REPO GIT_USER GIT_EMAIL CCR_WEB_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN GITHUB_TOKEN", managed)
+                split("WIREGUARD_SERVERURL WIREGUARD_SERVERPORT WIREGUARD_PEERS NODE_ALIAS TIMEZONE USER_ID GROUP_ID PIHOLE_PASSWORD LXMF_ALLOWED_IDENTITY CODEDECK_RELAYS CODEDECK_TOR_PROXY_URL GIT_REPO GIT_USER GIT_EMAIL CCR_WEB_AUTH_TOKEN CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY CLAUDE_CODE_OAUTH_TOKEN GITHUB_TOKEN", managed)
                 for (position in managed) {
                     known[managed[position]] = 1
                 }
@@ -103,6 +103,8 @@ write_config() {
         echo "# Claude Code Router"
         echo "# Authentication token for the CCR web UI."
         printf 'CCR_WEB_AUTH_TOKEN=%s\n' "$CCR_WEB_AUTH_TOKEN"
+        echo "# 1 lets Claude Code populate its model picker from the gateway's /v1/models."
+        printf 'CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=%s\n' "$CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"
         echo
         echo "# CodeDeck Claude authentication"
         echo "# Required by CodeDeck+; keep this file private."
@@ -166,6 +168,7 @@ load_secrets() {
         ["GIT_USER"]=""
         ["GIT_EMAIL"]=""
         ["CCR_WEB_AUTH_TOKEN"]=$(openssl rand -base64 32 | tr -d '=+/\n' | cut -c1-43)
+        ["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"]="1"
         ["CLAUDE_CODE_OAUTH_TOKEN"]=""
         ["GITHUB_TOKEN"]=""
     )

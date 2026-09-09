@@ -46,11 +46,17 @@ COPY --from=source /src/packages/ui/dist/renderer /usr/share/nginx/html
 COPY --from=source /src/docker/entrypoint.sh /usr/local/bin/ccr-entrypoint
 COPY --from=source /src/docker/pm2.config.cjs ./docker/pm2.config.cjs
 
+# Bastion: keep the Claude Code OAuth token fresh in this headless container.
+COPY ccr-token-refresher.mjs /usr/local/bin/ccr-token-refresher.mjs
+COPY ccr-entrypoint-wrapper.sh /usr/local/bin/ccr-entrypoint-wrapper
+
 RUN chmod 0755 /usr/local/bin/ccr-entrypoint \
+                /usr/local/bin/ccr-entrypoint-wrapper \
+                /usr/local/bin/ccr-token-refresher.mjs \
     && mkdir -p /data /run/nginx /var/lib/nginx /var/log/nginx
 
 VOLUME ["/data"]
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD node -e "fetch('http://127.0.0.1:8080/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
-ENTRYPOINT ["ccr-entrypoint"]
+ENTRYPOINT ["ccr-entrypoint-wrapper"]

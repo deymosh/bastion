@@ -17,6 +17,10 @@ services:
       CCR_PUBLIC_PORT: 3458
       CCR_WEB_AUTH_TOKEN: ${CCR_WEB_AUTH_TOKEN}
       CLAUDE_CONFIG_DIR: /data/.claude
+      # OAuth token refresher (keeps .credentials.json fresh; no restart needed).
+      CCR_TOKEN_REFRESH: ${CCR_TOKEN_REFRESH:-1}
+      CCR_REFRESH_INTERVAL: ${CCR_REFRESH_INTERVAL:-300}
+      CCR_REFRESH_SKEW_MS: ${CCR_REFRESH_SKEW_MS:-1800000}
     volumes:
       - ./data/ccr:/data
     ports:
@@ -43,6 +47,9 @@ services:
       CODEDECK_RELAYS: ${CODEDECK_RELAYS}
       CODEDECK_TOR_PROXY_URL: ${CODEDECK_TOR_PROXY_URL}
       ANTHROPIC_BASE_URL: http://ccr:8080
+      # Let Claude Code populate its /model picker from the gateway's /v1/models.
+      # No request is made if CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC is set.
+      CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: ${CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY:-1}
     secrets:
       - source: claude_code_oauth_token
         target: claude_code_oauth_token
