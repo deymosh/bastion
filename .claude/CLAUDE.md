@@ -1,0 +1,150 @@
+# CLAUDE.md
+
+Guidance for Claude Code (claude.ai/code) when working in this repository.
+
+## Project identity
+
+Bastion is a self-hosted "sovereign node" stack: a Bitcoin full node + Core
+Lightning node, the supporting privacy plumbing (Tor, a recursive DNS resolver,
+Pi-hole, WireGuard), an observability stack, a web hub, and an AI stack
+(Claude Code Router + a CodeDeck+ bridge). Everything runs in Docker, split into
+five **stacks**, each its own Compose project with its own `docker-compose.yml`
+and `README.md`:
+
+| Stack | What it runs |
+|---|---|
+| `stack-network` | Pi-hole, `unbound`, WireGuard, **Tor** (owns the shared Tor volume + the `bastion-transit` network) |
+| `stack-bitcoin` | `bitcoind`, `lightningd` (CLN), RTL, `teosd` (watchtower) |
+| `stack-monitor` | Portainer, Prometheus, Grafana, node-exporter |
+| `stack-web` | `hub` (static nginx landing page) |
+| `stack-ai` | `ccr` (Claude Code Router), `codedeck-bridge` |
+
+Design ethos: Tor-first (all outbound Bitcoin/Lightning/relay traffic proxied),
+network-segmented (one bridge network per stack, a single narrow `bastion-transit`
+for the few services that must talk across stacks), and **no personal data in the
+tree** — no node alias/pubkey/onion, no real IPs/domains, no wallet-app names, no
+account identifiers. Generic self-host documentation only.
+
+The root `bastion` bash script + `utils/config.sh` orchestrate the stacks.
+`rust-teos` is a git submodule (a fork). `bastion.conf` + the per-stack
+`stack-*/.env` symlinks are generated, git-ignored, and hold live secrets.
+
+## Commands
+
+The maintainer's dev host is **Windows** (Docker Desktop, Git Bash); the
+deployment target is **Linux**. Bash syntax is identical either way.
+
+```bash
+./bastion                 # no args + a TTY -> interactive TUI
+./bastion up [stack...]   # deploy all stacks in order, or just the named ones
+./bastion stop [stack...] # stop (reverse order)
+./bastion down [stack...] # stop + remove (reverse order)
+./bastion status          # docker ps table
+./bastion build [stack...]# build images without starting
+./bastion logs [stack...] # tail logs
+./bastion audit           # node profitability audit (python)
+```
+
+Any non-TTY invocation (`services/bastion-daemon.sh`, cron, a pipe) runs the
+plain path — the TUI never launches without an interactive terminal.
+
+### Dev environment constraints
+
+- **Never start `bitcoind` in dev.** It would begin a full-chain sync. For local
+  testing bring up only what a change needs (see the `local-testing` skill).
+  CLN can run **without** `bitcoind`: `bcli` is disabled and `trustedcoin`
+  (block data over Tor) is an `important-plugin`.
+- The Lightning node used for testing is **empty** — no channels, no funds.
+- `network_mode: host` (Pi-hole) and the `/lib/modules` mount (WireGuard) do not
+  work on Docker Desktop for Windows. Those pieces are Linux-target-only for any
+  end-to-end verification.
+
+## Workflow
+
+- **Branch + PR, never direct commits to `master`.** Start from an up-to-date
+  `master`, create `claude/<short-kebab-slug>`, do all of a request's commits
+  there (one branch per request, not per commit), then open a PR with
+  `gh pr create` and a real summary. Leave the PR open for the user to merge
+  unless they explicitly say to merge it.
+- **Multi-part requests: one task at a time.** Implement, verify with the
+  narrowest sufficient check, commit that task, then start the next. Do not batch
+  unrelated changes into one commit.
+- A change is not finished until it is verified. If you could not run the
+  verification (Docker unavailable, needs the Linux target), say so plainly in
+  the summary and PR — do not imply it passed.
+
+## Commit and comment safety
+
+- **English only, everywhere it lands in the tree or history**: code, comments,
+  commit subjects and bodies, PR titles and descriptions. The conversation with
+  the maintainer may be in another language; the artifacts are not.
+- **No literal `@word` in any commit message, PR body, or code comment.** GitHub
+  auto-links `@word` as a user mention and notifies a real account. The trap here
+  is image / package references that do not *feel* like a mention:
+  `@anthropic-ai/claude-code`, `@claude-code-router/core`. Wrap the token in
+  backticks, drop the `@`, or rephrase. Scan every drafted commit message for
+  `@` before `git commit`.
+- **Every commit Claude Code makes ends with a `Co-Authored-By:` trailer** naming
+  the model that did the work, e.g.
+  `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>`. Apply it every time,
+  unprompted.
+- **Comments and commit messages must stand on their own.** State the actual
+  invariant or behaviour being preserved — do not make "see the task" / "per the
+  plan" / a commit hash the only explanation.
+
+## Absolute constraints (do not suggest workarounds)
+
+- **Never commit `bastion.conf`, any `stack-*/.env`, or anything under
+  `stack-*/data/`.** They hold live secrets — Pi-hole password, CCR web token,
+  Claude OAuth `accessToken`/`refreshToken` in
+  `stack-ai/data/ccr/.claude/.credentials.json`, CLN state, HSM secret. They are
+  git-ignored; keep it that way.
+- **Never start `bitcoind` in dev** (see above).
+- **`rust-teos` is a submodule.** Any change to it is a real commit *inside* the
+  submodule (on a branch of the fork) plus a pointer bump in the superproject.
+  Never leave it `-dirty`. `git submodule update` silently discards uncommitted
+  submodule work.
+- **The Tor transit IP `10.254.0.2` is load-bearing.** It is hardcoded in
+  `stack-network/config/torrc` (`SocksPort`/`ControlPort`),
+  `stack-bitcoin/config/cln_config` (`proxy`, `statictor`),
+  `stack-bitcoin/config/teos.toml` (`tor_control_host`),
+  `stack-bitcoin/docker-compose.yml` (`bitcoind -proxy`),
+  `stack-bitcoin/scripts/amboss-healthcheck.sh`, and the `tor` healthcheck. The
+  `tor` service pins it via `ipv4_address`. Keep all of these in sync; do not
+  add a consumer that assumes a different address.
+- **Intentional design — do not "fix" it:** CLN REST (`3001`) and CCR (`3458`)
+  are published on `0.0.0.0` on the host on purpose. A WireGuard client reaches
+  them at the host's LAN IP (or a Pi-hole local-DNS name such as
+  `bastion.node`); the **host firewall** is the access-control layer. Do not
+  revert these to `127.0.0.1:` bindings.
+- Do not downgrade a pinned image tag / toolchain version to work around a build
+  failure — fix the root cause.
+
+## Architecture / boot order
+
+`./bastion up` deploys in this order (defined in `utils/config.sh` `STACKS`):
+
+```
+stack-network   creates bastion-transit + the bastion-tor-data volume, runs tor
+     │          -> ./bastion waits for the tor container to become healthy
+stack-bitcoin   bitcoind, lightningd, rtl, teosd
+stack-monitor   self-contained (own network, no transit)
+stack-web       self-contained
+stack-ai        ccr + codedeck-bridge
+```
+
+Networks: each stack owns `bastion-<stack>` (`10.<10|20|30|40|50>.0.0/24`, first
+service at `.2`). `bastion-transit` (`10.254.0.0/24`) is created by
+`stack-network` and joined `external: true` by the services that must cross stack
+boundaries: `tor`, `lightningd`, `bitcoind`, `teosd`, `codedeck-bridge`. The
+`bastion-tor-data` named volume is created by `stack-network` and mounted
+read-only by `lightningd` and `teosd` for the Tor control cookie.
+
+## Skills
+
+- `stack-compose` — the network/volume model and how to edit a
+  `docker-compose.yml` without breaking cross-stack wiring.
+- `local-testing` — validating changes without `bitcoind`, which stack subset a
+  given change needs, and the CLN `gossip_store` named-volume workaround.
+- `ccr-oauth` — how CCR consumes the Claude OAuth credentials file and how the
+  in-container token refresher keeps it fresh.
