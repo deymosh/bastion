@@ -22,7 +22,7 @@ fi
 HEADER_LINE="═══════════════════════════════════════════════════════"
 echo -e "${CYAN}${HEADER_LINE}${NC}"
 echo -e "${CYAN}${BOLD}                 🏴‍☠️  $PROJECT_NAME CLI                  ${NC}"
-echo -e "${CYAN}${BOLD}          Sovereign Node Infrastructure              ${NC}"
+echo -e "${CYAN}${BOLD}       Sovereign Infrastructure · Operations · AI     ${NC}"
 echo -e "${CYAN}${HEADER_LINE}${NC}"
 
 # --- HELPER FUNCTIONS ---
@@ -35,6 +35,9 @@ usage() {
     echo -e "  ${CYAN}audit${NC}   -> Run the Python Node Profitability Audit"
     echo -e "  ${BOLD}build${NC}   -> Build all stacks without starting"
     echo -e "  ${BOLD}logs${NC}    -> Tail logs from all stacks"
+    echo -e ""
+    echo -e "${YELLOW}${BOLD}FLAGS:${NC}"
+    echo -e "  ${BOLD}--recreate-networks${NC} -> On 'up', drop a stale bastion-network (old subnet) first"
     echo -e ""
     echo -e "${YELLOW}${BOLD}STACKS MANAGED:${NC}"
     for i in "${!STACKS[@]}"; do
@@ -81,9 +84,53 @@ wait_for_health() {
     return 1
 }
 
+# Guard against the pre-transit flat network. stack-network keeps the name
+# "bastion-network" but its subnet changed from 10.0.0.0/24 to 10.10.0.0/24, and
+# Docker will not reconcile a subnet change on an existing network - it just
+# fails "up" with a confusing error. Detect the stale network and either stop
+# with instructions, or (with --recreate-networks) remove it after "down".
+preflight_networks() {
+    local existing_subnet
+    existing_subnet=$(docker network inspect bastion-network \
+        --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}' 2>/dev/null || true)
+
+    [ -z "$existing_subnet" ] && return 0                 # no network yet - fine
+    [ "$existing_subnet" = "10.10.0.0/24" ] && return 0   # already migrated
+
+    echo -e "${YELLOW}${BOLD}[!] Stale 'bastion-network' found (${existing_subnet}); expected 10.10.0.0/24.${NC}"
+    if [ "$RECREATE_NETWORKS" = "1" ]; then
+        echo -e "${CYAN}--> Removing it (all Bastion stacks will be brought down first)...${NC}"
+        for (( i=${#STACKS[@]}-1; i>=0; i-- )); do
+            docker compose -f "./${STACKS[$i]}/docker-compose.yml" down 2>/dev/null || true
+        done
+        if docker network rm bastion-network >/dev/null 2>&1; then
+            echo -e "${GREEN}[✔] Removed stale bastion-network; it will be recreated with the new subnet.${NC}"
+            return 0
+        fi
+        echo -e "${RED}[✘] Could not remove bastion-network (a container may still be attached).${NC}"
+        return 1
+    fi
+
+    echo -e "${RED}[✘] Refusing to continue. Run:${NC}"
+    echo -e "    ${BOLD}./bastion down${NC} && ${BOLD}docker network rm bastion-network${NC}"
+    echo -e "  or re-run with ${BOLD}--recreate-networks${NC} to do it automatically."
+    return 1
+}
+
 # --- EXECUTION ---
 check_docker
 load_secrets
+
+# Strip global flags before command dispatch.
+RECREATE_NETWORKS=0
+ARGS=()
+for arg in "$@"; do
+    case "$arg" in
+        --recreate-networks) RECREATE_NETWORKS=1 ;;
+        *) ARGS+=("$arg") ;;
+    esac
+done
+set -- "${ARGS[@]}"
 
 if [ -z "$1" ]; then
     usage
@@ -91,6 +138,7 @@ fi
 
 case "$1" in
     up)
+        preflight_networks || exit 1
         bash "$TEOS_BUILD_UTIL"
         echo -e "${GREEN}${BOLD}[+] Booting Infrastructure...${NC}"
         for stack in "${STACKS[@]}"; do

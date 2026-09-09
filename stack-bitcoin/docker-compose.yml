@@ -8,6 +8,12 @@ services:
       dockerfile: Dockerfile.lightningd
     container_name: lightningd
     restart: unless-stopped
+    # Ordering only: with bcli disabled and trustedcoin as the chain backend,
+    # CLN does not query bitcoind, but this keeps a sane start order if the
+    # operator re-enables bcli. Cross-stack ordering (Tor) is handled by
+    # ./bastion up waiting for the tor container to be healthy.
+    depends_on:
+      - bitcoind
     logging:
       driver: "json-file"
       options:
@@ -51,14 +57,19 @@ services:
       net:
         ipv4_address: 10.20.0.3
       transit:
+    healthcheck:
+      test: ["CMD-SHELL", "bitcoin-cli -rpcuser=bitcoind.user -rpcpassword=bitcoind.pass -rpcport=8332 getblockchaininfo > /dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     command:
       - -server=1
       - -dbcache=8000
       - -prune=20000        # This limits block storage to ~20GB
       - -txindex=0          # Saves space (not needed for CLN)
-      - -prune=20000        # Keeps ~20GB of blocks (adjust if you want more)
       - -printtoconsole=1
-      - -proxy=10.254.0.2:9050 # Route all P2P traffic through Tor
+      - -proxy=tor:9050     # Route all P2P traffic through Tor (resolved on bastion-transit)
       - -listen=0           # Disable incoming P2P connections
       - -rpcuser=bitcoind.user      # Put the user you want
       - -rpcpassword=bitcoind.pass  # Put the password you want
@@ -86,7 +97,8 @@ services:
     container_name: teosd
     restart: always
     depends_on:
-      - bitcoind
+      bitcoind:
+        condition: service_healthy
     volumes:
       - ./data/teos:/home/teos/.teos
       - tor-data:/data/.tor:ro

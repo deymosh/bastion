@@ -4,12 +4,14 @@
 # BASTION Node - Amboss Health Check
 # ==============================================================================
 # Description: Sends a signed heartbeat to Amboss.space via Tor proxy.
-# Requirements: jq, docker, tor-proxy (10.254.0.2)
+# Requirements: jq, docker, and the Tor container running (publishes 9050 on
+#              the host). Runs on the host, so it uses the published port, not
+#              the internal bastion-transit address.
 # ==============================================================================
 
 # --- Configuration ---
 AMBOSS_URL="https://api.amboss.space/graphql"
-TOR_PROXY="socks5h://10.254.0.2:9050"
+TOR_PROXY="${TOR_PROXY:-socks5h://127.0.0.1:9050}"
 
 # Replace 'lightningd' with your actual container name if different
 CLN_CONTAINER="lightningd"
