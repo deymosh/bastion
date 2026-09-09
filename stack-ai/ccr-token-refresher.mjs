@@ -105,6 +105,17 @@ async function tick() {
     return "not-due";
   }
 
+  // The refresh token has its own, much longer lifetime (weeks). When the
+  // credentials file records refreshTokenExpiresAt and it has passed, a refresh
+  // can only come back invalid_grant - skip the request and wait for an
+  // operator re-login instead of polling a dead token every interval.
+  const rtExpiresAt = Number(oauth.refreshTokenExpiresAt) || 0;
+  if (rtExpiresAt && Date.now() >= rtExpiresAt) {
+    logOnce("rt-expired",
+      `refresh token expired ${new Date(rtExpiresAt).toISOString()} - run \`claude\` login again`);
+    return "dead";
+  }
+
   log(`refreshing (expires in ${Math.round(msLeft / 1000)}s)`);
 
   let resp;
@@ -150,12 +161,21 @@ async function tick() {
   }
 
   const expiresInMs = (Number(body.expires_in) || 36000) * 1000;
-  data.claudeAiOauth = {
+  const rotated = body.refresh_token && body.refresh_token !== oauth.refreshToken;
+  const next = {
     ...oauth,
     accessToken: body.access_token,
     refreshToken: body.refresh_token || oauth.refreshToken,
     expiresAt: Date.now() + expiresInMs,
   };
+  // Keep refreshTokenExpiresAt honest: adopt a fresh value if the endpoint
+  // returned one, otherwise drop a now-stale value once the token has rotated.
+  if (Number(body.refresh_token_expires_in) > 0) {
+    next.refreshTokenExpiresAt = Date.now() + Number(body.refresh_token_expires_in) * 1000;
+  } else if (rotated && "refreshTokenExpiresAt" in next) {
+    delete next.refreshTokenExpiresAt;
+  }
+  data.claudeAiOauth = next;
 
   try {
     await writeCreds(data);

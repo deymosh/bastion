@@ -105,6 +105,56 @@ test("expired OAuth token -> refreshes, rotates both tokens, advances expiry, ke
   assert.equal(after.unrelated, "keep-me");
 });
 
+test("real-world credentials shape -> refreshes, honours refresh_token_expires_in, keeps every extra key", async () => {
+  const { srv, url } = await mockEndpoint((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({
+      access_token: "sk-ant-oat01-NEW",
+      refresh_token: "sk-ant-ort01-NEW",
+      expires_in: 36000,
+      refresh_token_expires_in: 30 * 24 * 3600,
+    }));
+  });
+  const creds = {
+    claudeAiOauth: {
+      accessToken: "sk-ant-oat01-OLD",
+      refreshToken: "sk-ant-ort01-OLD",
+      expiresAt: 1,
+      refreshTokenExpiresAt: Date.now() + 20 * 24 * 3600_000,
+      scopes: ["user:file_upload", "user:inference", "user:mcp_servers", "user:profile", "user:sessions:claude_code"],
+      subscriptionType: "pro",
+      rateLimitTier: "default_claude_ai",
+    },
+    organizationUuid: "11111111-1111-1111-1111-111111111111",
+  };
+  const { out, after } = await runRefresher({ credentials: creds, tokenUrl: url });
+  srv.close();
+  assert.match(out, /refreshed OK/i);
+  assert.equal(after.claudeAiOauth.accessToken, "sk-ant-oat01-NEW");
+  assert.equal(after.claudeAiOauth.refreshToken, "sk-ant-ort01-NEW");
+  assert.ok(after.claudeAiOauth.refreshTokenExpiresAt > Date.now() + 29 * 24 * 3600_000,
+    "refreshTokenExpiresAt advanced from refresh_token_expires_in");
+  assert.equal(after.claudeAiOauth.rateLimitTier, "default_claude_ai");
+  assert.deepEqual(after.claudeAiOauth.scopes, creds.claudeAiOauth.scopes);
+  assert.equal(after.organizationUuid, "11111111-1111-1111-1111-111111111111");
+});
+
+test("refreshTokenExpiresAt in the past -> no endpoint call, file untouched", async () => {
+  let hits = 0;
+  const { srv, url } = await mockEndpoint((_r, _b, res) => { hits++; res.end("{}"); });
+  const creds = {
+    claudeAiOauth: {
+      accessToken: "OLD", refreshToken: "DEAD", expiresAt: 1,
+      refreshTokenExpiresAt: Date.now() - 3600_000,
+    },
+  };
+  const { out, after } = await runRefresher({ credentials: creds, tokenUrl: url, ms: 3000 });
+  srv.close();
+  assert.equal(hits, 0, "a known-expired refresh token must not hit the endpoint");
+  assert.match(out, /refresh token expired/i);
+  assert.equal(after.claudeAiOauth.accessToken, "OLD", "file left untouched");
+});
+
 test("invalid_grant -> logged, file NOT clobbered", async () => {
   const { srv, url } = await mockEndpoint((_r, _b, res) => {
     res.writeHead(400, { "content-type": "application/json" });

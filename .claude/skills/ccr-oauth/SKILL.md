@@ -33,16 +33,23 @@ Bastion fixes this with a tiny refresher process started alongside CCR.
   "claudeAiOauth": {
     "accessToken":  "sk-ant-oat01-...",
     "refreshToken": "sk-ant-ort01-...",
-    "expiresAt":    1788899895278,        // epoch MILLISECONDS
-    "scopes":       ["user:inference", "user:profile"],
-    "subscriptionType": "pro"
-  }
+    "expiresAt":    1788998262097,          // access token, epoch MILLISECONDS (~a day out)
+    "refreshTokenExpiresAt": 1791253716097, // refresh token, epoch ms (~weeks out); may be absent
+    "scopes":       ["user:file_upload", "user:inference", "user:mcp_servers",
+                     "user:profile", "user:sessions:claude_code"],
+    "subscriptionType": "pro",
+    "rateLimitTier": "default_claude_ai"
+  },
+  "organizationUuid": "11111111-1111-1111-1111-111111111111"   // sibling of claudeAiOauth (example)
 }
 ```
 
 It is written initially by an interactive `claude` login (the `claude` CLI is
 baked into the image). It holds **live secrets** — never commit it, never log its
-contents.
+contents. The exact key set varies by `claude` version; the refresher only reads
+`accessToken` / `refreshToken` / `expiresAt` / `refreshTokenExpiresAt`, rewrites
+those, and **passes every other key through untouched** (`scopes`,
+`subscriptionType`, `rateLimitTier`, `organizationUuid`, …).
 
 ## 2. The refresh request
 
@@ -63,11 +70,16 @@ refresher lets you override them (`CCR_OAUTH_TOKEN_URL`, `CCR_OAUTH_CLIENT_ID`)
 if a future CLI moves them — re-check with:
 `grep -aoE 'CLIENT_ID:"[0-9a-f-]{36}"|https://[a-z.]+/v1/oauth/token' /usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe`
 
-Response (200): `{ "access_token", "refresh_token", "expires_in" }` — the refresh
-token **rotates**, so the new one must be written back. `expires_in` is seconds
-(~36000). Compute `expiresAt = Date.now() + expires_in*1000`.
+Response (200): `{ "access_token", "refresh_token", "expires_in", ... }` — the
+refresh token **rotates**, so the new one must be written back. `expires_in` is
+seconds (~36000); compute `expiresAt = Date.now() + expires_in*1000`. If the
+body carries `refresh_token_expires_in`, use it for `refreshTokenExpiresAt` the
+same way; if it doesn't and the refresh token rotated, drop the stale
+`refreshTokenExpiresAt` rather than keep a wrong one.
 
 Error handling:
+- Stored `refreshTokenExpiresAt` already in the past → don't even send the
+  request; it can only be `invalid_grant`. Log once, wait for a re-login.
 - `4xx` with `invalid_grant` → the refresh token is dead; an operator must
   `claude` login again. Log loudly, keep looping (don't crash).
 - `429` / `5xx` / network → transient; back off and retry.
