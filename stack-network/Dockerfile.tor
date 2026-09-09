@@ -1,8 +1,8 @@
 # Bastion Tor image.
 #
-# The only change from lncm/tor:latest is pre-creating the Tor DataDirectory so
-# the bastion-tor-data named volume seeds with toruser (uid/gid 1000) ownership
-# on first mount. The stock image does not ship /data/.tor, so a fresh volume
+# The only change from the base is pre-creating the Tor DataDirectory so the
+# bastion-tor-data named volume seeds with toruser (uid/gid 1000) ownership on
+# first mount. The stock image does not ship /data/.tor, so a fresh volume
 # would be created root-owned and tor (running as toruser) could not write it.
 #
 # mode 0750 (not 0700) so DataDirectoryGroupReadable / the group-readable
@@ -11,7 +11,11 @@
 #
 # The stock ENTRYPOINT ["tor"] reads /etc/tor/torrc (bind-mounted by
 # docker-compose) automatically; no custom entrypoint is needed.
-FROM lncm/tor:latest
+#
+# Pinned for reproducibility. NOTE: lncm/tor is unmaintained (this tag is from
+# 2023) and Tor 0.4.7 is EOL upstream - moving to a maintained base is a
+# separate, tracked task.
+FROM lncm/tor:0.4.7.13
 
 USER root
 RUN mkdir -p /data/.tor \

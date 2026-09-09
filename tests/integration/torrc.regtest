@@ -1,9 +1,0 @@
-# Test-only copy of stack-network/config/torrc with the transit addresses
-# remapped to the 10.252.x range this compose project uses (collision-safe).
-SocksPort 10.252.0.2:9050
-ControlPort 10.252.0.2:9051
-
-CookieAuthentication 1
-CookieAuthFile /data/.tor/control_auth_cookie
-CookieAuthFileGroupReadable 1
-DataDirectoryGroupReadable 1
