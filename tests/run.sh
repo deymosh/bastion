@@ -36,6 +36,7 @@ run_unit() {
 
 run_integration() {
   step "hidden-service reachability" bash tests/integration/hidden-service-reachability.sh
+  step "CLN onion forward target"   bash tests/integration/cln-onion-target.sh
 }
 
 case "$want" in

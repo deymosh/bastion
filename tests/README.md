@@ -36,11 +36,15 @@ Individual files are runnable directly (`bash tests/unit/config-sh.test.sh`).
 | `ccr-wrapper.test.sh` | `ccr-entrypoint-wrapper.sh` always `exec`s the upstream entrypoint (args passed through) whether or not a token exists; `CCR_TOKEN_REFRESH=0` only skips the helper |
 | `ccr-refresher.test.mjs` | `node --test` for `ccr-token-refresher.mjs` against a mock token endpoint: `idle` on no/API-key file, no request when far from expiry, refresh + both-token rotation + key preservation on expiry, `invalid_grant` / 5xx leave the file intact |
 
-### `integration/` — real containers, ~1-2 min, needs outbound network
+### `integration/` — real containers, ~2-3 min
+
+Hermetic: each test is its own Compose project on a private `10.25x.0.0/24`
+subnet and cleans up with `down -v`. Needs Docker + compose + a Docker Hub pull.
 
 | File | Covers |
 |---|---|
-| `tor.compose.yml` + `hidden-service-reachability.sh` | builds the real `Dockerfile.tor` with a torrc derived from the real one, on a hermetic project + isolated subnets; asserts from inside the tor container that the CLN/TEOS forward targets (`bastion-transit` addresses) are reachable and that a per-stack-subnet address, `0.0.0.0`, and Tor's own loopback are **not**. This is the regression guard for the class of bug where a service advertises an onion target Tor can't route to. |
+| `tor.compose.yml` + `hidden-service-reachability.sh` | builds the real `Dockerfile.tor` with a torrc derived from the real one; asserts from inside the tor container that the CLN/TEOS forward targets (`bastion-transit` addresses) are reachable and that a per-stack-subnet address, `0.0.0.0`, and Tor's own loopback are **not**. Guards the class of bug where a service advertises an onion target Tor can't route to. |
+| `cln-onion.compose.yml` + `cln-onion-target.sh` | boots a real Core Lightning (stock `elementsproject/lightningd` image — only `bcli` + the built-in `statictor` path are exercised, so no multi-minute custom build) against a throwaway **regtest** bitcoind and the real `Dockerfile.tor`. `cln_config.regtest`'s Tor block matches `stack-bitcoin/config/cln_config`. Asserts CLN parses the config and comes up, and that the static Tor service it registers **forwards to CLN's own pinned address, never `0.0.0.0`** — the exact regression. Fully offline (regtest); ~30-60s. |
 
 ## CI
 
@@ -56,12 +60,19 @@ not checked out — nothing in the suite needs `rust-teos`.
   network-heavy; validate them with `./bastion build <stack>` before a release
   or wire a nightly `workflow_dispatch` job. `Dockerfile.tor` *is* built by the
   integration tier.
-- **A live CLN/TEOS node.** A `regtest` bitcoind + CLN(bcli) + tor compose would
-  let the suite assert the real onion is created and its forward target matches
-  the pinned IP, end to end. It is the highest-value addition still open; it
-  belongs in `integration/` behind its own job because it needs ~2 min and
-  reaches external block explorers only if `trustedcoin` is used (regtest+bcli
-  avoids that). Scaffolding welcome.
+- **TEOS onion registration.** The CLN test proves the mechanism; a parallel
+  `teosd` boot (against the same regtest bitcoind) asserting its onion forward
+  target == `10.254.0.11` would close the loop. Small addition, same pattern as
+  `cln-onion-target.sh`.
+- **The prod chain-backend path.** `cln-onion-target.sh` runs on regtest+bcli
+  for hermeticity. The production config is `network=bitcoin` + `trustedcoin`.
+  `trustedcoin` starts instantly *only if no `bitcoin-rpc*` lines are present*
+  (then it fetches the tip + recent blocks from block explorers over Tor -
+  measured ~7s to `getinfo`, ~5 min to fully synced, and it is a hard external
+  dependency). To smoke that path locally, drop the `bitcoin-rpc*` lines from a
+  copy of `cln_config`, keep `network=bitcoin`, and boot CLN against the tor
+  compose. It is deliberately **not** in CI - non-deterministic and network-
+  bound. A nightly `workflow_dispatch` job is the place for it if wanted.
 - **`utils/tui.sh`** beyond `bash -n` + `shellcheck`. It is exercised by hand
   with a pty (tmux) driver; a recorded smoke test could be added but the TUI is
   a convenience layer with full CLI parity, so a break is low-severity.

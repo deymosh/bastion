@@ -1,0 +1,70 @@
+# Hermetic Core Lightning + Tor + regtest bitcoind, for
+# tests/integration/cln-onion-target.sh. Own project name, own private subnet.
+name: bastion-cln-test
+
+services:
+  tor:
+    build:
+      context: ../../stack-network
+      dockerfile: Dockerfile.tor
+    image: bastion-cln-test-tor:latest
+    volumes:
+      - ./torrc.regtest:/etc/tor/torrc:ro
+      - tordata:/data/.tor
+    healthcheck:
+      test: ["CMD", "timeout", "5", "bash", "-c", "cat < /dev/null > /dev/tcp/10.252.0.2/9050"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+    networks:
+      net:
+        ipv4_address: 10.252.0.2
+
+  bitcoind:
+    image: lncm/bitcoind:v26.0
+    command:
+      - -regtest=1
+      - -server=1
+      - -txindex=1
+      - -fallbackfee=0.0002
+      - -rpcuser=test
+      - -rpcpassword=test
+      - -rpcbind=0.0.0.0
+      - -rpcallowip=10.252.0.0/24
+      - -printtoconsole=1
+    networks:
+      net:
+        ipv4_address: 10.252.0.3
+
+  cln:
+    # The stock CLN image, not lightningd-custom: this test exercises bcli +
+    # the built-in statictor path, none of the custom plugins, so no
+    # multi-minute image build is needed. Same base and entrypoint as
+    # stack-bitcoin/Dockerfile.lightningd.
+    image: elementsproject/lightningd:v25.12.1
+    environment:
+      LIGHTNINGD_NETWORK: regtest
+    command: ["--conf=/cfg/cln_config", "--alias=cln-onion-test"]
+    volumes:
+      - ./cln_config.regtest:/cfg/cln_config:ro
+      - clndata:/root/.lightning/regtest
+      - tordata:/data/.tor:ro
+    depends_on:
+      bitcoind:
+        condition: service_started
+      tor:
+        condition: service_healthy
+    networks:
+      net:
+        ipv4_address: 10.252.0.10
+
+networks:
+  net:
+    ipam:
+      config:
+        - subnet: 10.252.0.0/24
+
+volumes:
+  tordata:
+  clndata:
