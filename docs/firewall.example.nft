@@ -20,7 +20,8 @@ define LAN_SUBNET = 192.168.1.0/24         # your trusted LAN
 define WG_SUBNET  = 10.13.13.0/24          # WireGuard INTERNAL_SUBNET (stack-network compose)
 
 # Hub service ports (host side). Keep in sync with the Access table in README.md.
-define HUB_PORTS  = { 80, 3000, 3001, 3458, 4000, 4001, 9090 }
+# 8081 is Pi-hole's admin UI (Pi-hole runs network_mode: host, Linux only).
+define HUB_PORTS  = { 80, 3000, 3001, 3458, 4000, 4001, 8081, 9090 }
 
 table inet bastion {
     chain input {
@@ -44,6 +45,14 @@ table inet bastion {
         tcp dport $HUB_PORTS ip saddr { $LAN_SUBNET, $WG_SUBNET } accept
         tcp dport $HUB_PORTS iifname $WAN_IF drop
         tcp dport $HUB_PORTS drop
+
+        # Pi-hole DNS (network_mode: host). Keep ONLY if the WG/LAN clients
+        # resolve through this host - the bastion.node record lives here.
+        # Drop these two lines if your DNS is elsewhere.
+        tcp dport 53 ip saddr { $LAN_SUBNET, $WG_SUBNET } accept
+        udp dport 53 ip saddr { $LAN_SUBNET, $WG_SUBNET } accept
+        tcp dport 53 drop
+        udp dport 53 drop
 
         # Extra safety: Bitcoin/Lightning/Tor internals are never published by
         # Bastion, but block them explicitly in case a future change slips.

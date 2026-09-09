@@ -163,6 +163,18 @@ echo "== Submodule tracking =="
 have 'branch = bastion-integration' .gitmodules && ok ".gitmodules tracks rust-teos bastion-integration" \
   || bad ".gitmodules does not pin rust-teos to bastion-integration"
 
+echo "== Line endings (LF only, per .gitattributes) =="
+# A file committed with CRLF stays CRLF until renormalised - eol=lf only governs
+# checkout. Config files in particular ship into Linux containers. Check the
+# index bytes of every tracked text file outside the submodule.
+crlf=""
+while IFS= read -r f; do
+  case "$f" in rust-teos/*) continue ;; esac
+  git show ":$f" 2>/dev/null | grep -qU $'\r' && crlf="$crlf $f"
+done < <(git ls-files ':!:*.png' ':!:*.ico')
+[ -z "$crlf" ] && ok "no tracked file has CRLF line endings" \
+  || bad "CRLF line endings in the index:$crlf (run: git add --renormalize .)"
+
 echo
 if [ "$fail" -eq 0 ]; then printf '\033[32mall %d checks passed\033[0m\n' "$pass"; exit 0
 else printf '\033[31m%d passed, %d FAILED\033[0m\n' "$pass" "$fail"; exit 1; fi

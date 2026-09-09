@@ -12,8 +12,15 @@ optional in production**.
 |---|---|---|
 | `51820/udp` | WireGuard | **anywhere** (this is the VPN entry point) |
 | `80, 3000, 3001, 3458, 4000, 4001, 9090` | Hub services (hub, RTL, CLN REST, CCR, Portainer, Grafana, Prometheus) | WireGuard subnet + trusted LAN only |
+| `8081/tcp` | Pi-hole admin UI (`network_mode: host`, Linux only) | WireGuard subnet + trusted LAN only |
+| `53/tcp+udp` | Pi-hole DNS — **only if the LAN resolves through it** (the `bastion.node` record lives here) | WireGuard subnet + trusted LAN only |
 | `22` | SSH (if used) | WireGuard + LAN only |
 | everything else | — | drop |
+
+Pi-hole runs `network_mode: host`, so `8081` and `53` are on the host directly,
+not a Docker `ports:` publish. With a `policy drop` firewall you **must** allow
+`53` from the WireGuard subnet and any LAN that points its DNS at this host, or
+name resolution (including `bastion.node`) breaks for those clients.
 
 Never expose the Hub ports to the internet / a router port-forward. **Port `4000`
 (Portainer) mounts the Docker socket** — treat it as the most sensitive and, if
@@ -61,10 +68,16 @@ sudo ufw allow 51820/udp comment 'WireGuard'
 sudo ufw allow from "$WG_SUBNET" to any port 22 proto tcp comment 'SSH via WG'
 sudo ufw allow from "$LAN_SUBNET" to any port 22 proto tcp comment 'SSH via LAN'
 
-# Hub services - WireGuard + LAN only
-for P in 80 3000 3001 3458 4000 4001 9090; do
+# Hub services (incl. Pi-hole admin 8081) - WireGuard + LAN only
+for P in 80 3000 3001 3458 4000 4001 8081 9090; do
   sudo ufw allow from "$WG_SUBNET"  to any port "$P" proto tcp comment 'Bastion Hub via WG'
   sudo ufw allow from "$LAN_SUBNET" to any port "$P" proto tcp comment 'Bastion Hub via LAN'
+done
+
+# Pi-hole DNS - only if this host resolves the WG/LAN clients (drop if it does not)
+for PROTO in tcp udp; do
+  sudo ufw allow from "$WG_SUBNET"  to any port 53 proto "$PROTO" comment 'Pi-hole DNS via WG'
+  sudo ufw allow from "$LAN_SUBNET" to any port 53 proto "$PROTO" comment 'Pi-hole DNS via LAN'
 done
 
 # Backstop: internal ports are never published, deny anyway
@@ -79,9 +92,12 @@ sudo ufw status verbose
 > ufw note: with Docker's default iptables integration, published container ports
 > can bypass ufw's `INPUT` rules because Docker inserts its own `DOCKER-USER`
 > chain earlier. If `ufw status` looks right but a port is still reachable from
-> outside, either add matching rules to the `DOCKER-USER` chain, set
-> `"iptables": false` is **not** recommended, or prefer Option A (nftables), or
-> use the well-known `ufw-docker` helper. Verify from an outside host with
+> outside, do one of: add matching `DROP` rules to the `DOCKER-USER` chain; use
+> the well-known `ufw-docker` helper; or prefer Option A (nftables), whose host
+> `input` chain is not bypassed this way. Do **not** set Docker's
+> `"iptables": false` — it breaks container networking. (Pi-hole is
+> `network_mode: host`, so its `8081`/`53` are governed by ufw's normal `INPUT`
+> rules, not `DOCKER-USER`.) Verify from an outside host with
 > `nc -vz <public-ip> 4000` — it must fail.
 
 ## Verify

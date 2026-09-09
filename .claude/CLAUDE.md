@@ -4,7 +4,7 @@ Guidance for Claude Code (claude.ai/code) when working in this repository.
 
 ## Project identity
 
-Bastion is a self-hosted "sovereign node" stack: a Bitcoin full node + Core
+Bastion is a self-hosted "sovereign node" stack: a pruned Bitcoin node + Core
 Lightning node, the supporting privacy plumbing (Tor, a recursive DNS resolver,
 Pi-hole, WireGuard), an observability stack, a web hub, and an AI stack
 (Claude Code Router + a CodeDeck+ bridge). Everything runs in Docker, split into
@@ -67,8 +67,12 @@ blocks the run and explains why.
 
 - **Never start `bitcoind` in dev.** It would begin a full-chain sync. For local
   testing bring up only what a change needs (see the `local-testing` skill).
-  CLN can run **without** `bitcoind`: `bcli` is disabled and `trustedcoin`
-  (block data over Tor) is an `important-plugin`.
+  CLN can run **without** `bitcoind`: the built-in `bcli` backend is disabled and
+  `trustedcoin` is the `important-plugin` in its place. `trustedcoin` uses
+  `bitcoind` via the `bitcoin-rpc*` credentials in `cln_config` **when it is
+  reachable and has the block**, and only falls back to public block explorers
+  (over the Tor proxy) otherwise — so in dev, with no `bitcoind`, CLN still
+  reaches "synced to chain" purely over the explorer path.
 - The Lightning node used for testing is **empty** — no channels, no funds.
 - `network_mode: host` (Pi-hole) and the `/lib/modules` mount (WireGuard) do not
   work on Docker Desktop for Windows. Those pieces are Linux-target-only for any
@@ -176,9 +180,10 @@ stack-ai        ccr + codedeck-bridge
 ```
 
 Networks: each stack owns `bastion-<stack>` (`10.<10|20|30|40|50>.0.0/24`, first
-service at `.2`). `bastion-transit` (`10.254.0.0/24`) is created by
-`stack-network` and joined `external: true` by the services that must cross stack
-boundaries: `tor`, `lightningd`, `bitcoind`, `teosd`, `codedeck-bridge`. The
+service at `.2`). `bastion-transit` (`10.254.0.0/24`) is defined by
+`stack-network` (where `tor` joins it directly) and consumed `external: true` by
+the cross-stack services in the other stacks: `lightningd`, `bitcoind`, `teosd`,
+`codedeck-bridge`. The
 `bastion-tor-data` named volume is created by `stack-network` and mounted
 read-only by `lightningd` and `teosd` for the Tor control cookie.
 

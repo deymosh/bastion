@@ -46,12 +46,12 @@ chmod +x bastion
 - Creates `.env` symlinks → `bastion.conf` (one source of truth)
 - Deploys: network → bitcoin → monitor → web → AI
 
-For a single stack, use Docker Compose directly. The network stack must be running
-before any other stack that uses Bastion's networks:
+For a subset, name the stacks — `stack-network` is added automatically and always
+comes up first:
 
 ```bash
-docker compose -f ./stack-network/docker-compose.yml up -d
-docker compose -f ./stack-ai/docker-compose.yml up -d
+./bastion up stack-ai            # brings up stack-network too
+./bastion up network bitcoin
 ```
 
 ## 📦 Bastion Stacks
@@ -127,7 +127,7 @@ runs the plain path; the dashboard only opens on a real terminal.
 | Prometheus | 9090 | http://bastion.node:9090 | v3.14.0 |
 | Pi-hole | 8081 | http://bastion.node:8081/admin | 2026.07.2 |
 | CLN REST API | 3001 | http://bastion.node:3001 | (CLN native) |
-| CCR management UI | 3458 | http://bastion.node:3458 | pinned fix commit |
+| CCR management UI | 3458 | http://bastion.node:3458 | CCR fork commit `ec9fc53` |
 | Wireguard VPN | 51820/udp | External (WAN) | 1.0.20260223-r0-ls121 |
 
 Image versions are pinned by digest; `./bastion versions` shows the pin and what
@@ -242,7 +242,8 @@ docker logs codedeck-bridge
 
 ### Core Lightning Plugins
 
-All plugins included and enabled by default:
+Built into the `lightningd-custom` image; `cln_config` enables them by default
+(except `backup`, which is installed but left commented out):
 
 | Plugin | Commit | Purpose |
 |--------|--------|---------|
@@ -250,7 +251,7 @@ All plugins included and enabled by default:
 | **watchtower-client** | [be344ecc](https://github.com/talaia-labs/rust-teos/tree/be344ecc5286dd9436bf343d30954135da8ad4ac) | TEOS breach watching |
 | **peerswap** | [23b32d3a](https://github.com/ElementsProject/peerswap/tree/23b32d3a1b1665c7c5e50e76d530fff5bf8be3d8) | Submarine swap rebalancing |
 | **backup** | [cb3adab](https://github.com/lightningd/plugins/tree/cb3adabfcb95e802ff27be85a53a353150a4907d) | Replication to USB/external |
-| **trustedcoin** | [v0.8.6](https://github.com/nbd-wtf/trustedcoin/releases/tag/v0.8.6) | Fee and block validity estimator; verifies block data and channel existence |
+| **trustedcoin** | [v0.8.6](https://github.com/nbd-wtf/trustedcoin/releases/tag/v0.8.6) | Chain backend in place of `bcli`: `bitcoind` when reachable, public block explorers over Tor as fallback |
 | **darknet** | Local | Prefer .onion addresses for peers |
 
 **CLN Configuration:**
@@ -269,42 +270,45 @@ autoclean-expiredinvoices-age=2592000 # Remove expired invoices after 30 days
 wallet=sqlite3:///root/.lightning/bitcoin/lightningd.sqlite3:/backup_usb/lightningd.sqlite3
 
 # Network settings
-proxy=10.254.0.2:9050              # Tor SOCKS proxy
-addr=statictor:10.254.0.2:9051     # Tor control port
+proxy=10.254.0.2:9050              # Tor SOCKS proxy (tor on bastion-transit)
+addr=statictor:10.254.0.2:9051     # Tor control port -> static onion
 always-use-proxy=true              # Route all traffic through Tor
-bind-addr=0.0.0.0:9735             # Listen on all interfaces
+bind-addr=10.254.0.10:9735         # CLN's own bastion-transit address; this is
+                                   # the hidden-service forward target Tor dials,
+                                   # so it must NOT be 0.0.0.0 (Tor can't reach it)
 ```
 
 **Important Plugins:**
-- `trustedcoin` - Critical for fee estimation and block validation (marked as `important-plugin`)
+- `trustedcoin` - the chain backend in place of the built-in `bcli`. It uses
+  `bitcoind` through the `bitcoin-rpc*` lines in `cln_config` when that node is
+  reachable and has the block, and only falls back to public block explorers
+  (over Tor) otherwise. Marked `important-plugin`.
 - `watchtower-client` - Critical for channel security (marked as `important-plugin`)
-- `bcli` - Disabled in favor of trustedcoin
+- `bcli` - the built-in backend, **disabled** (`disable-plugin=bcli`) so
+  `trustedcoin` can take over.
 
 ### TEOS Configuration
 
-TEOS (`teosd`) is included but not configured by default. Running a watchtower on the same machine as your node is risky—if your node is compromised, so is the watchtower.
+TEOS (`teosd`) is **opt-in** and off by default — start it with
+`./bastion up --with-watchtower` (it carries the `watchtower` compose profile).
+Running a watchtower on the same machine as your node is a deliberate choice: it
+is meant for offering the service to *other* nodes, not for watching your own
+(that is the always-on `watchtower-client` plugin, pointed at an external tower).
 
-Configuration files are templates in `stack-bitcoin/config/teos.toml` but must be manually copied to the persistent data directory after first run:
-
-```bash
-# After first run of the stack, copy config to data directory
-cp stack-bitcoin/config/teos.toml stack-bitcoin/data/teos/teos.toml
-docker restart teosd
-```
-
-**Why manual copy?** The container mounts `stack-bitcoin/data/teos:/home/teos/.teos` for persistence. We can't simultaneously mount `config/` templates into the same directory, so templates must be copied after first initialization.
+`stack-bitcoin/config/teos.toml` is a template. On `./bastion up --with-watchtower`
+it is copied to `stack-bitcoin/data/teos/teos.toml` **only if that file does not
+exist yet** — an established install is never touched. Without it `teosd` would
+fall back to rust-teos's compiled-in defaults (`api_bind 127.0.0.1`, Tor off) and
+never be reachable at its pinned transit address.
 
 ### RTL Configuration
 
-RTL connects to CLN via the Bitcoin stack network (10.20.0.2:3001). Configuration template is in `stack-bitcoin/config/RTL-Config.json` but must be manually copied to the persistent data directory after first run:
-
-```bash
-# After first run of the stack, copy config to data directory
-cp stack-bitcoin/config/RTL-Config.json stack-bitcoin/data/rtl/RTL-Config.json
-docker restart rtl
-```
-
-**Why manual copy?** The container mounts `stack-bitcoin/data/rtl:/data` for persistence. We can't simultaneously mount `config/` templates into the same directory, so templates must be copied after first initialization. Any changes to CLN RPC credentials or ports require updating this file.
+RTL connects to CLN via the Bitcoin stack network (`10.20.0.2:3001`).
+`stack-bitcoin/config/RTL-Config.json` is a template; on `./bastion up` it is
+seeded to `stack-bitcoin/data/rtl/RTL-Config.json` and an access rune is minted
+from CLN into `stack-bitcoin/data/rtl/access.rune` (`LIGHTNING_RUNE="…"`, mode
+`600`) — **both only if absent**. If you change CLN RPC credentials or ports,
+edit the live copy under `data/`. See `stack-bitcoin/README.md`.
 
 ## 🔧 Troubleshooting
 General troubleshooting steps for common issues. Always check container logs first (`docker logs <container>`).
@@ -349,27 +353,25 @@ df -h
 ## 🔒 Security and Boundaries
 
 Each stack has a private Docker subnet. Cross-stack dependencies use the restricted
-`bastion-transit` network (`10.254.0.0/24`). External access is through:
-- **Wireguard VPN** (51820/udp)
-- **SSH** (port 22)
-- **HTTP/HTTPS** web services (RTL, Grafana, etc)
+`bastion-transit` network (`10.254.0.0/24`). Only `51820/udp` (WireGuard) is meant
+to face the internet; the Hub ports are open on every interface **on purpose** and
+the host firewall is the ACL — see "Access model & firewall" above and
+[docs/firewall.md](docs/firewall.md).
 
-**Internal isolation:**
+**Internal isolation (never published on the host):**
 - Bitcoin RPC: `10.20.0.3:8332` (Bitcoin stack network only)
-- CLN REST: `10.20.0.2:3001` internally; host port `3001` for host/WireGuard clients
 - CLN P2P / TEOS API: only on `bastion-transit` (`10.254.0.10:9735` /
   `10.254.0.11:9814`), reachable only through their Tor onion services
-- CCR gateway: `ccr:8080` (AI stack network only; management UI is host/WireGuard published)
+- CCR gateway: `ccr:8080` (AI stack network only; the management UI on `3458` is
+  the only CCR port published)
 - CodeDeck bridge: no published host port; relay traffic uses `bastion-transit`
+- Tor SOCKS/control (`9050`/`9051`): `bastion-transit` only, no host publish
 
 **Recommended:**
-- Change default passwords (Grafana: admin:admin, Pi-hole, Bitcoin RPC)
-- Keep `.gitignore` protected
-- Use Wireguard for remote access
-- CLN REST (`3001`) and the CCR UI (`3458`) are published on the host so VPN
-  clients can reach them at the host LAN IP, or by a Pi-hole local-DNS name
-  (e.g. `http://bastion.node:3001`). Lock those host ports to the WireGuard
-  interface/subnet in the host firewall; never expose them to the Internet.
+- Change default passwords (Grafana `admin:admin`, Pi-hole, Bitcoin RPC)
+- Keep `.gitignore` / `secrets/` protected; never commit `bastion.conf`
+- Use WireGuard for remote access; apply [docs/firewall.md](docs/firewall.md)
+  before exposing the host
 
 ## 📊 Versions
 
@@ -378,13 +380,13 @@ Each stack has a private Docker subnet. Cross-stack dependencies use the restric
 | Bitcoin Core | v26.0 |
 | Core Lightning | v25.12.1 |
 | RTL | v0.15.8 |
-| Claude Code Router | `fix/log-body.worker.js` |
+| Claude Code Router | pinned commit `ec9fc53` of the CCR fork (`CCR_REF` in `stack-ai/Dockerfile.ccr`) |
 | CodeDeck+ bridge | v0.11.1 |
 | **CLN Plugins:** |
 | clboss | [95d195f8](https://github.com/ksedgwic/clboss/tree/95d195f8baafa1aa22f7aa95fa1dd1fd26003583) |
 | watchtower-client | [be344ecc](https://github.com/talaia-labs/rust-teos/tree/be344ecc5286dd9436bf343d30954135da8ad4ac) |
 | backup | [cb3adab](https://github.com/lightningd/plugins/tree/cb3adabfcb95e802ff27be85a53a353150a4907d) |
-| trustedcoin | [v0.8.6](https://github.com/nbd-wtf/trustedcoin/releases/tag/v0.8.6) (disabled) |
+| trustedcoin | [v0.8.6](https://github.com/nbd-wtf/trustedcoin/releases/tag/v0.8.6) (replaces the disabled `bcli`) |
 
 ## 📚 Resources
 

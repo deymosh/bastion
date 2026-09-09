@@ -9,9 +9,9 @@ description: Use when working on CCR (Claude Code Router) auth in stack-ai — t
 
 CCR authenticates to `api.anthropic.com` with the Claude Code OAuth
 **access token**, read from a credentials file on disk. That token is
-short-lived (~a day). CCR (>= commit `561c2d8`, which the pinned fork branch
-`fix/log-body.worker.js` includes) **re-reads the file on every upstream
-request**, so a rotated token is picked up with **no gateway restart** — but CCR
+short-lived (~a day). CCR (>= commit `561c2d8`, which the pinned `CCR_REF`
+commit in `stack-ai/Dockerfile.ccr` includes) **re-reads the file on every
+upstream request**, so a rotated token is picked up with **no gateway restart** — but CCR
 itself never refreshes it for the Claude-Code provider path (unlike its Grok /
 Kimi paths). In a headless container nothing rotates the file, so it 401s daily.
 Bastion fixes this with a tiny refresher process started alongside CCR.
@@ -86,13 +86,16 @@ Error handling:
 
 ## 3. How the refresher runs
 
-`stack-ai/ccr-entrypoint-wrapper.sh` is the image `ENTRYPOINT`. It does one
-thing: if `CCR_TOKEN_REFRESH` is not `0` it backgrounds
-`node /usr/local/bin/ccr-token-refresher.mjs`, then `exec`s the upstream
-`ccr-entrypoint`. **CCR always starts** - no credentials check, no gate. If
-there is no `.credentials.json`, or the file carries no `claudeAiOauth` block
-(CCR running on a plain API key, say), the refresher logs `idle` once and keeps
-re-checking quietly; credentials can be added or fixed at any time.
+`stack-ai/ccr-entrypoint-wrapper.sh` is the image `ENTRYPOINT`. It starts as
+root, and in order: `chown`s the writable paths (nginx state, `/data`, the
+`ccr_web_auth_token` secret) to `PUID:PGID`; exports `CCR_WEB_AUTH_TOKEN` from
+`/run/secrets/ccr_web_auth_token` if that file is present (else the env var
+stands); if `CCR_TOKEN_REFRESH` is not `0`, backgrounds
+`ccr-token-refresher.mjs` as the run user; then `gosu`-drops to `PUID:PGID` and
+`exec`s the upstream `ccr-entrypoint`. **CCR always starts** - no credentials
+check, no gate. If there is no `.credentials.json`, or the file carries no
+`claudeAiOauth` block (CCR on a plain API key, say), the refresher logs `idle`
+once and keeps re-checking quietly; credentials can be added or fixed at any time.
 
 When an OAuth token is present the refresher loops every `CCR_REFRESH_INTERVAL`
 (default 300s): read the file, and
@@ -119,7 +122,7 @@ Zero dependencies: the runtime image has Node 22 with global `fetch`.
 |---|---|---|
 | 401 after ~1 day, was fine before | refresher not running / disabled | set `CCR_TOKEN_REFRESH=1`, check `docker logs` |
 | refresher logs `invalid_grant` | refresh token revoked/expired | operator re-login with `claude` |
-| token refreshes but CCR still 401 | CCR older than `561c2d8` (no per-request re-read) | rebuild from a fork branch that includes it |
+| token refreshes but CCR still 401 | CCR older than `561c2d8` (no per-request re-read) | bump `CCR_REF` to a commit that includes it, rebuild |
 | refresher logs 429 repeatedly | rate-limited on the token endpoint | increase `CCR_REFRESH_INTERVAL`; it backs off already |
 
 ## When NOT to apply

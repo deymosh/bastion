@@ -8,9 +8,10 @@
 # TUI is a convenience layer, never the only way in.
 #
 # Depends on: config.sh (already sourced) for STACKS, MANAGED_VARS,
-# read_env_var, validate_env_value, config_var_is_secret, save_config,
-# and the styling vars. Also uses the command runners defined in ./bastion
-# (compose_action / wait_for_health).
+# CONTAINER_STACK, read_env_var, validate_env_value, config_var_is_secret,
+# save_config, and the styling vars. Also uses runners defined in ./bastion:
+# bastion_stack_action, bastion_stack_logs, bastion_container_action,
+# do_versions, and _compose_service_images.
 ################################################################################
 
 # --- Theme -------------------------------------------------------------------

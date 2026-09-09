@@ -1,6 +1,6 @@
 ---
 name: local-testing
-description: Use when verifying a Bastion change locally — which stacks/containers a given change actually needs, how to bring up Core Lightning without bitcoind (trustedcoin over Tor), what cannot be tested on Docker Desktop for Windows, and the CLN gossip_store named-volume workaround. Read before running ./bastion up or docker compose up for verification.
+description: Use when verifying a Bastion change locally — which stacks/containers a given change actually needs, how to bring up Core Lightning without bitcoind (trustedcoin's block-explorer fallback path), what cannot be tested on Docker Desktop for Windows, and the CLN gossip_store named-volume workaround. Read before running ./bastion up or docker compose up for verification.
 ---
 
 # Testing Bastion changes locally
@@ -26,16 +26,18 @@ almost everything Tor-adjacent needs `10.254.0.2:9050/9051` reachable.
 | `stack-monitor` | that stack alone | self-contained, no Tor |
 | Tor / `torrc` / `Dockerfile.tor` | `stack-network` `tor` service only | `docker compose -f stack-network/docker-compose.yml up -d tor` |
 | CLN config / `cln_config` / CLN compose | `tor`, then `lightningd` (NO bitcoind) | trustedcoin path, see §2 |
-| TEOS / `teos.toml` / `rust-teos` | `tor`, `lightningd`, rebuilt `teosd` | `./bastion build stack-bitcoin` or `utils/build_teos.sh force` first |
+| TEOS / `teos.toml` / `rust-teos` | `tor`, `lightningd`, rebuilt `teosd` | `teosd` carries the `watchtower` profile — `./bastion build --with-watchtower stack-bitcoin` (or `utils/build_teos.sh force`) to build, `./bastion up --with-watchtower ...` to start it |
 | CCR / `stack-ai` | `stack-ai` alone (+ `tor` if testing relay/bridge egress) | `/health` on `:3458` |
 | `bastion` script / `utils/*.sh` | nothing — run it, check output + `bastion.conf` | use a non-TTY invocation to test the plain path |
 
 ## 2. Core Lightning without bitcoind
 
 CLN's `stack-bitcoin/config/cln_config` has `disable-plugin=bcli` and
-`important-plugin=/usr/local/bin/trustedcoin`. `trustedcoin` fetches block
-headers / fee estimates from public block explorers **over the configured Tor
-proxy**, so CLN reaches "synced to chain" with no `bitcoind` at all.
+`important-plugin=/usr/local/bin/trustedcoin`. `trustedcoin` prefers `bitcoind`
+(via the `bitcoin-rpc*` lines in the same file) when it is up, and falls back to
+public block explorers **over the configured Tor proxy** when it is not — so with
+no `bitcoind` running, CLN still reaches "synced to chain" on the explorer path
+alone. (In production `bitcoind` is up, so the explorer path is only a backstop.)
 
 Procedure:
 
