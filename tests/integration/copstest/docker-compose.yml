@@ -1,0 +1,19 @@
+# Isolated throwaway stack for tests/integration/container-ops.sh.
+# Its own project name, its own network, no published ports, its own container
+# name - nothing here can collide with a running Bastion.
+name: bastion-copstest
+
+services:
+  copstest-hub:
+    image: nginx:1.31.5-alpine@sha256:72ba65eb42c10344912a84ff42408db7d34f2feb642204570ab8fc5ffd29f1d3
+    container_name: bastion-copstest-hub
+    restart: "no"
+    networks:
+      net:
+        ipv4_address: 10.199.0.2
+
+networks:
+  net:
+    ipam:
+      config:
+        - subnet: 10.199.0.0/24

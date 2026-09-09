@@ -29,6 +29,9 @@ STACKS=("stack-network" "stack-bitcoin" "stack-monitor" "stack-web" "stack-ai")
 NETWORK_STACK="stack-network"
 
 # Which stack each container belongs to (used to tell which stacks are up).
+# This is the single source of truth: tests/static/validate-config.sh asserts it
+# stays in exact sync with the compose service list, and utils/tui.sh derives its
+# STACK_OF_CONTAINER from it.
 declare -A CONTAINER_STACK=(
     [pihole]=stack-network [unbound]=stack-network [wireguard]=stack-network [tor]=stack-network
     [bitcoind]=stack-bitcoin [lightningd]=stack-bitcoin [rtl]=stack-bitcoin [teosd]=stack-bitcoin
@@ -36,6 +39,18 @@ declare -A CONTAINER_STACK=(
     [hub]=stack-web
     [ccr]=stack-ai [codedeck-bridge]=stack-ai
 )
+
+# Test hook: BASTION_EXTRA_CONTAINER_STACK="name=dir[,name2=dir2]" registers extra
+# container -> compose-dir entries so an integration test can drive the
+# per-container verbs against an isolated compose project without going near a
+# real stack. Not used in normal operation.
+if [ -n "${BASTION_EXTRA_CONTAINER_STACK:-}" ]; then
+    _ecs_ifs=$IFS; IFS=','
+    for _ecs in $BASTION_EXTRA_CONTAINER_STACK; do
+        [ -n "$_ecs" ] && CONTAINER_STACK["${_ecs%%=*}"]="${_ecs#*=}"
+    done
+    IFS=$_ecs_ifs; unset _ecs _ecs_ifs
+fi
 
 # Print the stacks that currently have at least one running container, one per
 # line. Single `docker ps` call.
