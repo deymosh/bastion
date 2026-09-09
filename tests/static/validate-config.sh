@@ -14,11 +14,11 @@ ok()   { printf '  \033[32mok\033[0m   %s\n' "$1"; pass=$((pass+1)); }
 bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$1"; fail=$((fail+1)); }
 have() { grep -qE "$1" "$2" 2>/dev/null; }
 
-BC=stack-bitcoin/docker-compose.yml
-NET=stack-network/docker-compose.yml
-CLN=stack-bitcoin/config/cln_config
-TEOS=stack-bitcoin/config/teos.toml
-TORRC=stack-network/config/torrc
+BC="stack-bitcoin/docker-compose.yml"
+NET="stack-network/docker-compose.yml"
+CLN="stack-bitcoin/config/cln_config"
+TEOS="stack-bitcoin/config/teos.toml"
+TORRC="stack-network/config/torrc"
 
 echo "== Tor transit address (10.254.0.2) consistency =="
 # These service configs address the Tor container by literal IP.
@@ -95,6 +95,35 @@ unpinned=$(grep -REn '^\s*image:\s*[^#]*/[^#]*$' stack-*/docker-compose.yml 2>/d
 ccr_ref=$(grep -oE 'CCR_REF:\s*\S+' stack-ai/docker-compose.yml | awk '{print $2}')
 [[ "$ccr_ref" =~ ^[0-9a-f]{40}$ ]] && ok "CCR_REF is a 40-hex commit ($ccr_ref)" \
   || bad "CCR_REF is not a commit SHA: '$ccr_ref'"
+
+echo "== CONTAINER_STACK matches the compose files exactly =="
+# One source of truth: utils/config.sh CONTAINER_STACK. Assert it is neither
+# missing a compose service nor listing one that no longer exists, and that the
+# owning stack is right. utils/tui.sh derives STACK_OF_CONTAINER from this map.
+(
+  export CONFIG_FILE=/dev/null BASTION_SKIP_ENV_LINKS=1
+  STACKS=("stack-network" "stack-bitcoin" "stack-monitor" "stack-web" "stack-ai")
+  # shellcheck disable=SC1091
+  source utils/config.sh
+  drift=0
+  declare -A seen=()
+  for s in "${STACKS[@]}"; do
+    while read -r svc; do
+      [ -n "$svc" ] || continue
+      seen["$svc"]=1
+      case "${CONTAINER_STACK[$svc]:-}" in
+        "$s") : ;;
+        "")   echo "  CONTAINER_STACK is missing '$svc' (in $s/docker-compose.yml)"; drift=1 ;;
+        *)    echo "  CONTAINER_STACK maps '$svc' to ${CONTAINER_STACK[$svc]}, but it is defined in $s"; drift=1 ;;
+      esac
+    done < <(awk '/^  [A-Za-z0-9_-]+:[[:space:]]*$/{s=$1;sub(/:$/,"",s);next} /^    image:[[:space:]]/&&s{print s;s=""}' "$s/docker-compose.yml")
+  done
+  for c in "${!CONTAINER_STACK[@]}"; do
+    [ -n "${seen[$c]:-}" ] || { echo "  CONTAINER_STACK lists '$c' but no compose file defines it"; drift=1; }
+  done
+  exit $drift
+) && ok "CONTAINER_STACK is in exact sync with the compose service list" \
+   || bad "CONTAINER_STACK has drifted from the compose files (see above)"
 
 echo "== Submodule tracking =="
 have 'branch = bastion-integration' .gitmodules && ok ".gitmodules tracks rust-teos bastion-integration" \

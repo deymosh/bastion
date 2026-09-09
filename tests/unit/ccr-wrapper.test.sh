@@ -11,7 +11,9 @@ source tests/lib/assert.sh
 WRAP="$PWD/stack-ai/ccr-entrypoint-wrapper.sh"
 BIN=$(mktemp -d); trap 'rm -rf "$BIN"' EXIT
 printf '#!/bin/sh\necho "CCR-STARTED args=[$*]"\n'          > "$BIN/ccr-entrypoint"; chmod +x "$BIN/ccr-entrypoint"
-printf '#!/bin/sh\necho "refresher-ran"; sleep 100\n'      > "$BIN/node";           chmod +x "$BIN/node"
+# The stub exits at once - a long-lived background child would hold the
+# command-substitution pipe open and hang the assertions.
+printf '#!/bin/sh\necho "refresher-ran"\n'                 > "$BIN/node";           chmod +x "$BIN/node"
 export PATH="$BIN:$PATH"
 cp stack-ai/ccr-token-refresher.mjs "$BIN/ccr-token-refresher.mjs" 2>/dev/null || true
 

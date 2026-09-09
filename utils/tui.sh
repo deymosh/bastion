@@ -285,13 +285,14 @@ tui_run() {
 }
 
 # --- Status board (right pane) ---------------------------------------
-declare -A STACK_OF_CONTAINER=(
-    [pihole]=network [unbound]=network [wireguard]=network [tor]=network
-    [bitcoind]=bitcoin [lightningd]=bitcoin [rtl]=bitcoin [teosd]=bitcoin
-    [portainer]=monitor [grafana]=monitor [prometheus]=monitor [node-exporter]=monitor
-    [hub]=web
-    [ccr]=ai [codedeck-bridge]=ai
-)
+# Derived from CONTAINER_STACK (utils/config.sh) - the single source of truth -
+# so there is only one place to keep in sync with the compose files. Values here
+# are the short group name (network/bitcoin/...) this file groups by.
+declare -A STACK_OF_CONTAINER=()
+for _c in "${!CONTAINER_STACK[@]}"; do
+    STACK_OF_CONTAINER["$_c"]="${CONTAINER_STACK[$_c]#stack-}"
+done
+unset _c
 TUI_STATUS_LINES=()
 TUI_STATUS_AT=-999
 TUI_STATUS_EVERY=4          # seconds between container probes
