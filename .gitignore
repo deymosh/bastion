@@ -1,3 +1,5 @@
 bastion.conf
 bastion.conf.*
 venv
+tests/weekly/.work/
+tests/integration/torrc.generated

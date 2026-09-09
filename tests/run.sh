@@ -4,9 +4,10 @@
 #
 #   ./tests/run.sh                 # static + unit (no Docker daemon needed)
 #   ./tests/run.sh --all           # + integration (needs Docker + network)
-#   ./tests/run.sh static|unit|integration
+#   ./tests/run.sh static|unit|integration|weekly
 #
-# See tests/README.md for the strategy and what each tier covers.
+# weekly = image builds + a real-config CLN boot; slow, run by the weekly
+# workflow (or on demand), not on every push. See tests/README.md.
 ###############################################################################
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -36,17 +37,22 @@ run_unit() {
 
 run_integration() {
   step "hidden-service reachability" bash tests/integration/hidden-service-reachability.sh
-  step "CLN onion forward target"   bash tests/integration/cln-onion-target.sh
+}
+
+run_weekly() {
+  step "image builds"          bash tests/weekly/build-images.sh
+  step "CLN real-config boot"  bash tests/weekly/cln-real-config.sh
 }
 
 case "$want" in
   static)      run_static ;;
   unit)        run_unit ;;
   integration) run_integration ;;
+  weekly)      run_weekly ;;
   --all|all)   run_static; run_unit; run_integration ;;
   default)     run_static; run_unit
-               echo; echo "(integration tier skipped - pass --all)" ;;
-  *) echo "usage: $0 [static|unit|integration|--all]"; exit 2 ;;
+               echo; echo "(integration tier skipped - pass --all; weekly tier: run.sh weekly)" ;;
+  *) echo "usage: $0 [static|unit|integration|weekly|--all]"; exit 2 ;;
 esac
 
 echo
