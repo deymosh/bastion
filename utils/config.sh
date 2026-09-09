@@ -201,7 +201,9 @@ validate_env_value() {
 }
 
 # Symlink each stack's .env to the root config file.
+# BASTION_SKIP_ENV_LINKS=1 skips this (used by the test suite).
 link_stack_envs() {
+    [ "${BASTION_SKIP_ENV_LINKS:-0}" = 1 ] && return 0
     local stack
     for stack in "${STACKS[@]}"; do
         [ -d "./$stack" ] && ln -sf "../$CONFIG_FILE" "./$stack/.env"

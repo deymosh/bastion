@@ -1,37 +1,52 @@
 #!/usr/bin/env bash
 ###############################################################################
-# Bastion test runner
+# Bastion test runner.
 #
-#   ./tests/run.sh            # fast tier: no Docker daemon needed
-#   ./tests/run.sh --all      # also the Docker/compose and integration tiers
+#   ./tests/run.sh                 # static + unit (no Docker daemon needed)
+#   ./tests/run.sh --all           # + integration (needs Docker + network)
+#   ./tests/run.sh static|unit|integration
 #
-# Tiers:
-#   fast         shell-lint, validate-config, ccr-refresher (node)
-#   docker       compose-lint                       (needs docker CLI)
-#   integration  hidden-service-reachability        (needs docker daemon, ~1m)
+# See tests/README.md for the strategy and what each tier covers.
 ###############################################################################
 set -u
 cd "$(dirname "$0")/.." || exit 1
 
-ALL=0; [ "${1:-}" = "--all" ] && ALL=1
+want="${1:-default}"
 rc=0
-run() { echo; echo "### $1"; shift; "$@" || rc=1; }
+step() { echo; echo "=== $1 ==="; shift; "$@" || { rc=1; echo "  ^ FAILED"; }; }
 
-run "shell lint"        bash tests/shell-lint.sh
-run "config invariants" bash tests/validate-config.sh
+node_test() {
+  if command -v node >/dev/null 2>&1; then node --test "$@"
+  else docker run --rm -v "$PWD:/r" -w /r node:22-slim node --test "$@"; fi
+}
 
-if command -v node >/dev/null 2>&1; then
-  run "ccr refresher (node --test)" node --test tests/ccr-refresher.test.mjs
-else
-  echo; echo "### ccr refresher - skipped (no node); run: docker run --rm -v \"\$PWD:/r\" -w /r node:22-slim node --test tests/ccr-refresher.test.mjs"
-fi
+run_static() {
+  step "shell lint"        bash tests/static/shell-lint.sh
+  step "yaml lint"         bash tests/static/yaml-lint.sh
+  step "config invariants" bash tests/static/validate-config.sh
+  step "compose lint"      bash tests/static/compose-lint.sh
+}
 
-if [ "$ALL" -eq 1 ]; then
-  run "compose lint"                 bash tests/compose-lint.sh
-  run "hidden-service reachability"  bash tests/hidden-service-reachability.sh
-else
-  echo; echo "### docker + integration tiers skipped (pass --all)"
-fi
+run_unit() {
+  step "config.sh"          bash tests/unit/config-sh.test.sh
+  step "bastion CLI"        bash tests/unit/bastion-cli.test.sh
+  step "ccr entrypoint wrapper" bash tests/unit/ccr-wrapper.test.sh
+  step "ccr token refresher" node_test tests/unit/ccr-refresher.test.mjs
+}
+
+run_integration() {
+  step "hidden-service reachability" bash tests/integration/hidden-service-reachability.sh
+}
+
+case "$want" in
+  static)      run_static ;;
+  unit)        run_unit ;;
+  integration) run_integration ;;
+  --all|all)   run_static; run_unit; run_integration ;;
+  default)     run_static; run_unit
+               echo; echo "(integration tier skipped - pass --all)" ;;
+  *) echo "usage: $0 [static|unit|integration|--all]"; exit 2 ;;
+esac
 
 echo
 [ "$rc" -eq 0 ] && echo "ALL GREEN" || echo "FAILURES ABOVE"

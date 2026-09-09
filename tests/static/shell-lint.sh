@@ -5,9 +5,12 @@
 # `bash -n` (parse) every tracked shell script, then `shellcheck` if available.
 ###############################################################################
 set -u
-cd "$(dirname "$0")/.." || exit 1
+cd "$(dirname "$0")/../.." || exit 1
 
-mapfile -t scripts < <(git ls-files '*.sh' bastion 2>/dev/null || find . -name '*.sh' -not -path './rust-teos/*')
+mapfile -t scripts < <(
+  { git ls-files '*.sh' bastion 2>/dev/null; find tests -name '*.sh' 2>/dev/null; } \
+    | grep -v '^rust-teos/' | sort -u
+)
 
 fail=0
 echo "== bash -n =="

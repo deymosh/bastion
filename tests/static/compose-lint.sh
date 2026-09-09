@@ -7,7 +7,7 @@
 # the compose plugin; does not start anything.
 ###############################################################################
 set -u
-cd "$(dirname "$0")/.." || exit 1
+cd "$(dirname "$0")/../.." || exit 1
 
 # Provide values for the ${VARS} the compose files interpolate so `config`
 # doesn't warn about unset ones. Real values come from bastion.conf at runtime.

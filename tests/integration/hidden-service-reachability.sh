@@ -4,69 +4,69 @@
 #
 # Regression guard for the class of bug where CLN / TEOS advertise an onion
 # forward target the Tor daemon cannot route to. The `tor` container lives on
-# bastion-transit only; anything reachable *through* Tor must sit on
-# bastion-transit at the address it advertises.
+# bastion-transit only; a service reachable *through* Tor must sit on that
+# network at the address it advertises (never 0.0.0.0 - Tor cannot connect to
+# that at all).
 #
-# This test brings up the real Tor service, puts throwaway listeners at the
-# pinned CLN/TEOS transit addresses and at a bastion-bitcoin address, and
-# asserts from inside the tor container which ones it can open a TCP connection
-# to (that connection is the exact last hop Tor makes for an inbound onion).
-#
-# Needs Docker + compose. Cleans up after itself. ~1 minute.
+# Uses tests/integration/tor.compose.yml (hermetic: own project, own private
+# subnets, the real Dockerfile.tor and a torrc derived from the real one).
+# Needs Docker + compose + outbound network. ~1-2 minutes. Self-cleaning.
 ###############################################################################
 set -u
-cd "$(dirname "$0")/.." || exit 1
+cd "$(dirname "$0")" || exit 1
 
-CREATED_NET=()
+COMPOSE=(docker compose -f tor.compose.yml)
+GEN_TORRC=torrc.generated
+
 cleanup() {
-  docker rm -f hs_cln hs_teos hs_btc >/dev/null 2>&1
-  docker compose -f stack-network/docker-compose.yml rm -sf tor >/dev/null 2>&1
-  for n in "${CREATED_NET[@]}"; do docker network rm "$n" >/dev/null 2>&1; done
+  "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
+  rm -f "$GEN_TORRC"
 }
 trap cleanup EXIT
 
-need_net() {
-  docker network inspect "$1" >/dev/null 2>&1 && return 0
-  docker network create --subnet "$2" "$1" >/dev/null && CREATED_NET+=("$1")
-}
-need_net bastion-transit 10.254.0.0/24
-need_net bastion-bitcoin 10.20.0.0/24
+# Real torrc, but on the collision-safe 10.253.x range this test uses.
+sed 's/10\.254\.0\./10.253.0./g' ../../stack-network/config/torrc > "$GEN_TORRC"
 
-echo "== bringing up tor =="
-docker compose -f stack-network/docker-compose.yml up -d --build tor >/dev/null 2>&1 || { echo "could not start tor"; exit 1; }
-for _ in $(seq 1 30); do
-  [ "$(docker inspect -f '{{.State.Health.Status}}' tor 2>/dev/null)" = healthy ] && break
-  sleep 2
+echo "== bringing up the hermetic Tor environment =="
+if ! "${COMPOSE[@]}" up -d --build 2>&1; then
+  echo "FAIL: could not start the test environment"
+  exit 1
+fi
+
+echo "== waiting for tor to be healthy =="
+s=""
+for _ in $(seq 1 40); do
+  s=$("${COMPOSE[@]}" ps tor --format '{{.Health}}' 2>/dev/null)
+  [ "$s" = healthy ] && break
+  sleep 3
 done
-[ "$(docker inspect -f '{{.State.Health.Status}}' tor 2>/dev/null)" = healthy ] || { echo "tor did not become healthy"; exit 1; }
+if [ "$s" != healthy ]; then
+  echo "FAIL: tor did not become healthy"
+  "${COMPOSE[@]}" logs tor | tail -30
+  exit 1
+fi
+sleep 5   # the alpine mocks apk-add socat on start
 
-listener() { # name  network  ip  port
-  docker run -d --name "$1" --network "$2" --ip "$3" alpine \
-    sh -c "apk add -q socat && socat TCP-LISTEN:$4,fork,reuseaddr SYSTEM:'printf ok'" >/dev/null
-}
-listener hs_cln  bastion-transit 10.254.0.10 9735
-listener hs_teos bastion-transit 10.254.0.11 9814
-listener hs_btc  bastion-bitcoin 10.20.0.5   9814
-sleep 4
-
-probe() { # ip  port   -> prints REACHABLE / unreachable
-  docker exec tor timeout 5 bash -c "cat < /dev/null > /dev/tcp/$1/$2" 2>/dev/null \
+probe() { # ip port -> REACHABLE | unreachable
+  "${COMPOSE[@]}" exec -T tor timeout 5 bash -c "cat < /dev/null > /dev/tcp/$1/$2" 2>/dev/null \
     && echo REACHABLE || echo unreachable
 }
 
 fail=0
-expect() { # label  ip  port  want
+expect() { # label ip port want
   local got; got=$(probe "$2" "$3")
-  if [ "$got" = "$4" ]; then printf '  \033[32mok\033[0m   %-42s %s\n' "$1" "$got"
-  else printf '  \033[31mFAIL\033[0m %-42s got %s, want %s\n' "$1" "$got" "$4"; fail=1; fi
+  if [ "$got" = "$4" ]; then printf '  \033[32mok\033[0m   %-46s %s\n' "$1" "$got"
+  else printf '  \033[31mFAIL\033[0m %-46s got %s, want %s\n' "$1" "$got" "$4"; fail=1; fi
 }
 
 echo "== last-hop reachability from the tor container =="
-expect "CLN forward target 10.254.0.10:9735"   10.254.0.10 9735 REACHABLE
-expect "TEOS forward target 10.254.0.11:9814"   10.254.0.11 9814 REACHABLE
-expect "a bastion-bitcoin addr 10.20.0.5:9814"  10.20.0.5   9814 unreachable
+expect "CLN forward target  (transit .10:9735)"    10.253.0.10 9735 REACHABLE
+expect "TEOS forward target (transit .11:9814)"     10.253.0.11 9814 REACHABLE
+expect "a per-stack subnet addr (10.19.0.5:9814)"   10.19.0.5   9814 unreachable
+expect "0.0.0.0:9735  (the old CLN bind-addr)"      0.0.0.0     9735 unreachable
+expect "tor's own loopback 127.0.0.1:9735"          127.0.0.1   9735 unreachable
 
 echo
-[ "$fail" -eq 0 ] && echo -e "\033[32mhidden-service forward targets are routable from Tor\033[0m" \
-                  || echo -e "\033[31mregression: a forward target Tor cannot reach\033[0m"
+[ "$fail" -eq 0 ] && echo -e "\033[32mgood forward targets are routable from Tor, bad ones are not\033[0m" \
+                  || echo -e "\033[31mregression in Tor forward-target reachability\033[0m"
 exit $fail
