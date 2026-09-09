@@ -6,15 +6,20 @@ when the node holds funds.
 
 ## Services
 
-| Service | Container address | Purpose |
-|---|---|---|
-| Bitcoin Core | `10.20.0.3:8332` | Pruned Bitcoin backend |
-| Core Lightning | `10.20.0.2:9735` | Lightning node and CLN REST |
-| RTL | `10.20.0.4:3000` | Lightning UI |
-| TEOS | `10.20.0.5` | Watchtower daemon |
+| Service | `bastion-bitcoin` | `bastion-transit` | Purpose |
+|---|---|---|---|
+| Bitcoin Core | `10.20.0.3` | dynamic | Pruned Bitcoin backend (RPC `:8332`) |
+| Core Lightning | `10.20.0.2` (REST `:3001`) | `10.254.0.10` (P2P `:9735`) | Lightning node |
+| RTL | `10.20.0.4:3000` | — | Lightning UI |
+| TEOS | `10.20.0.5` (bitcoind RPC) | `10.254.0.11` (API `:9814`) | Watchtower daemon |
 
 Tor itself runs in `stack-network`; this stack reaches it over `bastion-transit`
-at `tor:9050` (SOCKS) and `10.254.0.2:9051` (control).
+at `tor:9050` (SOCKS) and `10.254.0.2:9051` (control). CLN and TEOS **publish**
+their onion services through that Tor: each advertises its pinned
+`bastion-transit` address (`10.254.0.10` / `10.254.0.11`) as the hidden-service
+forward target, since the `tor` container can only route within
+`bastion-transit`. `bind-addr` in `cln_config` and `api_bind` in `teos.toml`
+must stay on those addresses.
 
 Compose publishes CLN REST on host port `3001` so a CLN-REST client on the
 WireGuard VPN can reach it at the host (raw LAN IP, or a Pi-hole local-DNS name

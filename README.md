@@ -64,7 +64,9 @@ docker compose -f ./stack-ai/docker-compose.yml up -d
 
 The private stack networks use `10.10.0.0/24` through `10.50.0.0/24`.
 Cross-stack services use the restricted `bastion-transit` network at
-`10.254.0.0/24`; Tor is `10.254.0.2` on that network.
+`10.254.0.0/24`. Pinned there: Tor `10.254.0.2`, Core Lightning `10.254.0.10`,
+TEOS `10.254.0.11` — the last two publish their onion services through Tor and
+must advertise a transit address the `tor` container can route to.
 
 ## ⚙️ Commands
 
@@ -298,6 +300,8 @@ Each stack has a private Docker subnet. Cross-stack dependencies use the restric
 **Internal isolation:**
 - Bitcoin RPC: `10.20.0.3:8332` (Bitcoin stack network only)
 - CLN REST: `10.20.0.2:3001` internally; host port `3001` for host/WireGuard clients
+- CLN P2P / TEOS API: only on `bastion-transit` (`10.254.0.10:9735` /
+  `10.254.0.11:9814`), reachable only through their Tor onion services
 - CCR gateway: `ccr:8080` (AI stack network only; management UI is host/WireGuard published)
 - CodeDeck bridge: no published host port; relay traffic uses `bastion-transit`
 

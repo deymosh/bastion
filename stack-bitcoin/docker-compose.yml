@@ -32,6 +32,10 @@ services:
       net:
         ipv4_address: 10.20.0.2
       transit:
+        # Pinned: CLN advertises this address to Tor as its hidden-service
+        # forward target (see bind-addr in config/cln_config). It must be an
+        # address the tor container can reach, i.e. on bastion-transit.
+        ipv4_address: 10.254.0.10
     command:
       - --alias=${NODE_ALIAS}
       - --network=bitcoin
@@ -107,6 +111,10 @@ services:
       net:
         ipv4_address: 10.20.0.5
       transit:
+        # Pinned: teosd binds its API here and advertises it to Tor as the
+        # watchtower hidden-service forward target (see api_bind in
+        # config/teos.toml). Must be reachable from the tor container.
+        ipv4_address: 10.254.0.11
 
 networks:
   net:

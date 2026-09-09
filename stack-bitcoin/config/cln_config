@@ -34,7 +34,11 @@ important-plugin=/usr/local/bin/trustedcoin
 important-plugin=/usr/local/bin/watchtower-client
 
 # Network and proxy settings (Tor in this case)
-bind-addr=0.0.0.0:9735
+# bind-addr is the address CLN hands to the Tor control port as the static
+# hidden-service forward target, so it must be reachable FROM the tor
+# container - i.e. CLN's pinned bastion-transit address, not 0.0.0.0
+# (which Tor would resolve to its own loopback).
+bind-addr=10.254.0.10:9735
 proxy=10.254.0.2:9050
 addr=statictor:10.254.0.2:9051
 always-use-proxy=true

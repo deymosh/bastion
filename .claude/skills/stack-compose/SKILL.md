@@ -33,14 +33,18 @@ except `stack-network`.
 | per-stack | `bastion-monitor` | `10.30.0.0/24` | `stack-monitor` services |
 | per-stack | `bastion-web` | `10.40.0.0/24` | `stack-web` services |
 | per-stack | `bastion-ai` | `10.50.0.0/24` | `stack-ai` services |
-| shared | `bastion-transit` | `10.254.0.0/24` | `tor` (.2), `lightningd`, `bitcoind`, `teosd`, `codedeck-bridge` |
+| shared | `bastion-transit` | `10.254.0.0/24` | `tor` (.2), `lightningd` (.10), `teosd` (.11), `bitcoind` (dyn), `codedeck-bridge` (dyn) |
 
 - First service in a stack gets `.2`, then `.3`, `.4`, … Static
   `ipv4_address` is used so config files can reference literal IPs.
-- On `bastion-transit`, only `tor` has a pinned address (`10.254.0.2`) — it is
-  load-bearing (see `CLAUDE.md` "Absolute constraints"). Other transit members
-  get a dynamic address and are reached by DNS name (`bitcoind`, `codedeck-bridge`)
-  or, for `lightningd`'s `statictor`, by the literal `10.254.0.2`.
+- On `bastion-transit`, three members are pinned and load-bearing (see
+  `CLAUDE.md`): `tor` `.2`, `lightningd` `.10`, `teosd` `.11`. The last two are
+  pinned because each advertises its own address to Tor as an **inbound
+  hidden-service forward target** — the `tor` container is on `bastion-transit`
+  only and cannot route to a per-stack subnet, so a service reachable *through*
+  Tor must sit on transit at a stable address (never `0.0.0.0`, which Tor
+  resolves to its own loopback). `bitcoind` and `codedeck-bridge` only make
+  outbound Tor connections, so they stay dynamic.
 
 ## 2. Deciding whether a service needs `bastion-transit`
 
@@ -80,6 +84,12 @@ To add a Tor consumer: join `bastion-transit`; use `tor:9050` (DNS) for SOCKS if
 you share the network, or the literal `10.254.0.2:9050` if a config file needs a
 static value; mount `bastion-tor-data:/data/.tor:ro` if you need the control
 cookie.
+
+To expose a service **through** Tor (an inbound onion), the service must be
+reachable from the `tor` container: pin it a `bastion-transit` `ipv4_address`
+and advertise that address (not `0.0.0.0`, not its per-stack IP) as the onion's
+forward target. `lightningd` (`.10`, via `cln_config` `bind-addr`) and `teosd`
+(`.11`, via `teos.toml` `api_bind`) are the current examples.
 
 ## 4. `./bastion up` ordering
 

@@ -1,5 +1,8 @@
 # API
-api_bind = "10.20.0.5"
+# api_bind doubles as the hidden-service forward target advertised to Tor, so
+# it must be reachable from the tor container: teosd's pinned bastion-transit
+# address (see stack-bitcoin/docker-compose.yml), not its bastion-bitcoin one.
+api_bind = "10.254.0.11"
 api_port = 9814
 tor_control_port = 9051
 tor_control_host = "10.254.0.2"

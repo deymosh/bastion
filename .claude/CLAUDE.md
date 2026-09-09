@@ -104,14 +104,23 @@ plain path — the TUI never launches without an interactive terminal.
   submodule (on a branch of the fork) plus a pointer bump in the superproject.
   Never leave it `-dirty`. `git submodule update` silently discards uncommitted
   submodule work.
-- **The Tor transit IP `10.254.0.2` is load-bearing.** It is hardcoded in
-  `stack-network/config/torrc` (`SocksPort`/`ControlPort`),
-  `stack-bitcoin/config/cln_config` (`proxy`, `statictor`),
-  `stack-bitcoin/config/teos.toml` (`tor_control_host`),
-  `stack-bitcoin/docker-compose.yml` (`bitcoind -proxy`),
-  `stack-bitcoin/scripts/amboss-healthcheck.sh`, and the `tor` healthcheck. The
-  `tor` service pins it via `ipv4_address`. Keep all of these in sync; do not
-  add a consumer that assumes a different address.
+- **Pinned `bastion-transit` addresses are load-bearing.** Three are fixed via
+  `ipv4_address` and referenced by config:
+  - `10.254.0.2` — `tor`. In `stack-network/config/torrc`
+    (`SocksPort`/`ControlPort`), `cln_config` (`proxy`, `statictor`),
+    `teos.toml` (`tor_control_host`), the `tor` healthcheck.
+  - `10.254.0.10` — `lightningd`. It is `cln_config`'s `bind-addr`, which CLN
+    hands to Tor as its **static hidden-service forward target**, so it must be
+    an address the tor container can reach (i.e. on `bastion-transit`, never
+    `0.0.0.0` — Tor would resolve that to its own loopback).
+  - `10.254.0.11` — `teosd`. It is `teos.toml`'s `api_bind`, which rust-teos
+    uses as both the API listen socket and the watchtower hidden-service
+    forward target — same reachability requirement.
+
+  The `tor` container is on `bastion-transit` only; it cannot route to any
+  per-stack subnet. Any service that must be reachable *through* Tor (inbound
+  onion) has to advertise a `bastion-transit` address. Keep these three IPs and
+  their config references in sync.
 - **Intentional design — do not "fix" it:** CLN REST (`3001`) and CCR (`3458`)
   are published on `0.0.0.0` on the host on purpose. A WireGuard client reaches
   them at the host's LAN IP (or a Pi-hole local-DNS name such as
