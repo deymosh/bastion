@@ -396,6 +396,7 @@ TUI_STACK_BC=""       # breadcrumb tail
 TUI_FOCUS="menu"      # menu | status  - which pane the arrow keys drive
 TUI_STATUS_OFF=0      # scroll offset of the status pane when focused
 TUI_STATUS_TOTAL=0    # rows the status pane last laid out (set by tui_render_right)
+TUI_STATUS_MAXOFF=0   # highest valid scroll offset for that layout (ditto)
 
 # Switch views. Always resets the selection, returns focus to the menu, and
 # forces a full repaint so the breadcrumb and menu never show stale content.
@@ -406,18 +407,21 @@ _tui_goto() {
     TUI_NEED_FRAME=1; TUI_NEED_MENU=1; TUI_NEED_RIGHT=1
 }
 
-# Scroll the status pane (only meaningful while TUI_FOCUS=status).
+# Scroll the status pane (only meaningful while TUI_FOCUS=status). The clamp uses
+# TUI_STATUS_MAXOFF, published by tui_render_right from the layout it actually
+# drew - recomputing it here drifted by the footer row, so `end` / scrolling down
+# could never reach the last line.
 tui_status_scroll() {
-    local avail=$(( CONTENT_BOT - CONTENT_TOP + 1 )) step=1
-    case "$1" in pgup|pgdn) step=$(( avail > 2 ? avail - 1 : 1 )) ;; esac
+    local view=$(( CONTENT_BOT - CONTENT_TOP )); [ "$view" -lt 1 ] && view=1
+    local step=1
+    case "$1" in pgup|pgdn) step=$(( view > 2 ? view - 1 : 1 )) ;; esac
     case "$1" in
         up|pgup)   TUI_STATUS_OFF=$(( TUI_STATUS_OFF - step )) ;;
         down|pgdn) TUI_STATUS_OFF=$(( TUI_STATUS_OFF + step )) ;;
         home)      TUI_STATUS_OFF=0 ;;
-        end)       TUI_STATUS_OFF=$TUI_STATUS_TOTAL ;;
+        end)       TUI_STATUS_OFF=$TUI_STATUS_MAXOFF ;;
     esac
-    local maxoff=$(( TUI_STATUS_TOTAL - avail )); [ "$maxoff" -lt 0 ] && maxoff=0
-    [ "$TUI_STATUS_OFF" -gt "$maxoff" ] && TUI_STATUS_OFF=$maxoff
+    [ "$TUI_STATUS_OFF" -gt "$TUI_STATUS_MAXOFF" ] && TUI_STATUS_OFF=$TUI_STATUS_MAXOFF
     [ "$TUI_STATUS_OFF" -lt 0 ] && TUI_STATUS_OFF=0
     TUI_NEED_RIGHT=1
 }
@@ -476,15 +480,19 @@ tui_render_right() {
     local total=${#lines[@]}
     TUI_STATUS_TOTAL=$total
 
+    # Row CONTENT_BOT is always the footer/indicator line, so the content
+    # viewport is avail-1 rows - never avail. maxoff must use the same figure or
+    # the last line stays one row out of reach however far you scroll.
+    local body_rows=$(( avail - 1 )); [ "$body_rows" -lt 1 ] && body_rows=1
+    local maxoff=$(( total - body_rows )); [ "$maxoff" -lt 0 ] && maxoff=0
+    TUI_STATUS_MAXOFF=$maxoff
+
     # clamp the scroll offset (a probe rebuild can shrink the list under us)
-    local maxoff=$(( total - avail )); [ "$maxoff" -lt 0 ] && maxoff=0
     [ "$TUI_STATUS_OFF" -gt "$maxoff" ] && TUI_STATUS_OFF=$maxoff
     [ "$TUI_STATUS_OFF" -lt 0 ] && TUI_STATUS_OFF=0
     [ "$focused" = 0 ] && TUI_STATUS_OFF=0        # only scroll while focused
 
-    local overflow=0; [ "$total" -gt $(( TUI_STATUS_OFF + avail )) ] && overflow=1
-    local body_rows=$avail
-    { [ "$overflow" = 1 ] || [ "$TUI_STATUS_OFF" -gt 0 ]; } && body_rows=$(( avail - 1 ))
+    local overflow=0; [ "$total" -gt $(( TUI_STATUS_OFF + body_rows )) ] && overflow=1
 
     local r=$CONTENT_TOP i=$TUI_STATUS_OFF n=0
     for (( ; i<total && n<body_rows; i++, n++, r++ )); do

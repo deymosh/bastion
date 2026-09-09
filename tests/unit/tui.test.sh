@@ -66,9 +66,22 @@ CONTENT_BOT=30
 echo "== focus model =="
 TUI_FOCUS=menu; tui_toggle_focus; assert_eq "$TUI_FOCUS" status "s/Tab moves focus to the status pane"
 tui_toggle_focus;                assert_eq "$TUI_FOCUS" menu   "toggles back to the menu"
-TUI_STATUS_TOTAL=40; TUI_STATUS_OFF=0; tui_status_scroll end
-[ "$TUI_STATUS_OFF" -gt 0 ] && _t_ok "status pane scrolls to the end" || _t_bad "status scroll stuck at 0"
+
+echo "== status pane scroll reaches the last row (footer-row off-by-one) =="
+# a short pane: CONTENT_TOP..CONTENT_BOT = 4..18 -> avail 15, content viewport 14
+CONTENT_TOP=4; CONTENT_BOT=18
+TUI_FOCUS=status; TUI_STATUS_OFF=0
+TUI_STATUS_LINES=(); for _i in $(seq 1 26); do TUI_STATUS_LINES+=("row$_i"); done
+TUI_NEED_RIGHT=1; tui_render_right >/dev/null
+assert_eq "$TUI_STATUS_MAXOFF" 12 "maxoff = total(26) - viewport(14), not total - avail(15)"
+tui_status_scroll end
+assert_eq "$TUI_STATUS_OFF" 12 "End lands on maxoff"
+TUI_NEED_RIGHT=1; drawn=$(tui_render_right | sed $'s/\033\\[[0-9;]*m//g')
+case "$drawn" in *row26*) _t_ok "the last row is on screen after End" ;; *) _t_bad "last row still unreachable: $drawn" ;; esac
+TUI_STATUS_OFF=0; TUI_NEED_RIGHT=1; tui_render_right >/dev/null
 tui_status_scroll home; assert_eq "$TUI_STATUS_OFF" 0 "Home returns the status pane to the top"
+CONTENT_TOP=4; CONTENT_BOT=30
+TUI_STATUS_LINES=()
 
 rm -f "$CONFIG_FILE"
 finish
