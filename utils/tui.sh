@@ -373,7 +373,12 @@ tui_build_menu() {
             for s in "${STACKS[@]}"; do
                 MENU_IDS+=("$s")
                 local box="[ ]"; [ "${STACK_PICK[$s]:-0}" = 1 ] && box="[x]"
-                MENU_LABELS+=("$box  $s")
+                local tag=""
+                if [ "$s" = "$NETWORK_STACK" ]; then
+                    [ "$STACK_ACTION" = deploy ] && tag="   (foundation - always on)" \
+                                                || tag="   (foundation)"
+                fi
+                MENU_LABELS+=("$box  $s$tag")
             done
             MENU_IDS+=("__run"); MENU_LABELS+=("→ Run ${STACK_ACTION} on selected")
             ;;
@@ -417,6 +422,28 @@ tui_render_menu() {
 }
 
 # --- Actions ------------------------------------------------------
+
+# In the deploy picker, stack-network is the foundation and cannot be toggled
+# off. Every other picker/action is free to toggle it - the stop/down guard runs
+# at __run time instead.
+tui_stack_toggle_ok() {
+    [ "$STACK_ACTION" = deploy ] && [ "$1" = "$NETWORK_STACK" ] && return 1
+    return 0
+}
+
+# Echo the running stacks that would be orphaned if `picked` (which is assumed to
+# include stack-network) were stopped/removed - i.e. running stacks not in the
+# selection. Empty output means the teardown is safe.
+tui_network_teardown_orphans() {
+    local picked=("$@") r out=""
+    _contains "$NETWORK_STACK" "${picked[@]}" || return 0
+    while IFS= read -r r; do
+        [ -n "$r" ] || continue
+        _contains "$r" "${picked[@]}" || out+=" $r"
+    done < <(running_stacks)
+    printf '%s' "${out# }"
+}
+
 tui_do_config_edit() {
     local key="$1"
     local cur; cur=$(read_env_var "$key")
@@ -478,12 +505,24 @@ tui_dispatch() {
                     local picked=() s
                     for s in "${STACKS[@]}"; do [ "${STACK_PICK[$s]:-0}" = 1 ] && picked+=("$s"); done
                     [ "${#picked[@]}" -eq 0 ] && { tui_message "Nothing selected" "Toggle at least one stack with Space."; return 0; }
+                    if [ "$STACK_ACTION" = stop ] || [ "$STACK_ACTION" = down ]; then
+                        local orphans; orphans=$(tui_network_teardown_orphans "${picked[@]}")
+                        if [ -n "$orphans" ]; then
+                            tui_message "Cannot ${STACK_ACTION} ${NETWORK_STACK}" \
+"${NETWORK_STACK} owns the bastion-transit network and Tor. These stacks are still running and rely on it:
+
+  ${orphans}
+
+Bring those down first, or clear ${NETWORK_STACK} from the selection. (The CLI has --force for the rare case you really mean it.)"
+                            return 0
+                        fi
+                    fi
                     if tui_confirm "${STACK_ACTION} ${#picked[@]} stack(s): ${picked[*]} ?" y; then
                         tui_suspend bastion_stack_action "$STACK_ACTION" "${picked[@]}"
                         tui_message "Done" "'${STACK_ACTION}' finished for: ${picked[*]}"
                     fi
                     TUI_STATUS_AT=0 ;;
-                *) STACK_PICK[$id]=$(( 1 - ${STACK_PICK[$id]:-0} )); TUI_NEED_MENU=1 ;;
+                *) tui_stack_toggle_ok "$id" && { STACK_PICK[$id]=$(( 1 - ${STACK_PICK[$id]:-0} )); TUI_NEED_MENU=1; } ;;
             esac ;;
         config)
             tui_do_config_edit "$id" ;;
@@ -518,7 +557,7 @@ tui_main() {
             down) MENU_SEL=$(( MENU_SEL + 1 )); [ "$MENU_SEL" -ge "${#MENU_IDS[@]}" ] && MENU_SEL=0; TUI_NEED_MENU=1 ;;
             enter) tui_dispatch || break ;;
             space)
-                [ "$TUI_VIEW" = stacks ] && { local id="${MENU_IDS[$MENU_SEL]}"; [ "$id" != "__run" ] && STACK_PICK[$id]=$(( 1 - ${STACK_PICK[$id]:-0} )); TUI_NEED_MENU=1; } ;;
+                [ "$TUI_VIEW" = stacks ] && { local id="${MENU_IDS[$MENU_SEL]}"; [ "$id" != "__run" ] && tui_stack_toggle_ok "$id" && STACK_PICK[$id]=$(( 1 - ${STACK_PICK[$id]:-0} )); TUI_NEED_MENU=1; } ;;
             char:a)
                 [ "$TUI_VIEW" = stacks ] && { local s; for s in "${STACKS[@]}"; do STACK_PICK[$s]=1; done; TUI_NEED_MENU=1; } ;;
             left|esc) tui_back || break ;;

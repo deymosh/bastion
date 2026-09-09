@@ -11,6 +11,11 @@
 #   ./bastion up|stop|down|build|logs [stack ...]
 #   ./bastion status | audit | tui
 #   ./bastion up --recreate-networks
+#   ./bastion down stack-network --force
+#
+# stack-network is the foundation: every "up" brings it up first (it is added
+# automatically when omitted), and it cannot be stopped or removed while another
+# stack still has containers running unless --force is given.
 ################################################################################
 
 # Import configuration and utilities
@@ -45,6 +50,7 @@ usage() {
     echo -e ""
     echo -e "${YELLOW}${BOLD}FLAGS:${NC}"
     echo -e "  ${BOLD}--recreate-networks${NC} -> On 'up', drop a stale bastion-network (old subnet) first"
+    echo -e "  ${BOLD}--force${NC}, ${BOLD}-f${NC}          -> Allow 'stop'/'down' of stack-network while other stacks run"
     echo -e ""
     echo -e "${YELLOW}${BOLD}STACKS:${NC}"
     for i in "${!STACKS[@]}"; do
@@ -154,10 +160,46 @@ resolve_stacks() {
 
 _contains() { local n="$1"; shift; local x; for x in "$@"; do [ "$x" = "$n" ] && return 0; done; return 1; }
 
+# stack-network owns the bastion-transit network and runs Tor; stack-bitcoin
+# (CLN/TEOS dial Tor over transit) and stack-ai (codedeck-bridge joins transit)
+# break the moment it goes away. Refuse a stop/down that targets stack-network
+# while any *other* stack still has containers up. Returns 0 when it is safe to
+# proceed, 1 to abort. --force (global $FORCE) downgrades the refusal to a note.
+check_network_teardown() {
+    local action="$1"; shift
+    _contains "$NETWORK_STACK" "$@" || return 0        # network not in this set
+    local orphans=() r
+    while IFS= read -r r; do
+        [ -n "$r" ] || continue
+        _contains "$r" "$@" || orphans+=("$r")
+    done < <(running_stacks)
+    [ "${#orphans[@]}" -eq 0 ] && return 0             # nothing else is running
+
+    if [ "${FORCE:-0}" = 1 ]; then
+        echo -e "${YELLOW}${BOLD}[!] --force: ${action} ${NETWORK_STACK} with these still up -> ${orphans[*]}${NC}"
+        return 0
+    fi
+    echo -e "${RED}${BOLD}[✘] Refusing to ${action} ${NETWORK_STACK} while other stacks are running:${NC}" >&2
+    echo -e "    ${BOLD}${orphans[*]}${NC}" >&2
+    echo -e "    ${NETWORK_STACK} owns the bastion-transit network and Tor; removing it now" >&2
+    echo -e "    cuts Lightning/TEOS off Tor and orphans the shared network." >&2
+    echo -e "    ${CYAN}Bring those down first:${NC} ${BOLD}./bastion ${action} ${orphans[*]}${NC}" >&2
+    echo -e "    ${CYAN}or override:${NC}          ${BOLD}./bastion ${action} ${NETWORK_STACK} --force${NC}" >&2
+    return 1
+}
+
 # --- Action bodies (operate on a stack list) ------------------------------
 do_up() {
     local stacks=("$@")
-    preflight_networks || return 1
+    # stack-network is mandatory: bastion-transit + Tor underpin every stack.
+    # Add it (first, canonical order) whenever the caller left it out.
+    if ! _contains "$NETWORK_STACK" "${stacks[@]}"; then
+        echo -e "${CYAN}[i] Adding ${NETWORK_STACK} - the required foundation for every stack.${NC}"
+        stacks=("$NETWORK_STACK" "${stacks[@]}")
+    fi
+    if _contains "$NETWORK_STACK" "${stacks[@]}"; then
+        preflight_networks || return 1
+    fi
     if _contains stack-bitcoin "${stacks[@]}"; then
         bash "$TEOS_BUILD_UTIL" || return 1
     fi
@@ -178,6 +220,7 @@ do_up() {
 
 do_stop() {
     local stacks=("$@") i
+    check_network_teardown stop "${stacks[@]}" || return 1
     echo -e "${RED}${BOLD}[-] Stopping: ${stacks[*]}${NC}"
     for (( i=${#stacks[@]}-1; i>=0; i-- )); do
         docker compose -f "./${stacks[$i]}/docker-compose.yml" stop
@@ -186,6 +229,7 @@ do_stop() {
 
 do_down() {
     local stacks=("$@") i
+    check_network_teardown down "${stacks[@]}" || return 1
     echo -e "${RED}${BOLD}[-] Removing: ${stacks[*]}${NC}"
     for (( i=${#stacks[@]}-1; i>=0; i-- )); do
         docker compose -f "./${stacks[$i]}/docker-compose.yml" down
@@ -228,10 +272,12 @@ load_secrets
 
 # Strip global flags before command dispatch.
 RECREATE_NETWORKS=0
+FORCE=0
 ARGS=()
 for arg in "$@"; do
     case "$arg" in
         --recreate-networks) RECREATE_NETWORKS=1 ;;
+        --force|-f)          FORCE=1 ;;
         *) ARGS+=("$arg") ;;
     esac
 done

@@ -48,6 +48,11 @@ deployment target is **Linux**. Bash syntax is identical either way.
 Any non-TTY invocation (`services/bastion-daemon.sh`, cron, a pipe) runs the
 plain path — the TUI never launches without an interactive terminal.
 
+`stack-network` is mandatory: `up` prepends it when omitted, and `stop`/`down`
+refuse to touch it while another stack has containers running (`--force`
+overrides). The TUI's deploy picker keeps it checked; its stop/down picker
+blocks the run and explains why.
+
 ### Dev environment constraints
 
 - **Never start `bitcoind` in dev.** It would begin a full-chain sync. For local

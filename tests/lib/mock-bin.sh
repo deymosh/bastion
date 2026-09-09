@@ -20,8 +20,9 @@ case "$1 $2" in
   "network inspect")   printf '%s\n' "${MOCK_NETWORK_SUBNET:-}" ; exit "${MOCK_NETWORK_RC:-0}" ;;
   "images -q")         printf '%s\n' "${MOCK_IMAGE_ID:-}" ;;
   "image inspect")     printf '%s\n' "${MOCK_IMAGE_LABEL:-}" ;;
+  "inspect --format")  printf '%s\n' "${MOCK_HEALTH:-healthy}" ;;   # wait_for_health
   "compose "*)         echo "  (compose no-op: ${*:2})" ; exit 0 ;;
-  "ps "*|"ps")         echo "NAMES STATUS" ;;
+  "ps "*|"ps")         printf '%s\n' ${MOCK_PS_NAMES:-} ;;
 esac
 exit 0
 EOF

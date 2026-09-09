@@ -89,6 +89,12 @@ A stack name may be given with or without the `stack-` prefix
 (`./bastion up web ai`). On `up`, `--recreate-networks` drops a stale
 `bastion-network` left from the old flat-network layout before starting.
 
+`stack-network` is the foundation - it owns the `bastion-transit` network and
+runs Tor, which the Bitcoin and AI stacks attach to. `./bastion up` always
+brings it up first and adds it automatically when it is left out of the list.
+For the same reason it will not `stop` or `down` `stack-network` while another
+stack still has containers running; bring those down first, or pass `--force`.
+
 Any non-interactive invocation (a pipe, cron, `services/bastion-daemon.sh`)
 runs the plain path; the dashboard only opens on a real terminal.
 

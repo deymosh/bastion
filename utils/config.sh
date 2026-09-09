@@ -21,6 +21,32 @@ PROJECT_NAME="BASTION"
 CONFIG_FILE="./bastion.conf"
 # Deployment order is crucial: Network must be first.
 STACKS=("stack-network" "stack-bitcoin" "stack-monitor" "stack-web" "stack-ai")
+# The foundation stack: it creates the bastion-transit network and the
+# bastion-tor-data volume and runs Tor. Every "up" brings it up first; it
+# cannot be brought down while any other stack is running.
+NETWORK_STACK="stack-network"
+
+# Which stack each container belongs to (used to tell which stacks are up).
+declare -A CONTAINER_STACK=(
+    [pihole]=stack-network [unbound]=stack-network [wireguard]=stack-network [tor]=stack-network
+    [bitcoind]=stack-bitcoin [lightningd]=stack-bitcoin [rtl]=stack-bitcoin [teosd]=stack-bitcoin
+    [portainer]=stack-monitor [grafana]=stack-monitor [prometheus]=stack-monitor [node-exporter]=stack-monitor
+    [hub]=stack-web
+    [ccr]=stack-ai [codedeck-bridge]=stack-ai
+)
+
+# Print the stacks that currently have at least one running container, one per
+# line. Single `docker ps` call.
+running_stacks() {
+    local name out=""
+    while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        local s="${CONTAINER_STACK[$name]:-}"
+        [ -n "$s" ] || continue
+        case " $out " in *" $s "*) : ;; *) out="$out $s" ;; esac
+    done < <(docker ps --format '{{.Names}}' 2>/dev/null)
+    for name in $out; do echo "$name"; done
+}
 # Path to the python audit script
 AUDIT_SCRIPT="./stack-bitcoin/scripts/node-audit.py"
 # Path to the TEOS build utility

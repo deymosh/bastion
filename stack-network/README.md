@@ -3,6 +3,13 @@
 The network foundation for Bastion. Start this stack before any other stack. It
 creates the shared transit network and owns Tor.
 
+`./bastion up` enforces this: it starts `stack-network` first and adds it to the
+list automatically when omitted. It also refuses `./bastion stop`/`down` of
+`stack-network` while any other stack still has containers running (Lightning and
+TEOS reach Tor over `bastion-transit`; removing it mid-flight cuts them off and
+orphans the shared network). Bring the dependent stacks down first, or pass
+`--force`.
+
 ## Services
 
 | Service | Address | Host exposure |

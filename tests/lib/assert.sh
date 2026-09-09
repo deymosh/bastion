@@ -25,6 +25,11 @@ assert_contains() {  # haystack needle [label]
   case "$1" in *"$2"*) _t_ok "$label" ;; *) _t_bad "$label -- [$1] has no [$2]" ;; esac
 }
 
+assert_not_contains() {  # haystack needle [label]
+  local label="${3:-output does not contain [$2]}"
+  case "$1" in *"$2"*) _t_bad "$label -- [$1] unexpectedly has [$2]" ;; *) _t_ok "$label" ;; esac
+}
+
 assert_ok() {   # command...
   if "$@" >/dev/null 2>&1; then _t_ok "ok: $*"; else _t_bad "expected success: $*"; fi
 }
