@@ -40,6 +40,7 @@ run_unit() {
 run_integration() {
   step "hidden-service reachability" bash tests/integration/hidden-service-reachability.sh
   step "per-container operations"    bash tests/integration/container-ops.sh
+  step "secrets are mounted files"   bash tests/integration/secrets.sh
 }
 
 run_weekly() {
