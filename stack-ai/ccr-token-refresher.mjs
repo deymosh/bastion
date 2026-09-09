@@ -45,49 +45,61 @@ function log(msg, extra) {
   else console.log(line);
 }
 
-async function readCreds() {
-  const raw = await readFile(CRED_FILE, "utf8");
-  const data = JSON.parse(raw);
-  if (!data || typeof data !== "object" || !data.claudeAiOauth) {
-    throw new Error("no claudeAiOauth object in credentials file");
-  }
-  return data;
-}
-
 async function writeCreds(data) {
   const tmp = CRED_FILE + ".tmp";
   await writeFile(tmp, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
   await rename(tmp, CRED_FILE);
 }
 
+// Only log a repeating condition when it changes, so an idle refresher stays
+// quiet (CCR may be running on a plain API key with no OAuth file at all).
+let lastState = "";
+function logOnce(state, msg) {
+  if (state !== lastState) log(msg);
+  lastState = state;
+}
+
 /**
- * @returns {"refreshed" | "not-due" | "transient" | "dead"}
+ * @returns {"refreshed" | "not-due" | "idle" | "transient" | "dead"}
+ *   idle = nothing to refresh (no file, or not an OAuth credentials file).
+ *          Never an error - CCR keeps running regardless.
  */
 async function tick() {
-  let data;
+  let raw;
   try {
-    data = await readCreds();
+    raw = await readFile(CRED_FILE, "utf8");
   } catch (err) {
-    // File missing / not yet written by an interactive login: not our problem
-    // to create, just wait for it.
     if (err.code === "ENOENT") {
-      log("credentials file not present yet, waiting");
-      return "transient";
+      logOnce("no-file", `no credentials file at ${CRED_FILE} yet - idle`);
+      return "idle";
     }
     log("could not read credentials file", String(err.message || err));
     return "transient";
   }
 
-  const oauth = data.claudeAiOauth;
-  const expiresAt = Number(oauth.expiresAt) || 0;
-  const msLeft = expiresAt - Date.now();
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    logOnce("bad-json", "credentials file is not valid JSON - idle");
+    return "transient";
+  }
 
-  if (msLeft > SKEW_MS) {
-    return "not-due";
+  const oauth = data && typeof data === "object" ? data.claudeAiOauth : null;
+  if (!oauth || !oauth.accessToken) {
+    logOnce("not-oauth", "credentials file has no claudeAiOauth token - nothing to refresh, idle");
+    return "idle";
   }
   if (!oauth.refreshToken) {
-    log("token near expiry but no refreshToken present - manual `claude` login required");
-    return "dead";
+    logOnce("no-refresh", "OAuth access token present but no refreshToken - re-run `claude` login to enable auto-refresh");
+    return "idle";
+  }
+
+  const expiresAt = Number(oauth.expiresAt) || 0;
+  const msLeft = expiresAt - Date.now();
+  if (msLeft > SKEW_MS) {
+    lastState = "ok";
+    return "not-due";
   }
 
   log(`refreshing (expires in ${Math.round(msLeft / 1000)}s)`);
@@ -155,7 +167,6 @@ async function tick() {
 
 async function main() {
   log(`starting; file=${CRED_FILE} interval=${INTERVAL_MS / 1000}s skew=${SKEW_MS / 1000}s endpoint=${TOKEN_URL}`);
-  // Make sure the directory exists so ENOENT below is specifically the file.
   await stat(dirname(CRED_FILE)).catch(() => {});
 
   for (;;) {
@@ -163,8 +174,8 @@ async function main() {
     try {
       const result = await tick();
       if (result === "transient") wait = MIN_RETRY_MS;
-      // "dead": keep looping at the normal interval; an operator may re-login
-      // at any time and we should pick the new refresh token up.
+      // "idle" / "dead": just re-check at the normal interval. CCR runs fine
+      // without us; an operator may add or fix credentials at any time.
     } catch (err) {
       log("unexpected error in tick()", String(err.stack || err));
       wait = MIN_RETRY_MS;

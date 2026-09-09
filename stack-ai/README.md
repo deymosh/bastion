@@ -16,14 +16,17 @@ Bastion's Tor service on `bastion-transit` at `socks5h://tor:9050` by default.
 
 ## CCR authentication and token refresh
 
-CCR authenticates to Anthropic with a Claude Code OAuth token created by an
-interactive `claude` login (`docker exec -it ccr claude`), stored in
-`data/ccr/.claude/.credentials.json`. That access token expires roughly daily.
+CCR can authenticate to Anthropic with a Claude Code OAuth token created by an
+interactive `claude` login (`docker exec -it ccr claude`, stored in
+`data/ccr/.claude/.credentials.json`), or with a plain API key configured in the
+CCR UI - either way CCR starts normally.
 
-The image runs a small refresher alongside CCR that, shortly before expiry,
-exchanges the stored refresh token for a new one and rewrites the credentials
-file atomically. CCR re-reads the file on every upstream request, so no restart
-or signal is needed. If the refresh token itself is ever rejected
+For the OAuth case the access token expires roughly daily, so the image runs a
+small refresher alongside CCR that, shortly before expiry, exchanges the stored
+refresh token for a new one and rewrites the credentials file atomically. CCR
+re-reads the file on every upstream request, so no restart or signal is needed.
+The refresher never blocks CCR: with no credentials file, or a non-OAuth one, it
+just logs `idle` and keeps checking. If the refresh token is rejected
 (`invalid_grant`), the log says so and an operator must run `claude` login
 again. Controls (all optional, sane defaults):
 

@@ -72,10 +72,16 @@ Error handling:
 
 ## 3. How the refresher runs
 
-`stack-ai/ccr-entrypoint-wrapper.sh` is the image `ENTRYPOINT`. It backgrounds
-`node /usr/local/bin/ccr-token-refresher.mjs` (when `CCR_TOKEN_REFRESH=1` and the
-credentials file exists), then `exec`s the upstream `ccr-entrypoint`. The
-refresher loops every `CCR_REFRESH_INTERVAL` (default 300s): read the file, and
+`stack-ai/ccr-entrypoint-wrapper.sh` is the image `ENTRYPOINT`. It does one
+thing: if `CCR_TOKEN_REFRESH` is not `0` it backgrounds
+`node /usr/local/bin/ccr-token-refresher.mjs`, then `exec`s the upstream
+`ccr-entrypoint`. **CCR always starts** - no credentials check, no gate. If
+there is no `.credentials.json`, or the file carries no `claudeAiOauth` block
+(CCR running on a plain API key, say), the refresher logs `idle` once and keeps
+re-checking quietly; credentials can be added or fixed at any time.
+
+When an OAuth token is present the refresher loops every `CCR_REFRESH_INTERVAL`
+(default 300s): read the file, and
 if `Date.now() >= expiresAt - CCR_REFRESH_SKEW_MS` (default 30 min) do the POST
 and write the file back **atomically** (`.credentials.json.tmp` + `rename`, mode
 `600`), preserving any keys it doesn't manage. No restart, no signal to CCR — the
