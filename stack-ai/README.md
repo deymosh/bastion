@@ -72,6 +72,13 @@ standalone Compose run, copy `.env.example` to `.env` and fill in the values.
 - `CODEDECK_RELAYS`: trusted Nostr relay URLs.
 - `CODEDECK_TOR_PROXY_URL`: relay SOCKS5 proxy.
 - `GIT_REPO`, `GIT_USER`, `GIT_EMAIL`: optional workspace and Git settings.
+- `CODEDECK_OPENCODE_SERVER_URL`, `CODEDECK_OPENCODE_AUTO_START`,
+  `CODEDECK_OPENCODE_PORT`: optional second session backend
+  ([OpenCode](https://opencode.ai), CodeDeck+ >= v0.12.0). All empty by
+  default - a bridge with none of them set behaves exactly as it always has.
+- `CODEDECK_GSD_AUTO_INSTALL`: `1` installs the optional
+  [GSD](https://github.com/open-gsd/gsd-core) planning workflow on boot
+  (CodeDeck+ >= v0.12.0); empty/`0` skips it (default).
 
 Both containers run **unprivileged**. `ccr-entrypoint-wrapper.sh` starts as root
 only long enough to align ownership of the writable paths (nginx config/state,

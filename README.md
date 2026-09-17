@@ -381,7 +381,7 @@ the host firewall is the ACL — see "Access model & firewall" above and
 | Core Lightning | v25.12.1 |
 | RTL | v0.15.8 |
 | Claude Code Router | pinned commit `ec9fc53` of the CCR fork (`CCR_REF` in `stack-ai/Dockerfile.ccr`) |
-| CodeDeck+ bridge | v0.11.1 |
+| CodeDeck+ bridge | v0.12.0 |
 | **CLN Plugins:** |
 | clboss | [95d195f8](https://github.com/ksedgwic/clboss/tree/95d195f8baafa1aa22f7aa95fa1dd1fd26003583) |
 | watchtower-client | [be344ecc](https://github.com/talaia-labs/rust-teos/tree/be344ecc5286dd9436bf343d30954135da8ad4ac) |

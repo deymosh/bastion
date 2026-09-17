@@ -52,8 +52,8 @@ services:
         ipv4_address: 10.50.0.2
 
   codedeck-bridge:
-    # Pinned by digest (version tag kept for readability). Pinned 2026-09-09.
-    image: ghcr.io/deymosh/codedeck-plus-bridge:v0.11.1@sha256:c7cb907258cc3503027d9b344d510411a7ed2e88f98a5258af214f0626b06c74
+    # Pinned by digest (version tag kept for readability). Pinned 2026-09-17.
+    image: ghcr.io/deymosh/codedeck-plus-bridge:v0.12.0@sha256:960319b55c3a8287a524d7324228ea86e319e74fd4e824362d4faea0e410c911
     container_name: codedeck-bridge
     restart: unless-stopped
     depends_on:
@@ -69,10 +69,17 @@ services:
       GIT_REPO: ${GIT_REPO}
       CODEDECK_RELAYS: ${CODEDECK_RELAYS}
       CODEDECK_TOR_PROXY_URL: ${CODEDECK_TOR_PROXY_URL}
+      # Claude Code Router (CCR) is the gateway to Claude Code. The bridge uses it to
+      # discover available models and to proxy requests to the Claude Code API.
       ANTHROPIC_BASE_URL: http://ccr:8080
-      # Let Claude Code populate its /model picker from the gateway's /v1/models.
-      # No request is made if CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC is set.
       CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: ${CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY:-1}
+      # Optional OpenCode session backend (v0.12.0+). Empty/unset on every one
+      # of these reproduces pre-v0.12.0 behaviour exactly - Claude Code only.
+      CODEDECK_OPENCODE_SERVER_URL: ${CODEDECK_OPENCODE_SERVER_URL:-}
+      CODEDECK_OPENCODE_AUTO_START: ${CODEDECK_OPENCODE_AUTO_START:-}
+      CODEDECK_OPENCODE_PORT: ${CODEDECK_OPENCODE_PORT:-}
+      # Optional GSD planning workflow (v0.12.0+); off by default (see .env.example).
+      CODEDECK_GSD_AUTO_INSTALL: ${CODEDECK_GSD_AUTO_INSTALL:-}
     secrets:
       - source: claude_code_oauth_token
         uid: "1000"
