@@ -426,11 +426,25 @@
   const frameStatus = document.getElementById('frameStatus');
   let loadTimer = null;
 
+  // Any plain `frame.src = url` navigation adds its own entry to the
+  // *top-level* window's joint session history (iframe navigations count
+  // towards the parent page's back/forward stack per spec) - on top of the
+  // entry the hash change (#key) already adds. That meant Back had to be
+  // pressed twice to reach Home: once to undo the iframe's own navigation
+  // entry, once to undo the hash change. `location.replace()` navigates the
+  // frame without adding that extra entry (one of the few operations the
+  // Location object allows across origins), folding the iframe's navigation
+  // into the same history step as the hash change.
+  function navigateFrame(url) {
+    try { frame.contentWindow.location.replace(url); }
+    catch (e) { frame.src = url; }
+  }
+
   function showHome() {
     body.classList.remove('in-service');
     crumb.innerHTML = '';
     openTab.href = '#';
-    frame.src = 'about:blank';
+    navigateFrame('about:blank');
     clearTimeout(loadTimer);
   }
 
@@ -440,7 +454,7 @@
     const target = urlFor(svc);
     openTab.href = target;
     frameStatus.classList.remove('hidden');
-    frame.src = target;
+    navigateFrame(target);
     clearTimeout(loadTimer);
     // A frame blocked by the target's own X-Frame-Options/CSP still fires
     // "load" (browsers don't expose that failure across origins), so this
