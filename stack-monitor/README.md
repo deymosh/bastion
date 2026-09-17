@@ -26,6 +26,16 @@ dropping Portainer from the default deploy, is the planned hardening.
 
 Images are pinned by digest; `./bastion versions` shows the pin vs. what runs.
 
+### Hub embedding
+
+The Hub (`stack-web`) opens Grafana in an embedded panel rather than a new
+tab; `GF_SECURITY_ALLOW_EMBEDDING=true` above is what makes that work (Grafana
+refuses framing by default). Portainer is deliberately excluded from that -
+its default `frame-ancestors 'none'` CSP has no scoped override, only a
+`--no-csp` flag that strips the header entirely, and that is not a trade worth
+making for a container holding the Docker socket. The Hub opens Portainer in
+a normal new tab instead.
+
 ## Commands
 
 ```bash
