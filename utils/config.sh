@@ -95,7 +95,7 @@ write_config() {
     if [ -f "$CONFIG_FILE" ]; then
         awk '
             BEGIN {
-                split("WIREGUARD_SERVERURL WIREGUARD_SERVERPORT WIREGUARD_PEERS NODE_ALIAS TIMEZONE USER_ID GROUP_ID PIHOLE_PASSWORD LXMF_ALLOWED_IDENTITY CODEDECK_RELAYS CODEDECK_TOR_PROXY_URL GIT_REPO GIT_USER GIT_EMAIL CCR_WEB_AUTH_TOKEN CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY CLAUDE_CODE_OAUTH_TOKEN GITHUB_TOKEN", managed)
+                split("WIREGUARD_SERVERURL WIREGUARD_SERVERPORT WIREGUARD_PEERS NODE_ALIAS TIMEZONE USER_ID GROUP_ID PIHOLE_PASSWORD LXMF_ALLOWED_IDENTITY CODEDECK_RELAYS CODEDECK_TOR_PROXY_URL GIT_REPO GIT_USER GIT_EMAIL CCR_WEB_AUTH_TOKEN CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY CCR_TOKEN_REFRESH CCR_REFRESH_INTERVAL CCR_REFRESH_SKEW_MS CLAUDE_CODE_OAUTH_TOKEN GITHUB_TOKEN", managed)
                 for (position in managed) {
                     known[managed[position]] = 1
                 }
@@ -161,6 +161,12 @@ write_config() {
         _wc_kv CCR_WEB_AUTH_TOKEN "$CCR_WEB_AUTH_TOKEN"
         echo "# 1 lets Claude Code populate its model picker from the gateway's /v1/models."
         _wc_kv CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY "$CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"
+        echo "# 1 keeps the CCR OAuth credentials file refreshed in-container; 0 disables it."
+        _wc_kv CCR_TOKEN_REFRESH "$CCR_TOKEN_REFRESH"
+        echo "# Seconds between refresher checks."
+        _wc_kv CCR_REFRESH_INTERVAL "$CCR_REFRESH_INTERVAL"
+        echo "# Refresh the access token this many milliseconds before it expires."
+        _wc_kv CCR_REFRESH_SKEW_MS "$CCR_REFRESH_SKEW_MS"
         echo
         echo "# CodeDeck Claude authentication"
         echo "# Required by CodeDeck+; keep this file private."
@@ -188,6 +194,7 @@ MANAGED_VARS=(
     LXMF_ALLOWED_IDENTITY
     CODEDECK_RELAYS CODEDECK_TOR_PROXY_URL GIT_REPO GIT_USER GIT_EMAIL
     CCR_WEB_AUTH_TOKEN CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY
+    CCR_TOKEN_REFRESH CCR_REFRESH_INTERVAL CCR_REFRESH_SKEW_MS
     CLAUDE_CODE_OAUTH_TOKEN GITHUB_TOKEN
 )
 
@@ -236,8 +243,11 @@ validate_env_value() {
         CODEDECK_TOR_PROXY_URL)
             [ -z "$val" ] || [[ "$val" =~ ^socks5h?:// ]] \
                 || { echo "must start with socks5:// or socks5h://"; return 1; } ;;
-        CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY)
+        CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY|CCR_TOKEN_REFRESH)
             [[ "$val" =~ ^[01]$ ]] || { echo "must be 0 or 1"; return 1; } ;;
+        CCR_REFRESH_INTERVAL|CCR_REFRESH_SKEW_MS)
+            [[ "$val" =~ ^[0-9]+$ ]] && [ "$val" -gt 0 ] \
+                || { echo "must be a positive integer"; return 1; } ;;
         GIT_EMAIL)
             [ -z "$val" ] || [[ "$val" =~ ^[^@[:space:]]+@[^@[:space:]]+$ ]] \
                 || { echo "not a valid email"; return 1; } ;;
@@ -336,6 +346,11 @@ load_config() {
         ["GIT_EMAIL"]=""
         ["CCR_WEB_AUTH_TOKEN"]=$(openssl rand -base64 32 | tr -d '=+/\n' | cut -c1-43)
         ["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"]="1"
+        # Match stack-ai/docker-compose.yml's own ${VAR:-default} fallbacks, so
+        # a freshly generated bastion.conf changes nothing for CCR at runtime.
+        ["CCR_TOKEN_REFRESH"]="1"
+        ["CCR_REFRESH_INTERVAL"]="300"
+        ["CCR_REFRESH_SKEW_MS"]="1800000"
         ["CLAUDE_CODE_OAUTH_TOKEN"]=""
         ["GITHUB_TOKEN"]=""
     )

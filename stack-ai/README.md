@@ -34,6 +34,9 @@ again. Controls (all optional, sane defaults):
 - `CCR_REFRESH_INTERVAL` (default `300`) - seconds between checks.
 - `CCR_REFRESH_SKEW_MS` (default `1800000`) - refresh this long before expiry.
 
+All three are managed `bastion.conf` values - editable from the TUI's
+Configuration view, not just via `stack-ai/.env`.
+
 Debug: `docker logs ccr | grep ccr-token-refresher`.
 
 ## Commands
