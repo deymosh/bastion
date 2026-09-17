@@ -10,13 +10,19 @@
     --bg: #0b0f14;
     --bg-card: #131920;
     --bg-card-hover: #1a222c;
+    --bg-topbar: #10151b;
     --border: #232c37;
     --text: #e8edf2;
     --text-dim: #8493a3;
     --accent: #f7931a;
+    --topbar-h: 56px;
   }
 
   * { box-sizing: border-box; }
+
+  html, body {
+    height: 100%;
+  }
 
   body {
     margin: 0;
@@ -26,38 +32,139 @@
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     display: flex;
     flex-direction: column;
+  }
+
+  /* --- Top banner: identity + "where am I" + escape hatch, always visible --- */
+
+  #topbar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    height: var(--topbar-h);
+    flex: 0 0 auto;
+    display: flex;
     align-items: center;
-    padding: 48px 20px;
+    gap: 10px;
+    padding: 0 14px;
+    background: var(--bg-topbar);
+    border-bottom: 1px solid var(--border);
   }
 
-  header {
-    text-align: center;
-    margin-bottom: 40px;
+  #brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: none;
+    border: none;
+    padding: 6px 4px;
+    margin: 0 -4px;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    border-radius: 8px;
   }
 
-  header .logo {
-    width: 64px;
-    height: 64px;
-    display: inline-block;
-    filter: drop-shadow(0 4px 16px rgba(247, 147, 26, 0.35));
+  #brand:hover, #brand:focus-visible {
+    background: var(--bg-card-hover);
   }
 
-  header .logo svg {
-    width: 100%;
-    height: 100%;
+  #brand .logo {
+    width: 26px;
+    height: 26px;
+    flex: 0 0 auto;
     display: block;
   }
 
-  header h1 {
-    margin: 14px 0 4px;
-    font-size: 26px;
+  #brand .logo svg { width: 100%; height: 100%; display: block; }
+
+  #brand .name {
+    font-weight: 700;
     letter-spacing: 0.04em;
+    font-size: 15px;
+    white-space: nowrap;
   }
 
-  header p {
-    margin: 0;
+  #crumb {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
     color: var(--text-dim);
     font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  #crumb .sep { opacity: 0.5; }
+  #crumb .section { color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+
+  #openTab {
+    margin-left: auto;
+    flex: 0 0 auto;
+    display: none;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text);
+    text-decoration: none;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+
+  #openTab:hover, #openTab:focus-visible {
+    border-color: var(--accent);
+    background: var(--bg-card-hover);
+  }
+
+  #openTab svg { width: 15px; height: 15px; flex: 0 0 auto; }
+  #openTab .label { display: inline; }
+
+  body.in-service #openTab { display: inline-flex; }
+
+  /* --- Home view: the service directory --- */
+
+  #home {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 36px 20px 24px;
+  }
+
+  body.in-service #home { display: none; }
+
+  .home-head {
+    width: 100%;
+    max-width: 900px;
+    margin: 0 0 22px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .home-head h1 {
+    margin: 0 0 4px;
+    font-size: 20px;
+    letter-spacing: 0.01em;
+  }
+
+  .home-head h1::before {
+    content: "";
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-right: 9px;
+    border-radius: 2px;
+    background: var(--accent);
+  }
+
+  .home-head .intro {
+    margin: 0;
+    color: var(--text-dim);
+    font-size: 13px;
   }
 
   .grid {
@@ -115,7 +222,7 @@
   }
 
   footer {
-    margin-top: 48px;
+    margin-top: 40px;
     color: var(--text-dim);
     font-size: 12px;
     text-align: center;
@@ -124,26 +231,94 @@
   footer code {
     color: var(--text);
   }
+
+  /* --- Service view: the embedded panel fills the rest of the viewport --- */
+
+  #frameWrap {
+    display: none;
+    flex: 1 1 auto;
+    min-height: 0;
+    position: relative;
+  }
+
+  body.in-service #frameWrap { display: block; }
+
+  #serviceFrame {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: var(--bg);
+  }
+
+  #frameStatus {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: var(--text-dim);
+    font-size: 14px;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
+  }
+
+  #frameStatus.hidden { opacity: 0; }
+
+  #frameStatus .spinner {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  @media (max-width: 520px) {
+    #topbar { gap: 6px; padding: 0 10px; }
+    #brand .name { display: none; }
+    #openTab .label { display: none; }
+    #openTab { padding: 8px; }
+  }
 </style>
 </head>
 <body>
 
-<header>
-  <span class="logo" aria-hidden="true">
-    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
-      <path d="M32 8 51 15v15c0 12-7.8 21.8-19 27C20.8 51.8 13 42 13 30V15z" fill="var(--accent)"/>
-      <path d="M34 16 22 35h9l-2 13 13-20h-9z" fill="var(--bg)"/>
-    </svg>
-  </span>
-  <h1>BASTION</h1>
-  <p>Sovereign Infrastructure, Operations &amp; AI</p>
-</header>
+<nav id="topbar">
+  <button id="brand" type="button" aria-label="Back to Bastion home">
+    <span class="logo" aria-hidden="true">
+      <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+        <path d="M32 8 51 15v15c0 12-7.8 21.8-19 27C20.8 51.8 13 42 13 30V15z" fill="var(--accent)"/>
+        <path d="M34 16 22 35h9l-2 13 13-20h-9z" fill="var(--bg)"/>
+      </svg>
+    </span>
+    <span class="name">BASTION</span>
+  </button>
+  <div id="crumb"></div>
+  <a id="openTab" target="_blank" rel="noopener noreferrer">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+    <span class="label">Open in new tab</span>
+  </a>
+</nav>
 
-<div class="grid" id="grid"></div>
+<main id="home">
+  <div class="home-head">
+    <h1>Services</h1>
+    <p class="intro">Sovereign Infrastructure, Operations &amp; AI</p>
+  </div>
+  <div class="grid" id="grid"></div>
+  <footer>
+    Connected as <code id="host"></code>
+  </footer>
+</main>
 
-<footer>
-  Connected as <code id="host"></code>
-</footer>
+<div id="frameWrap">
+  <div id="frameStatus"><span class="spinner" aria-hidden="true"></span> Loading&hellip;</div>
+  <iframe id="serviceFrame" title="Embedded service" allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+</div>
 
 <script>
   const icons = {
@@ -155,28 +330,31 @@
     shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
   };
 
+  // key: used in the URL hash (#key) so a service view is linkable/back-button-able.
   const services = [
-    { name: 'RTL', desc: 'Lightning panel', icon: 'lightning', port: 3000, protocol: null, path: '' },
-    { name: 'Grafana', desc: 'Metrics & dashboards', icon: 'chart', port: 4001, protocol: null, path: '' },
-    { name: 'Portainer', desc: 'Container management', icon: 'box', port: 4000, protocol: 'https:', path: '' },
-    { name: 'Prometheus', desc: 'Time-series metrics', icon: 'pulse', port: 9090, protocol: null, path: '' },
-    { name: 'CCR', desc: 'Claude Code Router', icon: 'terminal', port: 3458, protocol: null, path: '' },
-    { name: 'Pi-hole', desc: 'DNS & ad blocking', icon: 'shield', port: 8081, protocol: null, path: '/admin' },
+    { key: 'rtl',        name: 'RTL',        desc: 'Lightning panel',          icon: 'lightning', port: 3000, protocol: null, path: '' },
+    { key: 'grafana',    name: 'Grafana',    desc: 'Metrics & dashboards',     icon: 'chart',      port: 4001, protocol: null, path: '' },
+    { key: 'portainer',  name: 'Portainer',  desc: 'Container management',    icon: 'box',        port: 4000, protocol: 'https:', path: '' },
+    { key: 'prometheus', name: 'Prometheus', desc: 'Time-series metrics',     icon: 'pulse',      port: 9090, protocol: null, path: '' },
+    { key: 'ccr',        name: 'CCR',        desc: 'Claude Code Router',      icon: 'terminal',   port: 3458, protocol: null, path: '' },
+    { key: 'pihole',     name: 'Pi-hole',    desc: 'DNS & ad blocking',       icon: 'shield',     port: 8081, protocol: null, path: '/admin' },
   ];
+  const byKey = Object.fromEntries(services.map((s) => [s.key, s]));
 
   const host = location.hostname;
   document.getElementById('host').textContent = host;
 
+  function urlFor(svc) {
+    const protocol = svc.protocol || location.protocol;
+    return `${protocol}//${host}:${svc.port}${svc.path}`;
+  }
+
   const grid = document.getElementById('grid');
   for (const svc of services) {
-    const protocol = svc.protocol || location.protocol;
-    const url = `${protocol}//${host}:${svc.port}${svc.path}`;
-
     const a = document.createElement('a');
     a.className = 'card';
-    a.href = url;
-    a.target = '_blank';
-    a.rel = 'noopener noreferrer';
+    a.href = `#${svc.key}`;
+    a.dataset.key = svc.key;
     a.innerHTML = `
       <span class="icon">${icons[svc.icon]}</span>
       <span class="name">${svc.name}</span>
@@ -184,6 +362,54 @@
     `;
     grid.appendChild(a);
   }
+
+  const body = document.body;
+  const crumb = document.getElementById('crumb');
+  const openTab = document.getElementById('openTab');
+  const frame = document.getElementById('serviceFrame');
+  const frameStatus = document.getElementById('frameStatus');
+  let loadTimer = null;
+
+  function showHome() {
+    body.classList.remove('in-service');
+    crumb.innerHTML = '';
+    openTab.href = '#';
+    frame.src = 'about:blank';
+    clearTimeout(loadTimer);
+  }
+
+  function showService(svc) {
+    body.classList.add('in-service');
+    crumb.innerHTML = `<span class="sep">/</span><span class="section">${svc.name} — ${svc.desc}</span>`;
+    const target = urlFor(svc);
+    openTab.href = target;
+    frameStatus.classList.remove('hidden');
+    frame.src = target;
+    clearTimeout(loadTimer);
+    // A frame blocked by the target's own X-Frame-Options/CSP still fires
+    // "load" (browsers don't expose that failure across origins), so this
+    // can only hide the spinner, never reliably detect a block - the
+    // persistent "Open in new tab" button in the banner is the real escape
+    // hatch for a service that refuses to be framed.
+    loadTimer = setTimeout(() => frameStatus.classList.add('hidden'), 8000);
+  }
+
+  frame.addEventListener('load', () => {
+    clearTimeout(loadTimer);
+    frameStatus.classList.add('hidden');
+  });
+
+  function render() {
+    const key = location.hash.slice(1);
+    const svc = byKey[key];
+    if (svc) showService(svc); else showHome();
+  }
+
+  document.getElementById('brand').addEventListener('click', () => {
+    if (location.hash) location.hash = ''; else render();
+  });
+  window.addEventListener('hashchange', render);
+  render();
 </script>
 
 </body>
