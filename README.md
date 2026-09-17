@@ -127,7 +127,7 @@ runs the plain path; the dashboard only opens on a real terminal.
 | Prometheus | 9090 | http://bastion.node:9090 | v3.14.0 |
 | Pi-hole | 8081 | http://bastion.node:8081/admin | 2026.07.2 |
 | CLN REST API | 3001 | http://bastion.node:3001 | (CLN native) |
-| CCR management UI | 3458 | http://bastion.node:3458 | CCR fork commit `ec9fc53` |
+| CCR management UI | 3458 | http://bastion.node:3458 | v3.1.1, commit `471e715` |
 | Wireguard VPN | 51820/udp | External (WAN) | 1.0.20260223-r0-ls121 |
 
 Image versions are pinned by digest; `./bastion versions` shows the pin and what
@@ -197,11 +197,11 @@ stack-ai/Dockerfile.ccr             # CCR pinned commit + Claude Code
 
 ### AI Stack
 
-The AI stack builds Claude Code Router from a **pinned commit** of the project's
-CCR fork (`CCR_REF` / `CCR_REPOSITORY` in `stack-ai/Dockerfile.ccr`; bump with
-`gh api repos/deymosh/claude-code-router/commits/<branch> --jq .sha`), including
-its Docker worker fix, and bakes in an OAuth token refresher so the login stays
-valid without manual re-auth. CCR includes Claude Code and runs **unprivileged**
+The AI stack builds Claude Code Router from a **pinned commit** of the official
+upstream project (`CCR_REF` / `CCR_REPOSITORY` in `stack-ai/Dockerfile.ccr`;
+bump with `gh api repos/musistudio/claude-code-router/tags --jq '.[0].commit.sha'`),
+and bakes in an OAuth token refresher so the login stays valid without manual
+re-auth. CCR includes Claude Code and runs **unprivileged**
 (`cap_drop: ALL`, `no-new-privileges`): its entrypoint wrapper starts as root only
 to align file ownership to `USER_ID`/`GROUP_ID`, then `gosu`-drops to that user.
 CodeDeck+ uses its published bridge image (`ghcr.io/deymosh/codedeck-plus-bridge`),
@@ -380,7 +380,7 @@ the host firewall is the ACL — see "Access model & firewall" above and
 | Bitcoin Core | v26.0 |
 | Core Lightning | v25.12.1 |
 | RTL | v0.15.8 |
-| Claude Code Router | pinned commit `ec9fc53` of the CCR fork (`CCR_REF` in `stack-ai/Dockerfile.ccr`) |
+| Claude Code Router | v3.1.1, pinned commit `471e715` (`CCR_REF` in `stack-ai/Dockerfile.ccr`) |
 | CodeDeck+ bridge | v0.12.0 |
 | **CLN Plugins:** |
 | clboss | [95d195f8](https://github.com/ksedgwic/clboss/tree/95d195f8baafa1aa22f7aa95fa1dd1fd26003583) |

@@ -6,10 +6,10 @@ services:
       context: .
       dockerfile: Dockerfile.ccr
       args:
-        # Pin to a commit, not a branch: the branch head moves under us. Bump
-        # with `gh api repos/deymosh/claude-code-router/commits/<branch> --jq .sha`.
-        CCR_REF: ec9fc53436d4602b9617ee68269895f9e141aa99
-    image: bastion-claude-code-router:ec9fc53
+        # Pin to a commit, not a moving ref. Bump to a newer release with
+        # `gh api repos/musistudio/claude-code-router/tags --jq '.[0].commit.sha'`.
+        CCR_REF: 471e715c20cfa855c681f6d31dc652164d4fa654
+    image: bastion-claude-code-router:471e715
     container_name: ccr
     restart: unless-stopped
     # ccr-entrypoint-wrapper.sh aligns ownership then gosu-drops to uid/gid 1000.
