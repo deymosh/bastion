@@ -23,6 +23,13 @@ services:
     image: grafana/grafana:13.2.1@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283
     container_name: grafana
     restart: unless-stopped
+    environment:
+      # Grafana sends X-Frame-Options: deny by default, which refuses the Hub's
+      # embedded panel (stack-web/html/index.html). Safe to lift here: Grafana
+      # still requires its own login (Bastion sets no anonymous-auth override),
+      # and port 4001 is already firewalled to WireGuard + LAN only, same as
+      # every other Hub-listed port - see docs/firewall.md.
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
     ports:
       - "4001:3000"
     volumes:

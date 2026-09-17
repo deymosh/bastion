@@ -55,6 +55,13 @@ assert_fail validate_env_value WIREGUARD_PEERS -1
 assert_ok   validate_env_value CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY 0
 assert_ok   validate_env_value CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY 1
 assert_fail validate_env_value CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY 2
+assert_ok   validate_env_value CCR_TOKEN_REFRESH 0
+assert_fail validate_env_value CCR_TOKEN_REFRESH 2
+assert_ok   validate_env_value CCR_REFRESH_INTERVAL 300
+assert_fail validate_env_value CCR_REFRESH_INTERVAL 0
+assert_fail validate_env_value CCR_REFRESH_INTERVAL abc
+assert_ok   validate_env_value CCR_REFRESH_SKEW_MS 1800000
+assert_fail validate_env_value CCR_REFRESH_SKEW_MS -5
 assert_ok   validate_env_value CODEDECK_TOR_PROXY_URL socks5h://tor:9050
 assert_ok   validate_env_value CODEDECK_TOR_PROXY_URL ""
 assert_fail validate_env_value CODEDECK_TOR_PROXY_URL http://tor:9050

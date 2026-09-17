@@ -95,7 +95,7 @@ write_config() {
     if [ -f "$CONFIG_FILE" ]; then
         awk '
             BEGIN {
-                split("WIREGUARD_SERVERURL WIREGUARD_SERVERPORT WIREGUARD_PEERS NODE_ALIAS TIMEZONE USER_ID GROUP_ID PIHOLE_PASSWORD LXMF_ALLOWED_IDENTITY CODEDECK_RELAYS CODEDECK_TOR_PROXY_URL GIT_REPO GIT_USER GIT_EMAIL CCR_WEB_AUTH_TOKEN CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY CLAUDE_CODE_OAUTH_TOKEN GITHUB_TOKEN", managed)
+                split("WIREGUARD_SERVERURL WIREGUARD_SERVERPORT WIREGUARD_PEERS NODE_ALIAS TIMEZONE USER_ID GROUP_ID PIHOLE_PASSWORD LXMF_ALLOWED_IDENTITY CODEDECK_RELAYS CODEDECK_TOR_PROXY_URL GIT_REPO GIT_USER GIT_EMAIL CODEDECK_OPENCODE_SERVER_URL CODEDECK_OPENCODE_AUTO_START CODEDECK_OPENCODE_PORT CODEDECK_GSD_AUTO_INSTALL CCR_WEB_AUTH_TOKEN CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY CCR_TOKEN_REFRESH CCR_REFRESH_INTERVAL CCR_REFRESH_SKEW_MS CLAUDE_CODE_OAUTH_TOKEN GITHUB_TOKEN", managed)
                 for (position in managed) {
                     known[managed[position]] = 1
                 }
@@ -155,12 +155,24 @@ write_config() {
         echo "# Optional Git identity used by CodeDeck."
         _wc_kv GIT_USER "$GIT_USER"
         _wc_kv GIT_EMAIL "$GIT_EMAIL"
+        echo "# Optional OpenCode session backend (empty = Claude Code only, pre-v0.12.0 behaviour)."
+        _wc_kv CODEDECK_OPENCODE_SERVER_URL "$CODEDECK_OPENCODE_SERVER_URL"
+        _wc_kv CODEDECK_OPENCODE_AUTO_START "$CODEDECK_OPENCODE_AUTO_START"
+        _wc_kv CODEDECK_OPENCODE_PORT "$CODEDECK_OPENCODE_PORT"
+        echo "# Optional GSD planning workflow install on boot (empty/0 = skip)."
+        _wc_kv CODEDECK_GSD_AUTO_INSTALL "$CODEDECK_GSD_AUTO_INSTALL"
         echo
         echo "# Claude Code Router"
         echo "# Authentication token for the CCR web UI."
         _wc_kv CCR_WEB_AUTH_TOKEN "$CCR_WEB_AUTH_TOKEN"
         echo "# 1 lets Claude Code populate its model picker from the gateway's /v1/models."
         _wc_kv CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY "$CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"
+        echo "# 1 keeps the CCR OAuth credentials file refreshed in-container; 0 disables it."
+        _wc_kv CCR_TOKEN_REFRESH "$CCR_TOKEN_REFRESH"
+        echo "# Seconds between refresher checks."
+        _wc_kv CCR_REFRESH_INTERVAL "$CCR_REFRESH_INTERVAL"
+        echo "# Refresh the access token this many milliseconds before it expires."
+        _wc_kv CCR_REFRESH_SKEW_MS "$CCR_REFRESH_SKEW_MS"
         echo
         echo "# CodeDeck Claude authentication"
         echo "# Required by CodeDeck+; keep this file private."
@@ -187,7 +199,10 @@ MANAGED_VARS=(
     TIMEZONE USER_ID GROUP_ID PIHOLE_PASSWORD
     LXMF_ALLOWED_IDENTITY
     CODEDECK_RELAYS CODEDECK_TOR_PROXY_URL GIT_REPO GIT_USER GIT_EMAIL
+    CODEDECK_OPENCODE_SERVER_URL CODEDECK_OPENCODE_AUTO_START CODEDECK_OPENCODE_PORT
+    CODEDECK_GSD_AUTO_INSTALL
     CCR_WEB_AUTH_TOKEN CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY
+    CCR_TOKEN_REFRESH CCR_REFRESH_INTERVAL CCR_REFRESH_SKEW_MS
     CLAUDE_CODE_OAUTH_TOKEN GITHUB_TOKEN
 )
 
@@ -236,8 +251,20 @@ validate_env_value() {
         CODEDECK_TOR_PROXY_URL)
             [ -z "$val" ] || [[ "$val" =~ ^socks5h?:// ]] \
                 || { echo "must start with socks5:// or socks5h://"; return 1; } ;;
-        CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY)
+        CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY|CCR_TOKEN_REFRESH)
             [[ "$val" =~ ^[01]$ ]] || { echo "must be 0 or 1"; return 1; } ;;
+        CCR_REFRESH_INTERVAL|CCR_REFRESH_SKEW_MS)
+            [[ "$val" =~ ^[0-9]+$ ]] && [ "$val" -gt 0 ] \
+                || { echo "must be a positive integer"; return 1; } ;;
+        CODEDECK_OPENCODE_AUTO_START|CODEDECK_GSD_AUTO_INSTALL)
+            [ -z "$val" ] || [[ "$val" =~ ^[01]$ ]] \
+                || { echo "must be 0 or 1 (empty disables)"; return 1; } ;;
+        CODEDECK_OPENCODE_PORT)
+            [ -z "$val" ] || { [[ "$val" =~ ^[0-9]+$ ]] && [ "$val" -ge 1 ] && [ "$val" -le 65535 ]; } \
+                || { echo "must be empty or a port number 1-65535"; return 1; } ;;
+        CODEDECK_OPENCODE_SERVER_URL)
+            [ -z "$val" ] || [[ "$val" =~ ^https?:// ]] \
+                || { echo "must start with http:// or https://"; return 1; } ;;
         GIT_EMAIL)
             [ -z "$val" ] || [[ "$val" =~ ^[^@[:space:]]+@[^@[:space:]]+$ ]] \
                 || { echo "not a valid email"; return 1; } ;;
@@ -334,8 +361,19 @@ load_config() {
         ["GIT_REPO"]=""
         ["GIT_USER"]=""
         ["GIT_EMAIL"]=""
+        # Off by default: matches CodeDeck+'s own "no config = Claude Code only"
+        # behaviour (see .env.example).
+        ["CODEDECK_OPENCODE_SERVER_URL"]=""
+        ["CODEDECK_OPENCODE_AUTO_START"]=""
+        ["CODEDECK_OPENCODE_PORT"]=""
+        ["CODEDECK_GSD_AUTO_INSTALL"]=""
         ["CCR_WEB_AUTH_TOKEN"]=$(openssl rand -base64 32 | tr -d '=+/\n' | cut -c1-43)
         ["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"]="1"
+        # Match stack-ai/docker-compose.yml's own ${VAR:-default} fallbacks, so
+        # a freshly generated bastion.conf changes nothing for CCR at runtime.
+        ["CCR_TOKEN_REFRESH"]="1"
+        ["CCR_REFRESH_INTERVAL"]="300"
+        ["CCR_REFRESH_SKEW_MS"]="1800000"
         ["CLAUDE_CODE_OAUTH_TOKEN"]=""
         ["GITHUB_TOKEN"]=""
     )
