@@ -187,6 +187,18 @@ tui_confirm() {
     done
 }
 
+# Strip stray ASCII control chars (0x01-0x1f) from freeform TUI input before
+# it is persisted. Deliberately excludes 0x00 from the range: a bash string
+# cannot hold a NUL byte (C-string semantics under the hood), so a range
+# written as [$'\x00'-$'\x1f'] has its low end silently collapse to empty and
+# reduce to the bracket [-\x1f] - a literal "-" (leading in a bracket, so not
+# a range operator) or 0x1f. That quietly stripped every hyphen typed into
+# any prompt (Claude/GitHub tokens, hostnames, ...) instead of only control
+# characters. Kept as its own function so it's testable without a tty.
+tui_sanitize_input() {
+    printf '%s' "${1//[$'\x01'-$'\x1f']/}"
+}
+
 # tui_prompt "label" "default"  -> echoes the entered value (default if left blank).
 # Uses canonical line mode for the duration: the terminal handles editing
 # (backspace, ^U), one clean read, no fragile escape-sequence parsing.
@@ -210,7 +222,7 @@ tui_prompt() {
     IFS= read -r buf </dev/tty || buf=""
     { stty -icanon -echo min 0 time 0 2>/dev/null || true
       printf '%s' "${E}[?25l"; } >/dev/tty
-    buf="${buf//[$'\x00'-$'\x1f']/}"      # strip any stray control chars
+    buf=$(tui_sanitize_input "$buf")
     TUI_NEED_FRAME=1; TUI_NEED_MENU=1; TUI_NEED_RIGHT=1
     [ -z "$buf" ] && printf '%s' "$def" || printf '%s' "$buf"
 }

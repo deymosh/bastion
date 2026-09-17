@@ -83,5 +83,12 @@ tui_status_scroll home; assert_eq "$TUI_STATUS_OFF" 0 "Home returns the status p
 CONTENT_TOP=4; CONTENT_BOT=30
 TUI_STATUS_LINES=()
 
+echo "== tui_sanitize_input strips control chars, keeps hyphens =="
+assert_eq "$(tui_sanitize_input 'sk-ant-oat01-ABC-123')" "sk-ant-oat01-ABC-123" \
+    "a hyphenated token survives sanitizing"
+assert_eq "$(tui_sanitize_input $'foo\x07bar')" "foobar" "a stray control char is still stripped"
+assert_eq "$(tui_sanitize_input '--flag-like---value--')" "--flag-like---value--" \
+    "runs of hyphens are untouched"
+
 rm -f "$CONFIG_FILE"
 finish
