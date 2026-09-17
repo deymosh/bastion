@@ -221,6 +221,19 @@
     text-align: center;
   }
 
+  a.card { position: relative; }
+
+  a.card .ext {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 14px;
+    height: 14px;
+    color: var(--text-dim);
+  }
+
+  a.card .ext svg { width: 100%; height: 100%; }
+
   footer {
     margin-top: 40px;
     color: var(--text-dim);
@@ -331,15 +344,20 @@
   };
 
   // key: used in the URL hash (#key) so a service view is linkable/back-button-able.
+  // embed: false means the service is known to refuse being framed (its own
+  // CSP/X-Frame-Options, or - Pi-hole here - unrelated port so no same-origin
+  // exception applies either way); its card opens a normal new tab instead of
+  // pretending to embed and showing a blocked/blank panel. See
+  // stack-monitor/README.md and this file's README note for why each one.
   const services = [
-    { key: 'rtl',        name: 'RTL',        desc: 'Lightning panel',          icon: 'lightning', port: 3000, protocol: null, path: '' },
-    { key: 'grafana',    name: 'Grafana',    desc: 'Metrics & dashboards',     icon: 'chart',      port: 4001, protocol: null, path: '' },
-    { key: 'portainer',  name: 'Portainer',  desc: 'Container management',    icon: 'box',        port: 4000, protocol: 'https:', path: '' },
-    { key: 'prometheus', name: 'Prometheus', desc: 'Time-series metrics',     icon: 'pulse',      port: 9090, protocol: null, path: '' },
-    { key: 'ccr',        name: 'CCR',        desc: 'Claude Code Router',      icon: 'terminal',   port: 3458, protocol: null, path: '' },
-    { key: 'pihole',     name: 'Pi-hole',    desc: 'DNS & ad blocking',       icon: 'shield',     port: 8081, protocol: null, path: '/admin' },
+    { key: 'rtl', name: 'RTL', desc: 'Lightning panel', icon: 'lightning', port: 3000, protocol: null, path: '', embed: true },
+    { key: 'grafana', name: 'Grafana', desc: 'Metrics & dashboards', icon: 'chart', port: 4001, protocol: null, path: '', embed: true },
+    { key: 'portainer', name: 'Portainer', desc: 'Container management', icon: 'box', port: 4000, protocol: 'https:', path: '', embed: false },
+    { key: 'prometheus', name: 'Prometheus', desc: 'Time-series metrics', icon: 'pulse', port: 9090, protocol: null, path: '', embed: true },
+    { key: 'ccr', name: 'CCR', desc: 'Claude Code Router', icon: 'terminal', port: 3458, protocol: null, path: '', embed: true },
+    { key: 'pihole', name: 'Pi-hole', desc: 'DNS & ad blocking', icon: 'shield', port: 8081, protocol: null, path: '/admin', embed: false },
   ];
-  const byKey = Object.fromEntries(services.map((s) => [s.key, s]));
+  const byKey = new Map(services.map((s) => [s.key, s]));
 
   const host = location.hostname;
   document.getElementById('host').textContent = host;
@@ -349,19 +367,55 @@
     return `${protocol}//${host}:${svc.port}${svc.path}`;
   }
 
+  const externalIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
+
   const grid = document.getElementById('grid');
   for (const svc of services) {
     const a = document.createElement('a');
     a.className = 'card';
-    a.href = `#${svc.key}`;
-    a.dataset.key = svc.key;
+    if (svc.embed) {
+      a.href = `#${svc.key}`;
+    } else {
+      a.href = urlFor(svc);
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.title = 'Opens in a new tab (this service refuses to be framed)';
+    }
     a.innerHTML = `
       <span class="icon">${icons[svc.icon]}</span>
       <span class="name">${svc.name}</span>
       <span class="desc">${svc.desc}</span>
+      ${svc.embed ? '' : `<span class="ext" aria-hidden="true">${externalIcon}</span>`}
     `;
     grid.appendChild(a);
   }
+
+  // Balance the grid instead of leaving whatever remainder auto-fill produces
+  // (e.g. today's 6 cards at a common width naturally fit 4-per-row, so the
+  // last row is a lonely 2). Derived from the actual card count every time,
+  // not a number hardcoded for exactly 6 services, so it stays balanced as
+  // services are added or removed.
+  function balanceGridColumns() {
+    const n = services.length;
+    const style = getComputedStyle(grid);
+    const minCard = 190, gap = parseFloat(style.gap) || 16;
+    const containerWidth = grid.clientWidth || grid.parentElement.clientWidth;
+    const fitCols = Math.max(1, Math.floor((containerWidth + gap) / (minCard + gap)));
+    const maxCols = Math.min(fitCols, n);
+    let best = maxCols, bestGap = Infinity;
+    for (let c = maxCols; c >= 1; c--) {
+      const leftover = (c - (n % c)) % c;   // empty slots in the last row at this column count
+      if (leftover < bestGap) { bestGap = leftover; best = c; }
+      if (bestGap === 0) break;             // a perfectly full grid - can't do better
+    }
+    grid.style.gridTemplateColumns = `repeat(${best}, minmax(${minCard}px, 1fr))`;
+  }
+  balanceGridColumns();
+  let resizeTimer = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(balanceGridColumns, 120);
+  });
 
   const body = document.body;
   const crumb = document.getElementById('crumb');
@@ -401,8 +455,13 @@
 
   function render() {
     const key = location.hash.slice(1);
-    const svc = byKey[key];
-    if (svc) showService(svc); else showHome();
+    const svc = byKey.get(key);
+    if (!svc) { showHome(); return; }
+    // A hand-typed/bookmarked #key for a non-embeddable service (see the
+    // `embed` note above `services`) gets sent straight to it instead of
+    // faking an embedded view that would just show a blocked panel.
+    if (!svc.embed) { location.replace(urlFor(svc)); return; }
+    showService(svc);
   }
 
   document.getElementById('brand').addEventListener('click', () => {
