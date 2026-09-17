@@ -292,7 +292,9 @@
 
   @media (max-width: 520px) {
     #topbar { gap: 6px; padding: 0 10px; }
-    #brand .name { display: none; }
+    /* The wordmark only competes for space with the crumb + open-tab button
+       in a service view - the home screen always has room for it. */
+    body.in-service #brand .name { display: none; }
     #openTab .label { display: none; }
     #openTab { padding: 8px; }
   }
