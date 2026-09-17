@@ -17,8 +17,8 @@
       },
       "settings": {
         "userPersona": "OPERATOR",
-        "themeMode": "DAY",
-        "themeColor": "PURPLE",
+        "themeMode": "NIGHT",
+        "themeColor": "YELLOW",
         "bitcoindConfigPath": "",
         "logLevel": "INFO",
         "fiatConversion": false,
