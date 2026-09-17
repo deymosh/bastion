@@ -199,7 +199,8 @@ stack-ai/Dockerfile.ccr             # CCR pinned commit + Claude Code
 
 The AI stack builds Claude Code Router from a **pinned commit** of the official
 upstream project (`CCR_REF` / `CCR_REPOSITORY` in `stack-ai/Dockerfile.ccr`;
-bump with `gh api repos/musistudio/claude-code-router/tags --jq '.[0].commit.sha'`),
+see that file's comment for the exact bump command - resolved via the actual
+latest release, not `tags[0]`, which isn't ordered by recency),
 and bakes in an OAuth token refresher so the login stays valid without manual
 re-auth. CCR includes Claude Code and runs **unprivileged**
 (`cap_drop: ALL`, `no-new-privileges`): its entrypoint wrapper starts as root only

@@ -7,7 +7,9 @@ services:
       dockerfile: Dockerfile.ccr
       args:
         # Pin to a commit, not a moving ref. Bump to a newer release with
-        # `gh api repos/musistudio/claude-code-router/tags --jq '.[0].commit.sha'`.
+        # `gh api repos/musistudio/claude-code-router/commits/$(gh api repos/musistudio/claude-code-router/releases/latest --jq .tag_name) --jq .sha`
+        # (the tags API isn't ordered by recency, so resolve via the actual
+        # latest release instead of assuming `tags[0]` is newest).
         CCR_REF: 471e715c20cfa855c681f6d31dc652164d4fa654
     image: bastion-claude-code-router:471e715
     container_name: ccr
