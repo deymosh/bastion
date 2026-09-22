@@ -47,7 +47,13 @@ services:
       MCP_PORT: "8811"
       TIMEZONE: Europe/Madrid
     secrets:
-      - mcp_gateway_token
+      # Long syntax: pins uid/gid/mode INSIDE the container. The short syntax
+      # bind-mounts the host file with its host permissions - on Linux CI the
+      # script's 0600 token is unreadable to the gateway's uid 1000.
+      - source: mcp_gateway_token
+        uid: "1000"
+        gid: "1000"
+        mode: 0440
     volumes:
       - mcp_memory_data:/data
 
