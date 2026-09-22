@@ -1,0 +1,69 @@
+# Bastion MCP gateway image: FastMCP aggregator + the four stdio MCP servers.
+#
+# Everything the children need is installed at build time from pinned
+# versions, so neither the gateway nor its children touch the network at
+# runtime (no npx/uvx on the hot path). Reproducibility: base images are
+# digest-pinned, the npm children install via `npm ci` from a committed
+# package-lock.json, and the Python layer installs under a pip constraints
+# snapshot (mcp-gateway-constraints.txt).
+
+# Same Debian release (bookworm) for both stages, so the node binary copied
+# out of the node stage runs against the same glibc as the python stage.
+FROM node:24.21.0-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS mcp-servers
+
+# Exact-pinned MCP servers from the committed lockfile. `npm ci` fails on any
+# package.json / lockfile mismatch, so the tree is hash-verified on every
+# build. Installed as a local tree at /opt/mcp; the .bin shims go onto PATH
+# (below) so children are spawned by plain name.
+WORKDIR /opt/mcp
+COPY package.json package-lock.json ./
+RUN npm ci \
+    && npm cache clean --force
+
+FROM python:3.13.15-slim-bookworm@sha256:2325bb286ec344af3e5898cc224b5844e2707ac6e26b1632516fd3edc84a5e26
+
+# TLS roots for outbound HTTPS (context7's API, SearXNG upstream engines).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node runtime (self-contained binary) + the lockfile-installed MCP servers.
+COPY --from=mcp-servers /usr/local/bin/node /usr/local/bin/node
+COPY --from=mcp-servers /opt/mcp /opt/mcp
+ENV PATH="/opt/mcp/node_modules/.bin:${PATH}"
+
+# Gateway framework. mcp-server-time is NOT installed here on purpose: it
+# pins mcp>=1.29,<2 while fastmcp 4 needs mcp>=2 - a hard conflict. The time
+# server gets its own virtualenv below, which is the same isolation
+# `uvx mcp-server-time` would have provided, just baked in.
+COPY constraints.txt /tmp/
+RUN pip install --no-cache-dir -c /tmp/constraints.txt fastmcp==4.0.5 \
+    && rm -f /tmp/constraints.txt
+
+# Time server in an isolated venv (runs via /opt/time-venv/bin/python).
+RUN python -m venv /opt/time-venv \
+    && /opt/time-venv/bin/pip install --no-cache-dir mcp-server-time==2026.8.18
+
+COPY gateway.py /app/mcp-gateway.py
+
+# Unprivileged uid/gid 1000 (same convention as the ccr image). The compose
+# file mounts the gateway token + optional Context7 key as uid/gid 1000 files
+# under /run/secrets, and the memory named volume inherits /data's ownership
+# from here on first use.
+RUN groupadd -g 1000 bastion \
+    && useradd -u 1000 -g 1000 -m -s /usr/sbin/nologin bastion \
+    && mkdir -p /data \
+    && chown 1000:1000 /data
+
+# HOME points at the container's tmpfs (/tmp in compose, which also runs
+# read_only) so nothing ever tries to write into the read-only rootfs.
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    HOME=/tmp
+
+USER 1000:1000
+EXPOSE 8811
+VOLUME ["/data"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD ["python", "-c", "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/healthz' % os.environ.get('MCP_PORT', '8811'), timeout=4)"]
+ENTRYPOINT ["python", "/app/mcp-gateway.py"]

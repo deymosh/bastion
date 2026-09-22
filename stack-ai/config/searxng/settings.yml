@@ -1,0 +1,27 @@
+# SearXNG settings for the Bastion MCP gateway's search backend.
+#
+# Mounted read-only at /etc/searxng/settings.yml. `use_default_settings: true`
+# inherits everything else from the image defaults, so only the deltas live
+# here. The container has no published host port: it is internal-only
+# infrastructure that the mcp-gateway's searxng child reaches in-network.
+use_default_settings: true
+
+server:
+  # SearXNG refuses to boot without a secret_key. This instance is never
+  # published (no `ports:` in the compose file) and holds no sessions worth
+  # stealing, so a fixed placeholder is fine. Change it only if you ever
+  # publish searxng to the host.
+  secret_key: "bastion-searxng-internal-only"
+  # The limiter exists to shield a public web UI from bots; it would block the
+  # JSON API calls mcp-searxng makes (they look like bots: no browser
+  # fingerprints). There is no public UI here, so off.
+  limiter: false
+  image_proxy: false
+
+search:
+  # SearXNG matches the client's `format=` parameter against these names, so
+  # the SHORT name `json` is what mcp-searxng's JSON queries need - a full
+  # MIME type here does not match anything and every API call answers 403.
+  formats:
+    - html
+    - json

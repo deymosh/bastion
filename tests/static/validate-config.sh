@@ -132,20 +132,23 @@ echo "== CONTAINER_STACK matches the compose files exactly =="
    || bad "CONTAINER_STACK has drifted from the compose files (see above)"
 
 echo "== Secrets are mounted files, not env vars =="
-# The four secrets must never appear as ${...} interpolations in a compose file
+# The secrets must never appear as ${...} interpolations in a compose file
 # (comments excluded). `docker compose config` in compose-lint already checks
 # that every service `secrets:` entry resolves to a top-level declaration.
 sleak=$(grep -RhE -v '^[[:space:]]*#' stack-*/docker-compose.yml 2>/dev/null \
-        | grep -oE '\$\{(PIHOLE_PASSWORD|CCR_WEB_AUTH_TOKEN|CLAUDE_CODE_OAUTH_TOKEN|GITHUB_TOKEN)\}' || true)
+        | grep -oE '\$\{(PIHOLE_PASSWORD|CCR_WEB_AUTH_TOKEN|MCP_GATEWAY_TOKEN|CONTEXT7_API_KEY|CLAUDE_CODE_OAUTH_TOKEN|GITHUB_TOKEN)\}' || true)
 [ -z "$sleak" ] && ok "no secret is interpolated as an env var in a compose file" \
   || bad "secret still passed as env: $sleak"
-# Each of the four is wired to its file-based delivery mechanism.
+# Each of them is wired to its file-based delivery mechanism.
 have 'file: \.\./secrets/pihole_password'         "$NET" && ok "pihole_password declared from ../secrets/"       || bad "pihole_password not a file: secret"
 have 'WEBPASSWORD_FILE=pihole_password'           "$NET" && ok "pihole reads its password from /run/secrets"     || bad "pihole not wired to WEBPASSWORD_FILE"
 have 'file: \.\./secrets/ccr_web_auth_token'      stack-ai/docker-compose.yml && ok "ccr_web_auth_token declared from ../secrets/" || bad "ccr_web_auth_token not a file: secret"
 have 'run/secrets/ccr_web_auth_token'            stack-ai/ccr-entrypoint-wrapper.sh && ok "ccr wrapper reads the mounted CCR_WEB_AUTH_TOKEN" || bad "ccr wrapper does not read the mounted secret"
 have 'file: \.\./secrets/claude_code_oauth_token' stack-ai/docker-compose.yml && ok "claude_code_oauth_token declared from ../secrets/" || bad "claude_code_oauth_token not a file: secret"
 have 'file: \.\./secrets/github_token'            stack-ai/docker-compose.yml && ok "github_token declared from ../secrets/" || bad "github_token not a file: secret"
+have 'file: \.\./secrets/mcp_gateway_token'       stack-ai/docker-compose.yml && ok "mcp_gateway_token declared from ../secrets/" || bad "mcp_gateway_token not a file: secret"
+have 'run/secrets/mcp_gateway_token'             stack-ai/mcp-gateway/gateway.py && ok "mcp-gateway reads the mounted bearer token" || bad "mcp-gateway does not read the mounted token"
+have 'file: \.\./secrets/context7_api_key'        stack-ai/docker-compose.yml && ok "context7_api_key declared from ../secrets/" || bad "context7_api_key not a file: secret"
 
 echo "== CCR runs unprivileged =="
 AI="stack-ai/docker-compose.yml"
@@ -158,6 +161,60 @@ have 'exec gosu' stack-ai/ccr-entrypoint-wrapper.sh && ok "ccr wrapper gosu-drop
 have 'gosu' stack-ai/Dockerfile.ccr && ok "Dockerfile.ccr installs gosu" || bad "Dockerfile.ccr does not install gosu"
 have '^USER root' stack-ai/Dockerfile.ccr && bad "Dockerfile.ccr pins USER root" \
   || ok "Dockerfile.ccr does not pin the runtime to root"
+
+echo "== MCP services stay unprivileged and internal =="
+# searxng + mcp-gateway are new network surface: hold them to the same bar as
+# ccr (no capabilities, no privilege escalation) and keep them off
+# bastion-transit - nothing in the MCP layer talks cross-stack.
+for svc in searxng mcp-gateway; do
+  awk -v s="$svc" '$0 ~ ("^  " s ":") {c=1; next} c && /^  [a-z]/ {c=0} c && /cap_drop:/ {d=1} c && d && /- ALL/ {ok=1} END {exit ok?0:1}' "$AI" \
+    && ok "$svc drops all capabilities" || bad "$svc does not cap_drop ALL"
+  awk -v s="$svc" '$0 ~ ("^  " s ":") {c=1; next} c && /^  [a-z]/ {c=0} c && /no-new-privileges:true/ {ok=1} END {exit ok?0:1}' "$AI" \
+    && ok "$svc sets no-new-privileges" || bad "$svc is missing no-new-privileges:true"
+  awk -v s="$svc" '$0 ~ ("^  " s ":") {c=1; next} c && /^  [a-z]/ {c=0} c && /^      transit:/ {t=1} END {exit t?1:0}' "$AI" \
+    && ok "$svc stays off bastion-transit" || bad "$svc joins bastion-transit (MCP layer is internal-only)"
+done
+# Host exposure: only CCR's UI (3458) and the MCP gateway (8811) may be
+# published in stack-ai; searxng in particular has no host port at all.
+extra=$(grep -E '^[[:space:]]+- "[0-9]+:' "$AI" | grep -vE '"(3458|8811):' || true)
+[ -z "$extra" ] && ok "stack-ai publishes only 3458 (CCR) and 8811 (MCP gateway)" \
+  || bad "unexpected published port(s) in stack-ai: $(printf '%s' "$extra" | head -2 | paste -sd'; ' -)"
+# mcp-searxng dies on a 403 unless the instance serves the JSON format.
+# SearXNG compares short format names (`json`), not MIME types.
+have '^\s*-\s*json\s*$' stack-ai/config/searxng/settings.yml \
+  && ok "searxng settings enable JSON output" || bad "searxng settings do not enable json output"
+# The SearXNG image declares a VOLUME over /etc/searxng: a single-file bind
+# under it is shadowed and the settings silently never load - the directory
+# itself must be bind-mounted.
+have '\./config/searxng:/etc/searxng:ro' "$AI" \
+  && ok "searxng settings are bind-mounted as a directory" || bad "searxng settings not directory-mounted (image VOLUME would shadow a file bind)"
+# Both MCP services run with a read-only rootfs (plus tmpfs /tmp) and a
+# pinned unprivileged user.
+for svc in searxng mcp-gateway; do
+  awk -v s="$svc" '$0 ~ ("^  " s ":") {c=1; next} c && /^  [a-z]/ {c=0} c && /^    read_only: true/ {ok=1} END {exit ok?0:1}' "$AI" \
+    && ok "$svc runs with a read-only rootfs" || bad "$svc is missing read_only: true"
+done
+have '^\s*user: "977:977"' "$AI" \
+  && ok "searxng runs as the image's unprivileged 977 user" || bad "searxng has no pinned unprivileged user"
+have '^USER 1000:1000' stack-ai/mcp-gateway/Dockerfile.mcp-gateway \
+  && ok "mcp-gateway image pins USER 1000:1000" || bad "mcp-gateway image does not pin an unprivileged USER"
+
+echo "== MCP gateway builds are reproducible =="
+# npm children install from a committed lockfile (hash-verified by npm ci),
+# never from a floating `npm install`.
+have 'npm ci' stack-ai/mcp-gateway/Dockerfile.mcp-gateway \
+  && ok "mcp-gateway npm layer installs via npm ci" || bad "mcp-gateway npm layer does not use npm ci"
+[ -f stack-ai/mcp-gateway/package-lock.json ] \
+  && grep -q '"lockfileVersion"' stack-ai/mcp-gateway/package-lock.json \
+  && ok "npm children have a committed lockfile" || bad "stack-ai/mcp-gateway/package-lock.json is missing"
+# Both base images are digest-pinned: a re-pushed tag cannot drift a rebuild.
+have '^FROM node:.*@sha256:[0-9a-f]{64}' stack-ai/mcp-gateway/Dockerfile.mcp-gateway \
+  && ok "mcp-gateway node base is digest-pinned" || bad "mcp-gateway node base is not digest-pinned"
+have '^FROM python:.*@sha256:[0-9a-f]{64}' stack-ai/mcp-gateway/Dockerfile.mcp-gateway \
+  && ok "mcp-gateway python base is digest-pinned" || bad "mcp-gateway python base is not digest-pinned"
+# The Python layer installs under the committed constraints snapshot.
+have 'pip install.*-c /tmp/constraints.txt' stack-ai/mcp-gateway/Dockerfile.mcp-gateway \
+  && ok "mcp-gateway Python layer uses the constraints snapshot" || bad "mcp-gateway Python layer ignores constraints.txt"
 
 echo "== Submodule tracking =="
 have 'branch = bastion-integration' .gitmodules && ok ".gitmodules tracks rust-teos bastion-integration" \

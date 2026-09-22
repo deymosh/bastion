@@ -1,0 +1,11 @@
+{
+  "name": "bastion-mcp-children",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Exact-pinned npm MCP servers baked into the stack-ai mcp-gateway image. Installed with `npm ci` (lockfile) so rebuilds are reproducible and hash-verified; bump a version here, regenerate package-lock.json, and rebuild.",
+  "dependencies": {
+    "@modelcontextprotocol/server-memory": "2026.8.31",
+    "@upstash/context7-mcp": "4.1.1",
+    "mcp-searxng": "2.3.0"
+  }
+}

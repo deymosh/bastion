@@ -62,7 +62,7 @@ comes up first:
 | **bitcoin** | bitcoind, lightningd, RTL (TEOS opt-in) | 10.20.0.2-5 + transit |
 | **monitor** | prometheus, grafana, portainer, node-exporter | 10.30.0.2-5 |
 | **web** | Bastion operations hub | 10.40.0.2 |
-| **ai** | Claude Code Router, CodeDeck+ bridge | 10.50.0.2-3 + transit |
+| **ai** | Claude Code Router, CodeDeck+ bridge, MCP gateway, SearXNG (internal) | 10.50.0.2-5 |
 
 The private stack networks use `10.10.0.0/24` through `10.50.0.0/24`.
 Cross-stack services use the restricted `bastion-transit` network at
@@ -128,6 +128,7 @@ runs the plain path; the dashboard only opens on a real terminal.
 | Pi-hole | 8081 | http://bastion.node:8081/admin | 2026.07.2 |
 | CLN REST API | 3001 | http://bastion.node:3001 | (CLN native) |
 | CCR management UI | 3458 | http://bastion.node:3458 | v3.1.1, commit `471e715` |
+| MCP gateway (AI tools API) | 8811 | http://bastion.node:8811/mcp | FastMCP 4.0.5, Bearer token — see [docs/mcp.md](docs/mcp.md) |
 | Wireguard VPN | 51820/udp | External (WAN) | 1.0.20260223-r0-ls121 |
 
 Image versions are pinned by digest; `./bastion versions` shows the pin and what
@@ -171,8 +172,9 @@ you edit:
 - **AI settings:** CodeDeck relay, Tor proxy, Git, Claude, and GitHub variables
 - **Idempotent:** managed variables are rewritten without duplicates on repeated runs
 - **Symlinks:** each stack references `../bastion.conf` via `.env` on Linux
-- **Secrets:** the four secret values (`PIHOLE_PASSWORD`, `CCR_WEB_AUTH_TOKEN`,
-  `CLAUDE_CODE_OAUTH_TOKEN`, `GITHUB_TOKEN`) are also projected into `secrets/`
+- **Secrets:** the secret values (`PIHOLE_PASSWORD`, `CCR_WEB_AUTH_TOKEN`,
+  `MCP_GATEWAY_TOKEN`, `CONTEXT7_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`,
+  `GITHUB_TOKEN`) are also projected into `secrets/`
   (git-ignored, `600`) and delivered to the one service that needs each as a
   **file** under `/run/secrets/…`, not a plaintext env var - so they never
   appear in `docker inspect`. `bastion.conf` stays the source of truth;
@@ -212,6 +214,17 @@ runs as its own non-root user, and routes Claude Code requests through CCR at
 AI state is persisted under `stack-ai/data/`. CCR authenticates with an
 interactive `claude` login stored under `stack-ai/data/ccr/.claude/`; CodeDeck's
 Claude OAuth token is a separate credential used by the bridge.
+
+### MCP gateway
+
+Remote AI agents get one Streamable HTTP MCP endpoint at
+`http://bastion.node:8811/mcp`, protected by a single Bearer token
+(`MCP_GATEWAY_TOKEN`, delivered as a secret file). The gateway aggregates four
+namespaced MCP servers — SearXNG search, Context7 docs, a persistent memory
+knowledge graph, and time — as stdio children of one unprivileged container;
+SearXNG itself runs as an internal-only instance with no published port. See
+[docs/mcp.md](docs/mcp.md) for the endpoint, namespaces, and a ready-to-use
+`.mcp.json`.
 
 Before starting Bastion, add these values to the generated `bastion.conf`:
 
@@ -366,6 +379,10 @@ the host firewall is the ACL — see "Access model & firewall" above and
 - CCR gateway: `ccr:8080` (AI stack network only; the management UI on `3458` is
   the only CCR port published)
 - CodeDeck bridge: no published host port; relay traffic uses `bastion-transit`
+- SearXNG: no published port (AI stack network only; the MCP gateway is its
+  only consumer)
+- MCP servers themselves: no per-server ports; only the aggregated, Bearer-
+  protected gateway on `8811` is published
 - Tor SOCKS/control (`9050`/`9051`): `bastion-transit` only, no host publish
 
 **Recommended:**
@@ -383,6 +400,8 @@ the host firewall is the ACL — see "Access model & firewall" above and
 | RTL | v0.15.8 |
 | Claude Code Router | v3.1.1, pinned commit `471e715` (`CCR_REF` in `stack-ai/Dockerfile.ccr`) |
 | CodeDeck+ bridge | v0.12.0 |
+| MCP gateway | FastMCP 4.0.5; `mcp-searxng` 2.3.0, `context7` 4.1.1, `server-memory` 2026.8.31, `mcp-server-time` 2026.8.18 (`stack-ai/mcp-gateway/Dockerfile.mcp-gateway`) |
+| SearXNG | 2026.9.21 (`searxng/searxng`, digest-pinned) |
 | **CLN Plugins:** |
 | clboss | [95d195f8](https://github.com/ksedgwic/clboss/tree/95d195f8baafa1aa22f7aa95fa1dd1fd26003583) |
 | watchtower-client | [be344ecc](https://github.com/talaia-labs/rust-teos/tree/be344ecc5286dd9436bf343d30954135da8ad4ac) |
