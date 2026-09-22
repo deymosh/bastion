@@ -132,6 +132,11 @@ Dockerfile (and regenerating the lock/constraints files), then
 docker logs mcp-gateway            # startup errors (e.g. missing token) land here
 curl -s http://localhost:8811/healthz
 
+# Gateway logs "no bearer token"? file-secrets are bind mounts, so the HOST
+# file's permissions carry into the container: secrets/mcp_gateway_token must
+# be readable by the container's uid 1000 (chmod 644 or chown 1000 on the
+# host file fixes it - e.g. after running ./bastion as a non-1000 user).
+
 # 401 from a client: is the token the container sees the one you are sending?
 docker exec mcp-gateway cat /run/secrets/mcp_gateway_token
 

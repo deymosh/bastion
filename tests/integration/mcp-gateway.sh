@@ -39,8 +39,12 @@ fi
 ok "gateway image builds"
 
 echo "== bring up the throwaway project (no host ports) =="
-umask 177
+# The token file must be host-world-readable: compose file-secrets are plain
+# bind mounts (uid/gid/mode are ignored outside swarm), so the source file's
+# host permissions carry into the container verbatim. The gateway's uid 1000
+# has to read it. Throwaway random value, lifetime of this test only.
 printf '%s' "e2e-$(date +%s)-$RANDOM-token" > test_mcp_gateway_token
+chmod 644 test_mcp_gateway_token
 if ! docker compose -f "$CF" up -d 2>&1; then echo "FAIL: compose up"; exit 1; fi
 for _ in $(seq 1 30); do
   [ "$(docker inspect -f '{{.State.Health.Status}}' "$GW" 2>/dev/null)" = healthy ] && break

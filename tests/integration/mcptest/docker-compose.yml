@@ -47,13 +47,11 @@ services:
       MCP_PORT: "8811"
       TIMEZONE: Europe/Madrid
     secrets:
-      # Long syntax: pins uid/gid/mode INSIDE the container. The short syntax
-      # bind-mounts the host file with its host permissions - on Linux CI the
-      # script's 0600 token is unreadable to the gateway's uid 1000.
-      - source: mcp_gateway_token
-        uid: "1000"
-        gid: "1000"
-        mode: 0440
+      # file-secrets are plain bind mounts outside swarm: the HOST file's
+      # permissions carry into the container (the test script chmods it 644),
+      # and uid/gid/mode below would never be applied. Short syntax on
+      # purpose - nothing here pretends to pin permissions.
+      - mcp_gateway_token
     volumes:
       - mcp_memory_data:/data
 
