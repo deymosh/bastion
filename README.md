@@ -194,13 +194,13 @@ bastion.conf                        # GENERATED - in .gitignore
 stack-*/.env                        # SYMLINKS - in .gitignore
 stack-*/data/                       # Volumes - in .gitignore
 stack-ai/docker-compose.yml        # CCR + CodeDeck+ integration
-stack-ai/Dockerfile.ccr             # CCR pinned commit + Claude Code
+stack-ai/ccr/Dockerfile.ccr             # CCR pinned commit + Claude Code
 ```
 
 ### AI Stack
 
 The AI stack builds Claude Code Router from a **pinned commit** of the official
-upstream project (`CCR_REF` / `CCR_REPOSITORY` in `stack-ai/Dockerfile.ccr`;
+upstream project (`CCR_REF` / `CCR_REPOSITORY` in `stack-ai/ccr/Dockerfile.ccr`;
 see that file's comment for the exact bump command - resolved via the actual
 latest release, not `tags[0]`, which isn't ordered by recency),
 and bakes in an OAuth token refresher so the login stays valid without manual
@@ -398,7 +398,7 @@ the host firewall is the ACL — see "Access model & firewall" above and
 | Bitcoin Core | v26.0 |
 | Core Lightning | v25.12.1 |
 | RTL | v0.15.8 |
-| Claude Code Router | v3.1.1, pinned commit `471e715` (`CCR_REF` in `stack-ai/Dockerfile.ccr`) |
+| Claude Code Router | v3.1.1, pinned commit `471e715` (`CCR_REF` in `stack-ai/ccr/Dockerfile.ccr`) |
 | CodeDeck+ bridge | v0.12.0 |
 | MCP gateway | FastMCP 4.0.5; `mcp-searxng` 2.3.0, `context7` 4.1.1, `server-memory` 2026.8.31, `mcp-server-time` 2026.8.18 (`stack-ai/mcp-gateway/Dockerfile.mcp-gateway`) |
 | SearXNG | 2026.9.21 (`searxng/searxng`, digest-pinned) |

@@ -3,7 +3,7 @@ name: stack-ai
 services:
   ccr:
     build:
-      context: .
+      context: ./ccr
       dockerfile: Dockerfile.ccr
       args:
         # Pin to a commit, not a moving ref. Bump to a newer release with

@@ -143,7 +143,7 @@ sleak=$(grep -RhE -v '^[[:space:]]*#' stack-*/docker-compose.yml 2>/dev/null \
 have 'file: \.\./secrets/pihole_password'         "$NET" && ok "pihole_password declared from ../secrets/"       || bad "pihole_password not a file: secret"
 have 'WEBPASSWORD_FILE=pihole_password'           "$NET" && ok "pihole reads its password from /run/secrets"     || bad "pihole not wired to WEBPASSWORD_FILE"
 have 'file: \.\./secrets/ccr_web_auth_token'      stack-ai/docker-compose.yml && ok "ccr_web_auth_token declared from ../secrets/" || bad "ccr_web_auth_token not a file: secret"
-have 'run/secrets/ccr_web_auth_token'            stack-ai/ccr-entrypoint-wrapper.sh && ok "ccr wrapper reads the mounted CCR_WEB_AUTH_TOKEN" || bad "ccr wrapper does not read the mounted secret"
+have 'run/secrets/ccr_web_auth_token'            stack-ai/ccr/ccr-entrypoint-wrapper.sh && ok "ccr wrapper reads the mounted CCR_WEB_AUTH_TOKEN" || bad "ccr wrapper does not read the mounted secret"
 have 'file: \.\./secrets/claude_code_oauth_token' stack-ai/docker-compose.yml && ok "claude_code_oauth_token declared from ../secrets/" || bad "claude_code_oauth_token not a file: secret"
 have 'file: \.\./secrets/github_token'            stack-ai/docker-compose.yml && ok "github_token declared from ../secrets/" || bad "github_token not a file: secret"
 have 'file: \.\./secrets/mcp_gateway_token'       stack-ai/docker-compose.yml && ok "mcp_gateway_token declared from ../secrets/" || bad "mcp_gateway_token not a file: secret"
@@ -157,9 +157,9 @@ awk '/^  ccr:/{c=1} c&&/^  [a-z]/&&!/^  ccr:/{c=0} c&&/cap_drop:/{d=1} c&&d&&/- 
 awk '/^  ccr:/{c=1} c&&/^  [a-z]/&&!/^  ccr:/{c=0} c&&/no-new-privileges:true/{ok=1} END{exit ok?0:1}' "$AI" \
   && ok "ccr sets no-new-privileges" || bad "ccr is missing no-new-privileges:true"
 have 'PUID: \$\{USER_ID' "$AI" && ok "ccr is told the host uid via PUID" || bad "ccr PUID is not wired to USER_ID"
-have 'exec gosu' stack-ai/ccr-entrypoint-wrapper.sh && ok "ccr wrapper gosu-drops to the run user" || bad "ccr wrapper does not drop privileges"
-have 'gosu' stack-ai/Dockerfile.ccr && ok "Dockerfile.ccr installs gosu" || bad "Dockerfile.ccr does not install gosu"
-have '^USER root' stack-ai/Dockerfile.ccr && bad "Dockerfile.ccr pins USER root" \
+have 'exec gosu' stack-ai/ccr/ccr-entrypoint-wrapper.sh && ok "ccr wrapper gosu-drops to the run user" || bad "ccr wrapper does not drop privileges"
+have 'gosu' stack-ai/ccr/Dockerfile.ccr && ok "Dockerfile.ccr installs gosu" || bad "Dockerfile.ccr does not install gosu"
+have '^USER root' stack-ai/ccr/Dockerfile.ccr && bad "Dockerfile.ccr pins USER root" \
   || ok "Dockerfile.ccr does not pin the runtime to root"
 
 echo "== MCP services stay unprivileged and internal =="
