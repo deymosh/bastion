@@ -9,7 +9,7 @@
 
 # Same Debian release (bookworm) for both stages, so the node binary copied
 # out of the node stage runs against the same glibc as the python stage.
-FROM node:24.21.0-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS mcp-servers
+FROM node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2 AS mcp-servers
 
 # Exact-pinned MCP servers from the committed lockfile. `npm ci` fails on any
 # package.json / lockfile mismatch, so the tree is hash-verified on every
