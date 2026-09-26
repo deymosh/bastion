@@ -136,6 +136,33 @@ out=$(b down ai); assert_contains "$out" "COMPOSE_PROFILES=watchtower,agent-dock
 out=$(MOCK_DOCKER_INFO_OUT="$NO_SYSBOX" b up --with-agent-docker ai)
 assert_contains "$out" "./bastion install-sysbox" "the refusal says how to install Sysbox"
 
+echo "== ENABLED_PROFILES persists opt-in services across runs =="
+cp "$WORK/bastion.conf" "$WORK/bastion.conf.orig"
+printf "ENABLED_PROFILES='watchtower'\n" >> "$WORK/bastion.conf"
+out=$(b up bitcoin)
+assert_contains "$out" "COMPOSE_PROFILES=watchtower" "a plain 'up' (the boot daemon's) applies the persisted profile"
+out=$(MOCK_DOCKER_INFO_OUT="$SYSBOX" b up --with-agent-docker ai)
+assert_contains "$out" "COMPOSE_PROFILES=watchtower,agent-docker" "a flag adds to the persisted set for one run"
+cp "$WORK/bastion.conf.orig" "$WORK/bastion.conf"
+
+echo "== config command =="
+out=$(MOCK_DOCKER_INFO_RC=1 b config list); rc=$?
+assert_eq "$rc" 0 "config works with the Docker daemon down"
+assert_contains "$out" "NODE_ALIAS" "list shows managed settings"
+assert_contains "$out" "Optional services" "grouped by section"
+assert_not_contains "$out" "$(grep -oE "^MCP_GATEWAY_TOKEN='[^']+" "$WORK/bastion.conf" | cut -d"'" -f2)" "list masks secrets"
+assert_eq "$(b config get NODE_ALIAS)" "ci" "get prints the raw value"
+out=$(b config set ENABLED_PROFILES agent-docker); rc=$?
+assert_eq "$rc" 0 "set accepts a known profile"
+assert_eq "$(b config get ENABLED_PROFILES)" "agent-docker" "and persists it"
+out=$(b config set ENABLED_PROFILES bogus); rc=$?
+assert_eq "$rc" 1 "set rejects an unknown profile"
+assert_contains "$out" "unknown profile" "with the validation message"
+out=$(b config set NOPE 1); rc=$?; assert_eq "$rc" 1 "set rejects an unknown setting"
+out=$(b config get); rc=$?; assert_eq "$rc" 1 "get without a key prints usage"
+b config set ENABLED_PROFILES "" >/dev/null
+assert_eq "$(b config get ENABLED_PROFILES)" "" "an empty value clears a setting"
+
 echo "== install-sysbox =="
 # Stub installer: logs each call; STUB_CHECK_RC / STUB_INSTALL_RC pick outcomes.
 cat > "$WORK/sysbox-stub.sh" <<EOF

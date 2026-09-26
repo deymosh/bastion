@@ -111,7 +111,7 @@ echo "== the settings registry is the single source of truth =="
 for _v in "${MANAGED_VARS[@]}"; do
   [ -n "${SETTING_SECTION[$_v]}" ] && [ -n "${SETTING_TYPE[$_v]}" ] && [ -n "${SETTING_DESC[$_v]}" ] \
     || _t_bad "$_v is missing a section, type or description"
-  case "${SETTING_TYPE[$_v]}" in host|port|int|posint|bool|alias|tz|socks|http|email|relays|text) : ;;
+  case "${SETTING_TYPE[$_v]}" in host|port|int|posint|bool|alias|tz|socks|http|email|relays|profiles|cpus|mem|path|text) : ;;
     *) _t_bad "$_v has unknown type '${SETTING_TYPE[$_v]}'" ;; esac
 done
 _t_ok "every registry row has a section, a known type and a description"
@@ -120,6 +120,15 @@ assert_eq "${BASTION_REQUIRED_VARS[*]}" "WIREGUARD_SERVERURL WIREGUARD_SERVERPOR
 assert_ok   validate_env_value GIT_EMAIL ""           # an optional key may be empty...
 assert_fail validate_env_value WIREGUARD_SERVERURL "" # ...a required one may not
 assert_ok   validate_env_value CODEDECK_OPENCODE_PORT ""
+assert_ok   validate_env_value ENABLED_PROFILES "watchtower,agent-docker"
+assert_fail validate_env_value ENABLED_PROFILES "watchtower,nope"
+assert_ok   validate_env_value AGENT_DOCKER_CPUS 1.5
+assert_fail validate_env_value AGENT_DOCKER_CPUS 0
+assert_fail validate_env_value AGENT_DOCKER_CPUS two
+assert_ok   validate_env_value AGENT_DOCKER_MEMORY 512m
+assert_fail validate_env_value AGENT_DOCKER_MEMORY 4gb
+assert_ok   validate_env_value BACKUP_DEST /mnt/usb
+assert_fail validate_env_value BACKUP_DEST relative/dir
 
 echo "== bastion.conf is parsed, never executed =="
 cat > "$CONFIG_FILE" <<EOF
@@ -139,6 +148,27 @@ printf "NODE_ALIAS='first'\nGIT_USER='u'\nNODE_ALIAS='appended-override'\n" > "$
 assert_eq "$(read_env_var NODE_ALIAS)" "appended-override" "the appended line wins"
 config_parse_file
 assert_eq "${CONFIG_KEYS[*]}" "NODE_ALIAS GIT_USER" "each key listed once, in first-seen order"
+
+echo "== a legacy bastion.conf loads with every value intact =="
+cp tests/fixtures/legacy-config.conf "$CONFIG_FILE"
+legacy_expect=(
+  "WIREGUARD_SERVERURL=vpn.example.org" "WIREGUARD_SERVERPORT=51820" "WIREGUARD_PEERS=3"
+  "NODE_ALIAS=legacy node" "TIMEZONE=Europe/Madrid" "PIHOLE_PASSWORD=p'w\$d"
+  "CODEDECK_RELAYS=wss://relay.one.example,wss://relay.two.example"
+  "CODEDECK_TOR_PROXY_URL=socks5h://tor:9050" "GIT_USER=Some Name"
+  "CCR_WEB_AUTH_TOKEN=ccr-token-0123456789" "MCP_GATEWAY_TOKEN=mcp-token-abcdefghij"
+  "CONTEXT7_API_KEY=" "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat-fake"
+  "CCR_REFRESH_INTERVAL=900"          # set twice: the later line wins
+  "AGENT_DOCKER_CPUS=3"               # was a custom var, now a managed setting
+  "LXMF_ALLOWED_IDENTITY=deadbeef" "MY_TOOL_FLAG=on"   # retired / unknown: kept
+)
+for pass in "first load" "reload of the rewritten file"; do
+  got=$( unset "${MANAGED_VARS[@]}"; SECRETS_DIR="$WORK/legacy-secrets"; load_config >/dev/null 2>&1
+         for e in "${legacy_expect[@]}"; do k=${e%%=*}; printf '%s=%s\n' "$k" "${!k-}"; done )
+  assert_eq "$got" "$(printf '%s\n' "${legacy_expect[@]}")" "legacy values intact ($pass)"
+done
+assert_eq "$(cat "$WORK/legacy-secrets/pihole_password")" "p'w\$d" "a legacy secret projects to its file verbatim"
+assert_eq "$(read_env_var AGENT_DOCKER_MEMORY)" "4g" "a newly managed setting gets its default"
 
 echo "== load_config: defaults only fill empty keys; file untouched when unchanged =="
 : > "$CONFIG_FILE"

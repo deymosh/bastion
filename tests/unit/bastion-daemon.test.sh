@@ -62,6 +62,12 @@ LAST_MAINTENANCE_DATE=""
 out=$(run_daily_maintenance)
 assert_eq "$(cat "$WORK/usb/history/emergency.recover.$(date +%Y-%m-%d)")" "scb-v3" "today's snapshot written"
 
+echo "== settings come from bastion.conf, with registry defaults =="
+printf "SCB_CHECK_INTERVAL='42'\nAMBOSS_HEARTBEAT='1'\n" > "$WORK/bastion.conf"
+got=$(env -u BACKUP_DEST -u CHECK_INTERVAL CONFIG_FILE="$WORK/bastion.conf" bash -c \
+  'source services/bastion-daemon.sh; echo "$CHECK_INTERVAL|$AMBOSS_HEARTBEAT|$BACKUP_DEST|$BACKUP_PLUGIN_COMPACT"')
+assert_eq "$got" "42|1|/mnt/backup_cln|0" "file values win; unset ones use the registry defaults"
+
 echo "== systemd unit runs the daemon from its real path =="
 exec_path=$(sed -n 's#^ExecStart=/bin/bash ##p' services/bastion-daemon.service)
 assert_ok test -f "$exec_path"

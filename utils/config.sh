@@ -91,8 +91,8 @@ NC='\033[0m'
 # default: a literal, empty, or a generator - @tz (host timezone), @uid / @gid
 #          (the invoking user), @hex16 (16 hex chars), @token (43 URL-safe
 #          chars). Generators run only when the key is empty.
-# type:    host port int posint bool alias tz socks http email relays text
-#          (see validate_env_value). An empty value is always accepted unless
+# type:    host port int posint bool alias tz socks http email relays profiles
+#          cpus mem path text (see validate_env_value). An empty value is always accepted unless
 #          the key is flagged required; a key with a default is refilled on
 #          the next load.
 # flags:   comma list of: required (prompted on `up` when empty), secret
@@ -124,7 +124,18 @@ CCR_REFRESH_INTERVAL|Claude Code Router|300|posint||Seconds between refresher ch
 CCR_REFRESH_SKEW_MS|Claude Code Router|1800000|posint||Refresh the access token this many milliseconds before it expires.
 MCP_GATEWAY_TOKEN|MCP gateway|@token|text|secret|Bearer token remote MCP clients send to the gateway (:8811).
 CONTEXT7_API_KEY|MCP gateway||text|secret|Optional Context7 API key for higher rate limits (empty = keyless).
+ENABLED_PROFILES|Optional services||profiles||Opt-in services every `up` starts, comma-separated: watchtower, agent-docker. The --with-* flags add to it for one run.
+AGENT_DOCKER_CPUS|Optional services|2|cpus||CPU cap for the agent-docker sidecar and everything it runs.
+AGENT_DOCKER_MEMORY|Optional services|4g|mem||Memory cap for the agent-docker sidecar and everything it runs (e.g. 4g).
+BACKUP_DEST|Daemon|/mnt/backup_cln|path||Mount point of the drive the daemon mirrors emergency.recover to.
+SCB_CHECK_INTERVAL|Daemon|3600|posint||Seconds between the daemon checks of emergency.recover.
+BACKUP_PLUGIN_COMPACT|Daemon|0|bool||1 compacts the CLN backup plugin database once a day.
+AMBOSS_HEARTBEAT|Daemon|0|bool||1 posts a signed health heartbeat to Amboss.
+AMBOSS_INTERVAL|Daemon|300|posint||Seconds between Amboss heartbeats.
 '
+
+# Opt-in compose profiles Bastion knows about (ENABLED_PROFILES / --with-* flags).
+KNOWN_PROFILES=(watchtower agent-docker)
 
 declare -A SETTING_SECTION=() SETTING_DEFAULT=() SETTING_TYPE=() SETTING_FLAGS=() SETTING_DESC=()
 MANAGED_VARS=()                # every managed key, in registry (display) order
@@ -274,6 +285,16 @@ validate_env_value() {
                 [[ "$_r" =~ ^wss?:// ]] || { IFS="$_old_ifs"; echo "comma-separated ws:// or wss:// URLs"; return 1; }
             done
             IFS="$_old_ifs" ;;
+        profiles)
+            local _p
+            for _p in ${val//,/ }; do
+                case " ${KNOWN_PROFILES[*]} " in *" $_p "*) : ;;
+                    *) echo "unknown profile '$_p' (known: ${KNOWN_PROFILES[*]})"; return 1 ;; esac
+            done ;;
+        cpus)   [[ "$val" =~ ^[0-9]+(\.[0-9]+)?$ ]] && [[ ! "$val" =~ ^0+(\.0+)?$ ]] \
+                    || { echo "must be a positive number of CPUs, e.g. 2 or 1.5"; return 1; } ;;
+        mem)    [[ "$val" =~ ^[1-9][0-9]*[bkmgBKMG]?$ ]] || { echo "must be a size like 512m or 4g"; return 1; } ;;
+        path)   [[ "$val" == /* ]] || { echo "must be an absolute path"; return 1; } ;;
         *) : ;;  # text: free-form
     esac
     return 0
