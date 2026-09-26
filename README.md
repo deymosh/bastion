@@ -37,29 +37,15 @@ control plane. It is all Docker, and one script drives it.
 - **One config file.** `bastion.conf` is generated, validated and git-ignored.
   All the other files are derived from it.
 
-```mermaid
-flowchart LR
-    subgraph NET["stack-network · 10.10.0.0/24"]
-        pihole[Pi-hole] --> unbound[unbound]
-        wg[WireGuard]
-    end
-    subgraph TRANSIT["bastion-transit · 10.254.0.0/24"]
-        tor(("Tor<br/>10.254.0.2"))
-    end
-    subgraph BTC["stack-bitcoin · 10.20.0.0/24"]
-        bitcoind[bitcoind] --- cln["lightningd<br/>10.254.0.10"]
-        cln --- rtl[RTL]
-        teosd["teosd<br/>10.254.0.11<br/><i>opt-in</i>"]
-    end
-    subgraph AI["stack-ai · 10.50.0.0/24"]
-        ccr[CCR] --- bridge[CodeDeck+ bridge]
-        mcp[MCP gateway] --- searx[SearXNG]
-        agent["agent-docker<br/><i>opt-in</i>"]
-    end
-    MON["stack-monitor<br/>Prometheus · Grafana · Portainer"]
-    WEB["stack-web<br/>Hub"]
-    bitcoind & cln & teosd & bridge -.-> tor
-    tor ==> internet((Tor network))
+The only traffic that crosses stacks goes over `bastion-transit`, to Tor:
+
+```text
+bastion-transit 10.254.0.0/24
+
+  bitcoind          ─┐
+  lightningd  .10   ─┤
+  teosd       .11   ─┼──►  tor .2  ──►  Tor network
+  codedeck-bridge   ─┘
 ```
 
 ## Stacks
