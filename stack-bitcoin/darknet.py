@@ -1,11 +1,6 @@
-#!/usr/bin/env -S uv run --script
-
-# /// script
-# requires-python = ">=3.9.2"
-# dependencies = [
-#    "pyln-client>=24.11"
-# ]
-# ///
+#!/usr/bin/env python3
+# Runs on the python3 + pyln-client that Dockerfile.lightningd installs
+# (pinned there, currently pyln-client==26.6.8).
 
 from pyln.client import Plugin, RpcError
 import threading

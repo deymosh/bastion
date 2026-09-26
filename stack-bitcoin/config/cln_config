@@ -17,14 +17,18 @@ autoclean-failedpays-age=604800
 autoclean-failedforwards-age=604800
 autoclean-expiredinvoices-age=2592000
 
-# Backup config (native replication or backup plugin, use one of the following lines)
+# Wallet backup: native sqlite replication - CLN writes every transaction to
+# the node DB and the backup-drive copy (drive mounted at /backup_usb) in one
+# commit, so the replica is never stale. The old backup plugin is not used.
 wallet=sqlite3:///root/.lightning/bitcoin/lightningd.sqlite3:/backup_usb/lightningd.sqlite3
-# important-plugin=/usr/local/bin/backup/backup.py
 
 # Custom plugin 'darknet' to prefer onion addresses for peers when available (optional, only if you want to use it)
 plugin=/usr/local/bin/darknet.py
 
 # Plugins config (careful CLBOSS can open channels and manage funds, so only use if you trust it)
+# xrebalance is clboss's rebalancing executor (required by clboss v0.17+ for
+# rebalancing); load order does not matter.
+plugin=/usr/local/bin/xrebalance
 plugin=/usr/local/bin/clboss
 plugin=/usr/local/bin/peerswap
 

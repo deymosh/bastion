@@ -7,7 +7,6 @@
 # Managing the lifecycle of all services and performing critical maintenance tasks.
 # It ensures the Lightning Node's emergency recovery file is safely backed up to a USB drive
 # and maintains a historical archive of these backups.
-# Additionally, it can perform optional SQLite compaction.
 #
 # Usage:
 #   Use the provided bastion-daemon.service example to set up this script
@@ -34,7 +33,6 @@ _setting() {
 }
 BACKUP_DEST="${BACKUP_DEST:-$(_setting BACKUP_DEST)}"
 CHECK_INTERVAL="${CHECK_INTERVAL:-$(_setting SCB_CHECK_INTERVAL)}"
-BACKUP_PLUGIN_COMPACT="${BACKUP_PLUGIN_COMPACT:-$(_setting BACKUP_PLUGIN_COMPACT)}"
 AMBOSS_HEARTBEAT="${AMBOSS_HEARTBEAT:-$(_setting AMBOSS_HEARTBEAT)}"
 AMBOSS_INTERVAL="${AMBOSS_INTERVAL:-$(_setting AMBOSS_INTERVAL)}"
 LAST_MAINTENANCE_DATE=""
@@ -87,22 +85,6 @@ run_daily_maintenance() {
             find "$SCB_HISTORY_DIR" -type f -mtime +30 -delete
         fi
 
-        # B. SQLite Compaction (Conditional)
-        if [ "$BACKUP_PLUGIN_COMPACT" = 1 ]; then
-            echo "[Task] Compacting SQLite database..."
-            JSON_OUT=$(docker exec $CLN_CONTAINER lightning-cli backup-compact 2>&1)
-            
-            if [ $? -eq 0 ]; then
-                BEFORE=$(echo "$JSON_OUT" | jq -r '.before.backupsize // 0')
-                AFTER=$(echo "$JSON_OUT" | jq -r '.after.backupsize // 0')
-                echo "[SUCCESS] Compaction finished. Saved: $(( (BEFORE - AFTER) / 1024 / 1024 )) MB."
-            else
-                echo "[ERROR] Compaction failed: $JSON_OUT"
-            fi
-        else
-            echo "[Info] SQLite compaction skipped (BACKUP_PLUGIN_COMPACT=0)."
-        fi
-        
         LAST_MAINTENANCE_DATE="$CURRENT_DATE"
         echo "[$(date)] Maintenance complete."
         echo "----------------------------------------------------------------"
