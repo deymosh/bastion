@@ -11,7 +11,7 @@ x-logging: &logging
 services:
   portainer:
     # Pinned by digest (tag kept for readability). Pinned 2026-09-09.
-    image: portainer/portainer-ce:2.45.0@sha256:511f3f06c96fe3b993ebeaafde311c1959cae73a7ef825dba6397d51b450dffa
+    image: portainer/portainer-ce:2.45.1@sha256:4d616db18cfeb5dd41a69c0958bc825c84483ea9cde1106eb82a5d26f3bd8b0e
     container_name: portainer
     logging: *logging
     restart: unless-stopped
@@ -29,7 +29,7 @@ services:
 
   grafana:
     # Pinned by digest (tag kept for readability). Pinned 2026-09-09.
-    image: grafana/grafana:13.2.1@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283
+    image: grafana/grafana:13.2.2@sha256:ac461fb352abc50da10a51c7d02462e9c05488f11f53f14b3ad79a8145f638a0
     container_name: grafana
     logging: *logging
     restart: unless-stopped
