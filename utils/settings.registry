@@ -51,7 +51,7 @@ CONTEXT7_API_KEY|MCP gateway||text|secret|Optional Context7 API key for higher r
 ENABLED_PROFILES|Optional services||profiles||Opt-in services every `up` starts, comma-separated: watchtower, agent-docker. The --with-* flags add to it for one run.
 AGENT_DOCKER_CPUS|Optional services|2|cpus||CPU cap for the agent-docker sidecar and everything it runs.
 AGENT_DOCKER_MEMORY|Optional services|4g|mem||Memory cap for the agent-docker sidecar and everything it runs (e.g. 4g).
-BACKUP_DEST|Daemon|/mnt/backup_cln|path||Mount point of the drive the daemon mirrors emergency.recover to.
+BACKUP_DEST|Daemon|/mnt/backup_cln|path||Mount point of the backup drive: CLN replicates its wallet DB there and the daemon mirrors emergency.recover to it.
 SCB_CHECK_INTERVAL|Daemon|3600|posint||Seconds between the daemon checks of emergency.recover.
 BACKUP_PLUGIN_COMPACT|Daemon|0|bool||1 compacts the CLN backup plugin database once a day.
 AMBOSS_HEARTBEAT|Daemon|0|bool||1 posts a signed health heartbeat to Amboss.

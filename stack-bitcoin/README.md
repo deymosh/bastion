@@ -37,7 +37,7 @@ hosts all keep the same address.
 | `trustedcoin` | **Chain backend** (`important-plugin`) in place of the disabled built-in `bcli`. It uses `bitcoind` through the `bitcoin-rpc*` lines when that node is reachable and has the block, and otherwise falls back to public block explorers over Tor. |
 | `watchtower-client` | Breach protection for *this* node against an external tower (`important-plugin`) |
 | `clboss` | Channel autopilot. **It opens channels and moves funds.** Tuned via `command:` in the compose file (min channel 1M sat, rebalance fee ≤ 250 ppm, no auto-close) |
-| `peerswap` | Submarine-swap rebalancing (state and config in `data/cln/peerswap/`) |
+| `peerswap` | Submarine-swap rebalancing, **Bitcoin swaps only** (`config/peerswap.conf`, mounted read-only; state in `data/cln/peerswap/`) |
 | `darknet.py` | Local plugin that prefers peers' `.onion` addresses |
 | `backup` | Installed but **not enabled**. See below |
 
@@ -45,7 +45,8 @@ Other settings in `cln_config`:
 
 - **Wallet replication.** `wallet=sqlite3://…:/backup_usb/lightningd.sqlite3`
   makes CLN write every database transaction to the backup drive as well as
-  its own. The drive is the host's `/mnt/backup_cln`. Use this *or* the
+  its own. The drive is `BACKUP_DEST` on the host (default `/mnt/backup_cln`);
+  mount it before `up`. Use this *or* the
   `backup` plugin, never both.
 - **Autoclean.** Failed payments and forwards are removed after 7 days, expired
   invoices after 30 days.
@@ -93,8 +94,13 @@ copies, not the templates.
 ./bastion audit                                      # routing profitability (scripts/node-audit.py)
 ```
 
-- **Stopping.** `./bastion stop bitcoin` gives `bitcoind` its full 5-minute
-  `stop_grace_period`. Never `docker kill` it.
+- **Stopping.** `./bastion stop bitcoin` shuts both nodes down cleanly.
+  `lightningd` runs `lightning-cli stop` from its entrypoint
+  (`lightningd-entrypoint.sh`) and has up to 3 minutes; `bitcoind` has 5.
+  Never `docker kill` either of them.
+- **Health.** `./bastion ps` shows `lightningd` as healthy once its RPC
+  answers. After a restart that takes until the chain catch-up finishes,
+  which can be several minutes.
 - **Bitcoin RPC credentials** are `bitcoind.user` / `bitcoind.pass`, set in the
   compose `command:` and healthcheck and in `cln_config`. RPC only listens on
   the stack network (`rpcallowip=10.20.0.0/24`). If you change them, change all

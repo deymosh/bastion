@@ -267,6 +267,64 @@ have '^FROM python:.*@sha256:[0-9a-f]{64}' stack-ai/mcp-gateway/Dockerfile.mcp-g
 have 'pip install.*-c /tmp/constraints.txt' stack-ai/mcp-gateway/Dockerfile.mcp-gateway \
   && ok "mcp-gateway Python layer uses the constraints snapshot" || bad "mcp-gateway Python layer ignores constraints.txt"
 
+echo "== Built images start from digest-pinned bases =="
+# Bastion's own Dockerfiles (the rust-teos submodule is the fork's business).
+# A FROM that names an earlier stage (FROM builder) needs no digest.
+unpinned=$(for f in stack-*/Dockerfile* stack-*/*/Dockerfile*; do
+  [ -f "$f" ] || continue
+  stages=$(grep -ioE '^FROM .* AS [A-Za-z0-9_-]+' "$f" | awk '{print tolower($NF)}')
+  grep -iE '^FROM ' "$f" | awk '{print $2}' | while read -r ref; do
+    case "$ref" in *@sha256:*) continue ;; esac
+    printf '%s\n' "$stages" | grep -qx "$(printf '%s' "$ref" | tr 'A-Z' 'a-z')" && continue
+    echo "$f:$ref"
+  done
+done)
+[ -z "$unpinned" ] && ok "every FROM in Bastion's Dockerfiles is @sha256-pinned" \
+  || bad "unpinned base image: $(printf '%s' "$unpinned" | paste -sd' ' -)"
+grep -q 'sha256sum -c' stack-bitcoin/Dockerfile.lightningd \
+  && ! grep -qE 'curl [^|]*\| *tar' stack-bitcoin/Dockerfile.lightningd \
+  && ok "Dockerfile.lightningd verifies downloaded tarballs (no curl | tar)" \
+  || bad "Dockerfile.lightningd pipes an unverified download into tar"
+
+echo "== Every service has the production defaults =="
+# Prints "<stack> <service> <key>" for each service that lacks the line
+# matching <regex> inside its own block (4-space-indented keys).
+_missing_in_service() {
+  local regex="$1" f
+  for f in stack-*/docker-compose.yml; do
+    awk -v re="$regex" -v st="${f%%/*}" '
+      /^[a-z]/ { in_s = ($0 ~ /^services:/); next }
+      in_s && /^  [A-Za-z0-9_-]+:[[:space:]]*$/ { if (svc != "" && !hit) print st, svc; svc=$1; sub(/:$/,"",svc); hit=0; next }
+      in_s && $0 ~ re { hit=1 }
+      END { if (svc != "" && !hit) print st, svc }
+    ' "$f"
+  done
+}
+m=$(_missing_in_service '^    logging: [*]logging')
+[ -z "$m" ] && ok "every service rotates its logs (logging: *logging)" \
+  || bad "no log rotation on: $(printf '%s' "$m" | paste -sd, -)"
+m=$(_missing_in_service '^    restart: unless-stopped')
+[ -z "$m" ] && ok "every service restarts unless-stopped (so ./bastion stop sticks)" \
+  || bad "restart policy is not unless-stopped on: $(printf '%s' "$m" | paste -sd, -)"
+
+# A healthcheck makes `./bastion ps` and the TUI tell "running" from "working".
+# Exempt, each for a stated reason - anything else must define one.
+declare -A HC_EXEMPT=(
+  [pihole]="image HEALTHCHECK (dig pi.hole)"
+  [unbound]="image HEALTHCHECK (drill)"
+  [ccr]="image HEALTHCHECK (Dockerfile.ccr, /health)"
+  [portainer]="distroless image: no shell or HTTP client to probe with"
+  [wireguard]="kernel interface, nothing to probe over HTTP"
+  [codedeck-bridge]="no listening port (outbound Nostr client only)"
+  [teosd]="opt-in; its API needs client certs to query"
+)
+m=""
+while read -r _st _svc; do
+  [ -n "${HC_EXEMPT[$_svc]:-}" ] || m+="${m:+, }$_st/$_svc"
+done < <(_missing_in_service '^    healthcheck:')
+[ -z "$m" ] && ok "every service has a healthcheck (or a documented exemption)" \
+  || bad "no healthcheck and no exemption: $m"
+
 echo "== Submodule tracking =="
 have 'branch = bastion-integration' .gitmodules && ok ".gitmodules tracks rust-teos bastion-integration" \
   || bad ".gitmodules does not pin rust-teos to bastion-integration"

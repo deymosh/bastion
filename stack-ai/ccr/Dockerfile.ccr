@@ -3,7 +3,7 @@
 ARG CCR_REF=471e715c20cfa855c681f6d31dc652164d4fa654
 ARG CCR_REPOSITORY=https://github.com/musistudio/claude-code-router.git
 
-FROM node:22.23.2-bookworm AS source
+FROM node:22.23.2-bookworm@sha256:dd5847a04b0deee391fa145f1f4c6d214196668b6bcc7988ebed67249f226844 AS source
 ARG CCR_REF
 ARG CCR_REPOSITORY
 
@@ -19,14 +19,14 @@ RUN apt-get update \
 WORKDIR /src
 RUN npm ci && npm run build:docker
 
-FROM node:22.23.2-bookworm-slim AS production-deps
+FROM node:22.23.2-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9 AS production-deps
 WORKDIR /src
 COPY --from=source /src/package.json /src/package-lock.json ./
 COPY --from=source /src/packages/core/package.json packages/core/package.json
 RUN npm ci --omit=dev --workspace=@claude-code-router/core --include-workspace-root=false \
     && npm cache clean --force
 
-FROM node:22.23.2-bookworm-slim AS runtime
+FROM node:22.23.2-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9 AS runtime
 ENV NODE_ENV=production \
     CCR_DATA_DIR=/data \
     CCR_WEB_HOST=127.0.0.1 \

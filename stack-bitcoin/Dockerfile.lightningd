@@ -1,5 +1,13 @@
+# Core Lightning with Bastion's plugins, built from pinned sources.
+#
+# Supply chain: both stages use the same digest-pinned base; every plugin is a
+# git commit; every downloaded binary/toolchain is a pinned version, and the
+# tarballs are sha256-verified against the checksum their publisher lists
+# (go.dev's download index, the GitHub release asset digest). To bump one,
+# change the version AND its checksum together.
+
 # Use base lightningd image to build plugins
-FROM elementsproject/lightningd:v25.12.1 AS builder
+FROM elementsproject/lightningd:v25.12.1@sha256:618eed33ba923cc459164bba38e8c554f97113f730a2f96e8423b18c0c515d9d AS builder
 
 # Install compilation dependencies and plugins
 RUN apt-get update && apt-get install -y \
@@ -22,12 +30,16 @@ RUN apt-get update && apt-get install -y \
     python3-pip && \
     rm -rf /var/lib/apt/lists/*
 
-## Define TrustedCoin plugin version
+## Define TrustedCoin plugin version (sha256 = the release asset's digest on GitHub)
 ENV TRUSTEDCOIN_RELEASE="v0.8.6"
+ENV TRUSTEDCOIN_SHA256="52d05c3869a1fc68c7f771c48206557aba0a0d2ca0a4e15aafd226d81e98ae1d"
 
 # Install TrustedCoin plugin
 RUN echo "--- Installing TrustedCoin Plugin ---" && \
-    curl -L https://github.com/nbd-wtf/trustedcoin/releases/download/$TRUSTEDCOIN_RELEASE/trustedcoin-$TRUSTEDCOIN_RELEASE-linux-amd64.tar.gz | tar -xz -C /usr/local/bin/ > /dev/null 2>&1 && \
+    curl -fsSL -o /tmp/trustedcoin.tar.gz https://github.com/nbd-wtf/trustedcoin/releases/download/$TRUSTEDCOIN_RELEASE/trustedcoin-$TRUSTEDCOIN_RELEASE-linux-amd64.tar.gz && \
+    echo "$TRUSTEDCOIN_SHA256  /tmp/trustedcoin.tar.gz" | sha256sum -c - && \
+    tar -xzf /tmp/trustedcoin.tar.gz -C /usr/local/bin/ && \
+    rm /tmp/trustedcoin.tar.gz && \
     chmod +x /usr/local/bin/trustedcoin && \
     echo "--- TrustedCoin Plugin installed successfully ---"
 
@@ -39,9 +51,12 @@ RUN git clone https://github.com/lightningd/plugins /tmp/plugins && \
     cd /tmp/plugins && \
     git checkout $BACKUP_PLUGIN_COMMIT
 
+## uv runs the backup plugin's scripts; the versioned installer URL pins it
+ENV UV_VERSION="0.12.19"
+
 WORKDIR /tmp/plugins
 RUN echo "--- Installing Backup Plugin ---" && \
-    curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="/usr/local/bin" sh && \
+    curl -LsSf https://astral.sh/uv/$UV_VERSION/install.sh | env UV_INSTALL_DIR="/usr/local/bin" sh && \
     pip3 install --break-system-packages \
     coincurve \
     pyln-client \
@@ -56,6 +71,8 @@ RUN echo "--- Installing Backup Plugin ---" && \
 ## Define PeerSwap plugin version
 ENV PEERSWAP_COMMIT="23b32d3a1b1665c7c5e50e76d530fff5bf8be3d8"
 ENV GO_VERSION="1.23.0"
+# sha256 of go$GO_VERSION.linux-amd64.tar.gz, from https://go.dev/dl/?mode=json&include=all
+ENV GO_SHA256="905a297f19ead44780548933e0ff1a1b86e8327bb459e92f9c0012569f76f5e3"
 
 # Install PeerSwap plugin
 RUN git clone https://github.com/ElementsProject/peerswap.git /tmp/peerswap_build && \
@@ -64,7 +81,8 @@ RUN git clone https://github.com/ElementsProject/peerswap.git /tmp/peerswap_buil
 
 WORKDIR /tmp/peerswap_build
 RUN echo "--- Installing PeerSwap Plugin ---" && \
-    wget https://go.dev/dl/go$GO_VERSION.linux-amd64.tar.gz && \
+    wget -q https://go.dev/dl/go$GO_VERSION.linux-amd64.tar.gz && \
+    echo "$GO_SHA256  go$GO_VERSION.linux-amd64.tar.gz" | sha256sum -c - && \
     tar -C /usr/local -xzf go$GO_VERSION.linux-amd64.tar.gz && \
     export PATH=$PATH:/usr/local/go/bin && \
     make cln-release && \
@@ -82,8 +100,12 @@ RUN git clone https://github.com/talaia-labs/rust-teos.git /tmp/teos_build && \
     cd /tmp/teos_build && \
     git checkout $TEOS_COMMIT
 
+## Pinned Rust toolchain, so the plugin is not compiled by whatever is newest
+ENV RUST_TOOLCHAIN="1.98.1"
+
 WORKDIR /tmp/teos_build
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y;
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --profile minimal --default-toolchain "$RUST_TOOLCHAIN"
 
 RUN echo "--- Installing TEOS Plugin ---"; \
     /root/.cargo/bin/cargo install --locked --path watchtower-plugin && \
@@ -115,7 +137,7 @@ RUN echo "--- Compiling Clboss Plugin ---" && \
 
 
 # Copy plugins to the light base image
-FROM elementsproject/lightningd:v25.12.1 AS final
+FROM elementsproject/lightningd:v25.12.1@sha256:618eed33ba923cc459164bba38e8c554f97113f730a2f96e8423b18c0c515d9d AS final
 
 # Runtime dependencies for plugins
 RUN apt-get update && apt-get install -y \
@@ -127,10 +149,12 @@ RUN apt-get update && apt-get install -y \
     libsqlite3-dev \
     libcurl4-gnutls-dev \
     libunwind-dev \
-    python3-pip
+    python3-pip && \
+    rm -rf /var/lib/apt/lists/*
 
-# Install UV for backup plugin
-RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="/usr/local/bin" sh
+# Install UV for backup plugin (same pinned version as the builder stage)
+ENV UV_VERSION="0.12.19"
+RUN curl -LsSf https://astral.sh/uv/$UV_VERSION/install.sh | env UV_INSTALL_DIR="/usr/local/bin" sh
 
 # Copy plugins from builder stage
 COPY --from=builder /usr/local/bin/clboss /usr/local/bin/clboss
@@ -143,5 +167,8 @@ COPY --from=builder /usr/local/bin/peerswap /usr/local/bin/peerswap
 COPY darknet.py /usr/local/bin/darknet.py
 RUN chmod +x /usr/local/bin/darknet.py
 
-# Set entrypoint as the oficial lightningd image
-ENTRYPOINT ["/entrypoint.sh"]
+# Signal-forwarding entrypoint (the upstream one never passes SIGTERM on to
+# lightningd, so every `docker stop` ended in SIGKILL). See the script header.
+COPY lightningd-entrypoint.sh /usr/local/bin/lightningd-entrypoint.sh
+RUN chmod +x /usr/local/bin/lightningd-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/lightningd-entrypoint.sh"]

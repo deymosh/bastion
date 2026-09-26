@@ -101,8 +101,9 @@ Then:
 
 - **Apply the firewall.** Every panel listens on `0.0.0.0` by design, so the
   host firewall is what controls access. See [docs/firewall.md](docs/firewall.md).
-- **Plug in the backup drive** at `/mnt/backup_cln` (`BACKUP_DEST`). CLN
-  mirrors its wallet database there live.
+- **Mount the backup drive** at `BACKUP_DEST` (default `/mnt/backup_cln`)
+  *before* `up`. CLN mirrors its wallet database there live, and `up` warns
+  if nothing is mounted.
 - **Install the boot daemon.** It brings Bastion up at boot and mirrors the
   channel backup (SCB):
   ```bash
@@ -134,6 +135,7 @@ dashboard action is also available as a subcommand, for scripts and cron:
 ./bastion config [get|set]        # read / change bastion.conf (validated)
 ./bastion audit                   # routing profitability report
 ./bastion install-sysbox          # runtime for agent-docker (restarts Docker)
+./bastion version                 # release + commit of this checkout
 ```
 
 You can drop the `stack-` prefix (`./bastion up web ai`). Flags:
@@ -182,6 +184,8 @@ CLN P2P, the TEOS API, the CCR gateway, SearXNG and the CodeDeck bridge.
 | [Firewall](docs/firewall.md) | nftables ruleset and a `ufw` recipe |
 | [MCP gateway](docs/mcp.md) | The remote-agent tool endpoint, its namespaces and a ready-made `.mcp.json` |
 | [Agent Docker](docs/agent-docker.md) | A private Docker daemon for the AI agent on Sysbox, and its security model |
+| [Releases and upgrades](docs/releasing.md) | How versions are cut, and how to upgrade a running node |
+| [Changelog](CHANGELOG.md) | What changed in each release |
 | [Tests](tests/README.md) | The static / unit / integration / weekly lanes, and how to run them |
 | Stack READMEs | Per-stack services, addresses and operations (linked above) |
 
@@ -194,7 +198,7 @@ compares each pin with what is running.
 |---|---|
 | Bitcoin Core | v26.0 |
 | Core Lightning | v25.12.1, with clboss `95d195f8`, peerswap `23b32d3a`, watchtower-client `be344ecc`, trustedcoin v0.8.6, backup `cb3adab` |
-| Tor | 0.4.7.13 |
+| Tor | 0.4.9.13 (Tor Project Debian repo) |
 | RTL | v0.15.8 |
 | Pi-hole · unbound · WireGuard | 2026.07.2 · 1.22.0 · 1.0.20260223-r0-ls121 |
 | Prometheus · Grafana · Portainer · node-exporter | v3.14.0 · 13.2.1 · 2.45.0 · v1.12.1 |
@@ -207,5 +211,5 @@ compares each pin with what is running.
 ---
 
 <div align="center">
-<sub>No secrets in the tree: <code>bastion.conf</code>, <code>secrets/</code> and <code>stack-*/data/</code> are git-ignored. Keep it that way.</sub>
+<sub>MIT licensed - see <a href="LICENSE">LICENSE</a>. No secrets in the tree: <code>bastion.conf</code>, <code>secrets/</code> and <code>stack-*/data/</code> are git-ignored.</sub>
 </div>

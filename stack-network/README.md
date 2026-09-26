@@ -43,7 +43,7 @@ Settings (see [docs/configuration.md](../docs/configuration.md)):
 |---|---|
 | `config/torrc` | SOCKS and control ports bound to the transit IP; cookie auth that the node's group can read |
 | `config/unbound.conf` | Resolver configuration |
-| `Dockerfile.tor` | Tor image. Pre-creates `/data/.tor` as gid 1000, mode `0750` |
+| `Dockerfile.tor` | Tor from the Tor Project's Debian repo (version-pinned). Runs as `toruser` 1000:1000; pre-creates `/data/.tor` mode `0750` |
 | `data/` | WireGuard peers and Pi-hole state. Runtime data; keep it |
 
 After changing `torrc`, run `./bastion restart tor --force` (`--force` is needed

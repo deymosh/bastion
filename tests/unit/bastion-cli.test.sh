@@ -35,6 +35,13 @@ echo "== command dispatch =="
 out=$(b);          rc=$?; assert_contains "$out" "COMMANDS:" "no args (non-TTY) prints usage"; assert_eq "$rc" 1 "usage exits 1"
 out=$(b boguscmd); rc=$?; assert_contains "$out" "COMMANDS:" "unknown command prints usage"
 
+echo "== version =="
+out=$(MOCK_DOCKER_INFO_RC=1 bare version); rc=$?
+assert_contains "$out" "Bastion $(tr -d '[:space:]' < VERSION)" "version prints the VERSION file"
+assert_eq "$rc" 0 "version exits 0"
+assert_not_contains "$out" "Docker daemon is not running" "version needs neither Docker nor config"
+out=$(bare --version); assert_contains "$out" "Bastion " "--version is an alias"
+
 echo "== config is only demanded when it is actually needed =="
 out=$(bare help);   rc=$?; assert_contains "$out" "COMMANDS:" "help works without config"; assert_not_contains "$out" "Required configuration" "help never asks for config"
 out=$(MOCK_DOCKER_INFO_RC=1 bare help); assert_not_contains "$out" "Docker daemon is not running" "help does not even check Docker"
@@ -51,6 +58,16 @@ out=$(b up);                 assert_contains "$out" "Booting: stack-network stac
 out=$(b up web ai);          assert_contains "$out" "Booting: stack-network stack-web stack-ai"  "shorthand names resolve"
 out=$(b up stack-ai stack-web); assert_contains "$out" "Booting: stack-network stack-web stack-ai" "explicit names reordered to canonical"
 out=$(b up nope); rc=$?;     assert_contains "$out" "Unknown stack: stack-nope"    "unknown stack rejected"; assert_eq "$rc" 1 "unknown stack exits 1"
+
+echo "== backup drive preflight =="
+printf '#!/usr/bin/env bash\nexit "${MOCK_MOUNTPOINT_RC:-0}"\n' > "$MOCK_BIN/mountpoint"; chmod +x "$MOCK_BIN/mountpoint"
+out=$(MOCK_MOUNTPOINT_RC=1 b up bitcoin); rc=$?
+assert_contains "$out" "is not a mounted filesystem" "up bitcoin warns when BACKUP_DEST is not a mount"
+assert_contains "$out" "Booting: stack-network stack-bitcoin" "the warning never blocks the boot"
+assert_eq "$rc" 0 "up still succeeds"
+out=$(MOCK_MOUNTPOINT_RC=0 b up bitcoin); assert_not_contains "$out" "not a mounted filesystem" "no warning when the drive is mounted"
+out=$(MOCK_MOUNTPOINT_RC=1 b up web);     assert_not_contains "$out" "not a mounted filesystem" "stacks without CLN never check it"
+rm -f "$MOCK_BIN/mountpoint"
 
 echo "== mandatory stack-network =="
 out=$(b up web ai);  assert_contains "$out" "Adding stack-network" "stack-network auto-added when omitted"

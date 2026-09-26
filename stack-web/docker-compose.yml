@@ -1,15 +1,30 @@
 name: stack-web
 
+# Every service rotates its json-file log (3 x 10 MB): Docker's default is
+# unbounded, which on an always-on node eventually fills the disk.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   hub:
     # Pinned by digest (nginx 1.31.5-alpine as of 2026-09-09; tag kept for readability).
     image: nginx:1.31.5-alpine@sha256:72ba65eb42c10344912a84ff42408db7d34f2feb642204570ab8fc5ffd29f1d3
     container_name: hub
+    logging: *logging
     restart: unless-stopped
     volumes:
       - ./html:/usr/share/nginx/html:ro
     ports:
       - "80:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
     networks:
       net:
         ipv4_address: 10.40.0.2

@@ -1,5 +1,13 @@
 name: stack-ai
 
+# Every service rotates its json-file log (3 x 10 MB): Docker's default is
+# unbounded, which on an always-on node eventually fills the disk.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   ccr:
     build:
@@ -13,6 +21,7 @@ services:
         CCR_REF: 471e715c20cfa855c681f6d31dc652164d4fa654
     image: bastion-claude-code-router:471e715
     container_name: ccr
+    logging: *logging
     restart: unless-stopped
     # ccr-entrypoint-wrapper.sh aligns ownership then gosu-drops to uid/gid 1000.
     # The added caps are only used at startup by the root wrapper (chown + the
@@ -57,6 +66,7 @@ services:
     # Pinned by digest (version tag kept for readability). Pinned 2026-09-17.
     image: ghcr.io/deymosh/codedeck-plus-bridge:v0.12.0@sha256:960319b55c3a8287a524d7324228ea86e319e74fd4e824362d4faea0e410c911
     container_name: codedeck-bridge
+    logging: *logging
     restart: unless-stopped
     depends_on:
       - ccr
@@ -130,6 +140,7 @@ services:
     # Pinned by digest (version tag kept for readability). Pinned 2026-09-26.
     image: docker:29.8.1-dind@sha256:3f3c01aaaebf7cce837356b688b7c059a4749f10bd7660dec7c58fc454a283f0
     container_name: agent-docker
+    logging: *logging
     # The dind entrypoint puts the hostname into the TLS server certificate's
     # SAN; it must equal the name in the bridge's DOCKER_HOST or every client
     # call fails verification.
@@ -182,6 +193,7 @@ services:
     # Pinned by digest (date tag kept for readability). Pinned 2026-09-22.
     image: searxng/searxng:2026.9.21-df67eb6c2@sha256:1ef964f6dcc811a60e01049717b6e526b25a1c52935350143f04e0ae291b3dbd
     container_name: searxng
+    logging: *logging
     restart: unless-stopped
     # Runs as the image's unprivileged "searxng" user (977) with no
     # capabilities; the writable paths it needs (/tmp) come from the tmpfs.
@@ -198,6 +210,12 @@ services:
       # /etc/searxng, and a single-file bind under it is shadowed by the
       # anonymous volume (the settings would silently never load).
       - ./config/searxng:/etc/searxng:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
     networks:
       net:
         ipv4_address: 10.50.0.4
@@ -214,6 +232,7 @@ services:
       dockerfile: Dockerfile.mcp-gateway
     image: bastion-mcp-gateway:1.0.0
     container_name: mcp-gateway
+    logging: *logging
     restart: unless-stopped
     cap_drop:
       - ALL
@@ -247,6 +266,13 @@ services:
       - mcp_memory_data:/data
     ports:
       - "8811:8811"
+    # Unauthenticated liveness endpoint (no token involved).
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8811/healthz', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
     networks:
       net:
         ipv4_address: 10.50.0.5
