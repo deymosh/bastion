@@ -80,59 +80,10 @@ YELLOW='\033[0;33m'
 NC='\033[0m' 
 
 # --- SETTINGS REGISTRY --------------------------------------------------------
-# The ONE place a bastion.conf setting is declared. Everything else is derived
-# from this table: the bastion.conf layout and comments, MANAGED_VARS (the TUI
-# editor's list), which values are secrets (projected into secrets/ and masked
-# in the UI), generated defaults, validation, and the first-run prompts.
-# Adding a setting = adding one line here.
-#
-#   KEY | section | default | type | flags | description
-#
-# default: a literal, empty, or a generator - @tz (host timezone), @uid / @gid
-#          (the invoking user), @hex16 (16 hex chars), @token (43 URL-safe
-#          chars). Generators run only when the key is empty.
-# type:    host port int posint bool alias tz socks http email relays profiles
-#          cpus mem path text (see validate_env_value). An empty value is always accepted unless
-#          the key is flagged required; a key with a default is refilled on
-#          the next load.
-# flags:   comma list of: required (prompted on `up` when empty), secret
-#          (written to secrets/<lower_key>, mounted at /run/secrets/...).
-BASTION_SETTINGS='
-WIREGUARD_SERVERURL|Network||host|required|Public IP or DNS name WireGuard clients connect to.
-WIREGUARD_SERVERPORT|Network||port|required|Public UDP port of the WireGuard server.
-WIREGUARD_PEERS|Network|1|int||Number of WireGuard peer profiles to generate.
-NODE_ALIAS|Bitcoin and Core Lightning||alias|required|Alias announced by the Core Lightning node (max 32 characters).
-TIMEZONE|Host and access|@tz|tz||Container and host timezone, e.g. Europe/Madrid.
-USER_ID|Host and access|@uid|int||Host UID for services that run unprivileged.
-GROUP_ID|Host and access|@gid|int||Host GID for services that run unprivileged.
-PIHOLE_PASSWORD|Host and access|@hex16|text|secret|Pi-hole web administration password.
-CODEDECK_RELAYS|CodeDeck+||relays||Comma-separated trusted Nostr relay URLs (ws:// or wss://).
-CODEDECK_TOR_PROXY_URL|CodeDeck+|socks5h://tor:9050|socks||SOCKS5 proxy for CodeDeck relay connections.
-GIT_REPO|CodeDeck+||text||Comma-separated Git repositories cloned into CodeDeck workspaces.
-GIT_USER|CodeDeck+||text||Git author name used by CodeDeck.
-GIT_EMAIL|CodeDeck+||email||Git author email used by CodeDeck.
-CODEDECK_OPENCODE_SERVER_URL|CodeDeck+||http||OpenCode session backend URL (empty = Claude Code only).
-CODEDECK_OPENCODE_AUTO_START|CodeDeck+||bool||1 starts an OpenCode server with the bridge (empty = off).
-CODEDECK_OPENCODE_PORT|CodeDeck+||port||Port of the auto-started OpenCode server.
-CODEDECK_GSD_AUTO_INSTALL|CodeDeck+||bool||1 installs the GSD planning workflow on boot (empty = off).
-CLAUDE_CODE_OAUTH_TOKEN|CodeDeck+||text|secret|Claude Code OAuth token used by CodeDeck+.
-GITHUB_TOKEN|CodeDeck+||text|secret|GitHub token for CodeDeck repository operations.
-CCR_WEB_AUTH_TOKEN|Claude Code Router|@token|text|secret|Token for the CCR web UI.
-CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY|Claude Code Router|1|bool||1 lets Claude Code list models from the gateway (/v1/models).
-CCR_TOKEN_REFRESH|Claude Code Router|1|bool||1 keeps the CCR OAuth credentials refreshed in-container.
-CCR_REFRESH_INTERVAL|Claude Code Router|300|posint||Seconds between refresher checks.
-CCR_REFRESH_SKEW_MS|Claude Code Router|1800000|posint||Refresh the access token this many milliseconds before it expires.
-MCP_GATEWAY_TOKEN|MCP gateway|@token|text|secret|Bearer token remote MCP clients send to the gateway (:8811).
-CONTEXT7_API_KEY|MCP gateway||text|secret|Optional Context7 API key for higher rate limits (empty = keyless).
-ENABLED_PROFILES|Optional services||profiles||Opt-in services every `up` starts, comma-separated: watchtower, agent-docker. The --with-* flags add to it for one run.
-AGENT_DOCKER_CPUS|Optional services|2|cpus||CPU cap for the agent-docker sidecar and everything it runs.
-AGENT_DOCKER_MEMORY|Optional services|4g|mem||Memory cap for the agent-docker sidecar and everything it runs (e.g. 4g).
-BACKUP_DEST|Daemon|/mnt/backup_cln|path||Mount point of the drive the daemon mirrors emergency.recover to.
-SCB_CHECK_INTERVAL|Daemon|3600|posint||Seconds between the daemon checks of emergency.recover.
-BACKUP_PLUGIN_COMPACT|Daemon|0|bool||1 compacts the CLN backup plugin database once a day.
-AMBOSS_HEARTBEAT|Daemon|0|bool||1 posts a signed health heartbeat to Amboss.
-AMBOSS_INTERVAL|Daemon|300|posint||Seconds between Amboss heartbeats.
-'
+# Every bastion.conf setting is declared once, in utils/settings.registry (a
+# plain '|'-separated data file - its header documents the columns, types and
+# flags). Everything below derives from it.
+SETTINGS_REGISTRY="${SETTINGS_REGISTRY:-$(dirname "${BASH_SOURCE[0]}")/settings.registry}"
 
 # Opt-in compose profiles Bastion knows about (ENABLED_PROFILES / --with-* flags).
 KNOWN_PROFILES=(watchtower agent-docker)
@@ -140,15 +91,25 @@ KNOWN_PROFILES=(watchtower agent-docker)
 declare -A SETTING_SECTION=() SETTING_DEFAULT=() SETTING_TYPE=() SETTING_FLAGS=() SETTING_DESC=()
 MANAGED_VARS=()                # every managed key, in registry (display) order
 BASTION_REQUIRED_VARS=()       # the no-default essentials require_essentials asks for
+
+# Load the registry. A missing file or a malformed row is fatal: silently
+# dropping a setting would drop it from bastion.conf on the next write.
 _load_settings_registry() {
-    local k s d t f desc
-    while IFS='|' read -r k s d t f desc; do
-        [ -n "$k" ] || continue
+    local line k s d t f desc n=0
+    [ -r "$SETTINGS_REGISTRY" ] || { echo "config.sh: settings registry not found: $SETTINGS_REGISTRY" >&2; exit 1; }
+    while IFS= read -r line || [ -n "$line" ]; do
+        n=$((n + 1)); line=${line%$'\r'}
+        [[ -z "${line//[[:space:]]/}" || $line == \#* ]] && continue
+        IFS='|' read -r k s d t f desc <<< "$line"
+        if [[ ! $k =~ ^[A-Z_][A-Z0-9_]*$ ]] || [ -z "$s" ] || [ -z "$t" ] || [ -z "$desc" ] \
+           || [ -n "${SETTING_TYPE[$k]+set}" ]; then
+            echo "config.sh: bad or duplicate row $n in $SETTINGS_REGISTRY: $line" >&2; exit 1
+        fi
         MANAGED_VARS+=("$k")
         SETTING_SECTION[$k]=$s; SETTING_DEFAULT[$k]=$d; SETTING_TYPE[$k]=$t
         SETTING_FLAGS[$k]=$f;   SETTING_DESC[$k]=$desc
         case ",$f," in *,required,*) BASTION_REQUIRED_VARS+=("$k") ;; esac
-    done <<< "$BASTION_SETTINGS"
+    done < "$SETTINGS_REGISTRY"
 }
 _load_settings_registry
 

@@ -130,6 +130,21 @@ assert_fail validate_env_value AGENT_DOCKER_MEMORY 4gb
 assert_ok   validate_env_value BACKUP_DEST /mnt/usb
 assert_fail validate_env_value BACKUP_DEST relative/dir
 
+echo "== a broken registry stops the load instead of dropping settings =="
+reg_load() { SETTINGS_REGISTRY="$1" bash -c 'source utils/config.sh' 2>&1; }
+printf '# header\n\nGOOD_KEY|Sec||text||A description.\n' > "$WORK/ok.registry"
+out=$(reg_load "$WORK/ok.registry"); rc=$?
+assert_eq "$rc" 0 "comments and blank lines are skipped"
+printf 'GOOD_KEY|Sec||text||A description.\nGOOD_KEY|Sec||text||Again.\n' > "$WORK/dup.registry"
+out=$(reg_load "$WORK/dup.registry"); rc=$?
+assert_eq "$rc" 1 "a duplicate key is fatal"; assert_contains "$out" "row 2" "names the row"
+printf 'lower_key|Sec||text||x\n' > "$WORK/bad.registry"
+out=$(reg_load "$WORK/bad.registry"); rc=$?; assert_eq "$rc" 1 "a malformed key is fatal"
+printf 'NO_DESC|Sec||text|\n' > "$WORK/bad2.registry"
+out=$(reg_load "$WORK/bad2.registry"); rc=$?; assert_eq "$rc" 1 "a row without a description is fatal"
+out=$(reg_load "$WORK/missing.registry"); rc=$?
+assert_eq "$rc" 1 "a missing registry is fatal"; assert_contains "$out" "not found" "says so"
+
 echo "== bastion.conf is parsed, never executed =="
 cat > "$CONFIG_FILE" <<EOF
 NODE_ALIAS=\$(touch $WORK/EXECUTED)
