@@ -76,7 +76,11 @@ install_sysbox() {
     [ "$(id -u)" -eq 0 ] || sudo="sudo"
     deb="sysbox-ce_${SYSBOX_VERSION}.linux_${arch}.deb"
     url="https://github.com/nestybox/sysbox/releases/download/v${SYSBOX_VERSION}/${deb}"
-    dir=$(mktemp -d); trap 'rm -rf "$dir"' EXIT
+    dir=$(mktemp -d)
+    # Expanded now, not at exit: `dir` is local and gone by the time the EXIT
+    # trap fires, which under `set -u` would fail a successful install.
+    # shellcheck disable=SC2064
+    trap "rm -rf '$dir'" EXIT
 
     note "Downloading Sysbox ${SYSBOX_VERSION} (${arch})"
     curl -fsSL -o "$dir/$deb" "$url" || die "Download failed: $url"
