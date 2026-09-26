@@ -78,10 +78,11 @@ services:
         ipv4_address: 10.10.0.3
 
   tor:
-    build:
-      context: .
-      dockerfile: Dockerfile.tor
-    image: tor-custom:latest
+    # Shared Tor image (github.com/deymosh/tor): Tor from the Tor Project
+    # Debian repo, CI-built for amd64/arm64. Contract: toruser 1000:1000, home
+    # /data, /data/.tor 0750 (group-readable cookie for CLN/TEOS). Bump tag
+    # and digest together (Dependabot proposes it).
+    image: ghcr.io/deymosh/tor:0.4.9.13@sha256:5b1b124e80ecf721e7308f3fdb06fec6d7332aaa81866f2cb465cc68d911ccd1
     container_name: tor
     logging: *logging
     restart: unless-stopped

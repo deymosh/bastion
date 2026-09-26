@@ -9,11 +9,16 @@
 # that at all).
 #
 # Uses tests/integration/tor.compose.yml (hermetic: own project, own private
-# subnets, the real Dockerfile.tor and a torrc derived from the real one).
+# subnets, the pinned Tor image and a torrc derived from the real one).
 # Needs Docker + compose + outbound network. ~1-2 minutes. Self-cleaning.
 ###############################################################################
 set -u
 cd "$(dirname "$0")" || exit 1
+
+# The Tor image production pins - the test runs exactly that image.
+TOR_IMAGE=$(awk '/^  tor:/{t=1} t && /^    image:/{print $2; exit}' ../../stack-network/docker-compose.yml)
+export TOR_IMAGE
+[ -n "$TOR_IMAGE" ] || { echo "could not read the tor image from stack-network/docker-compose.yml" >&2; exit 1; }
 
 COMPOSE=(docker compose -f tor.compose.yml)
 GEN_TORRC=torrc.generated
