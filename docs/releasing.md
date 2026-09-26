@@ -47,8 +47,10 @@ next release PR would propose `1.0.0` again.
 
 ## Bumping Bitcoin Core and Core Lightning (maintainers)
 
-Dependabot proposes monthly updates for every other image. It deliberately
-skips these two, because upgrading them changes the node itself:
+Dependabot groups the routine compose image bumps into one monthly PR. These
+two are kept out of any group and always arrive as **their own PR**, because
+upgrading them changes the node itself. Review each one on its own terms
+before merging:
 
 - **Core Lightning** (`elementsproject/lightningd` in
   `stack-bitcoin/Dockerfile.lightningd`, both stages). The first start on a
@@ -60,9 +62,9 @@ skips these two, because upgrading them changes the node itself:
   Read the release notes for pruning, index or config changes. A major
   version can require a reindex.
 
-In both cases, bump the tag and re-resolve its digest together, and mark the
-commit as breaking (`!`) if operators must do anything beyond the usual
-upgrade steps below.
+Whether the bump comes from that PR or is done by hand, the tag and digest
+change together. Mark the commit as breaking (`!`) if operators must do
+anything beyond the usual upgrade steps below.
 
 ## Upgrading a node (operators)
 
