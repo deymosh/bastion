@@ -50,7 +50,10 @@ services:
     command:
       - '--path.procfs=/host/proc'
       - '--path.sysfs=/host/sys'
-      - '--collector.filesystem.ignored-mount-points=^/(sys|proc|dev|host|etc)($$|/)'
+      # Without this the filesystem collector reports the container's own
+      # mounts, not the host disks the /rootfs bind above exists for.
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
     networks:
       net:
         ipv4_address: 10.30.0.4
