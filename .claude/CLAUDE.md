@@ -85,10 +85,15 @@ blocks the run and explains why.
 ## Workflow
 
 - **Branch + PR, never direct commits to `master`.** Start from an up-to-date
-  `master`, create `claude/<short-kebab-slug>`, do all of a request's commits
-  there (one branch per request, not per commit), then open a PR with
-  `gh pr create` and a real summary. Leave the PR open for the user to merge
-  unless they explicitly say to merge it.
+  `master`, create `<type>/<short-kebab-slug>` where `<type>` is the
+  Conventional Commits type that best describes the request as a whole —
+  `feat/`, `fix/`, `refactor/`, `docs/`, `chore/`, `test/`, `ci/`, `perf/`
+  (e.g. `fix/tor-healthcheck-timeout`, `feat/tui-grouped-config`). Do all of a
+  request's commits there (one branch per request, not per commit), then open a
+  PR with `gh pr create` and a real summary. Leave the PR open for the user to
+  merge unless they explicitly say to merge it. The user may explicitly allow a
+  change to go straight to `master` (e.g. docs-only); that permission covers
+  that request only.
 - **Multi-part requests: one task at a time.** Implement, verify with the
   narrowest sufficient check, commit that task, then start the next. Do not batch
   unrelated changes into one commit.
