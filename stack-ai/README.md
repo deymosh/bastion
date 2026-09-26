@@ -85,9 +85,10 @@ Pair the Android app by scanning the QR code shown in the bridge logs.
 
 ## Configuration
 
-Bastion normally supplies this stack from the root `bastion.conf` through
-`stack-ai/.env`. On Linux, that file is a symlink created by `./bastion`. For a
-standalone Compose run, copy `.env.example` to `.env` and fill in the values.
+Bastion supplies this stack from the root `bastion.conf` (`./bastion` runs
+Compose with `--env-file bastion.conf`). Every setting, its default and
+whether it is a secret is listed in [docs/configuration.md](../docs/configuration.md);
+change them with `./bastion config set` or the TUI.
 
 - `CCR_WEB_AUTH_TOKEN`, `MCP_GATEWAY_TOKEN`, `CONTEXT7_API_KEY`,
   `CLAUDE_CODE_OAUTH_TOKEN`, `GITHUB_TOKEN` are

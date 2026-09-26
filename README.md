@@ -99,14 +99,19 @@ use the subcommands:
 A stack name may be given with or without the `stack-` prefix
 (`./bastion up web ai`). On `up`, `--recreate-networks` drops a stale
 `bastion-network` left from the old flat-network layout before starting.
-`--with-watchtower` (or `BASTION_PROFILES=watchtower`) also starts `teosd` -
-your own watchtower - which is otherwise off. `--with-agent-docker` (or
-`BASTION_PROFILES=agent-docker`) also starts `agent-docker`, a private,
-non-privileged Docker daemon for the CodeDeck agent to build projects in their
-own toolchain containers. It requires the Sysbox runtime on a Linux host:
-`./bastion install-sysbox` installs it, and `up` offers to on a terminal. See
-[docs/agent-docker.md](docs/agent-docker.md). `./bastion versions` shows the
-image pin vs. what is running.
+Two services are opt-in: `teosd` (your own watchtower) and `agent-docker`, a
+private, non-privileged Docker daemon for the CodeDeck agent to build projects
+in their own toolchain containers. Enable them permanently with
+`./bastion config set ENABLED_PROFILES watchtower,agent-docker`, which every
+`up` (including the boot daemon's) applies, or for one run with
+`--with-watchtower` / `--with-agent-docker`. `agent-docker` requires the Sysbox
+runtime on a Linux host: `./bastion install-sysbox` installs it, and `up`
+offers to on a terminal. See [docs/agent-docker.md](docs/agent-docker.md).
+`./bastion versions` shows the image pin vs. what is running.
+
+All settings live in `bastion.conf`: list or change them with
+`./bastion config` (or the TUI's Configuration view). The full reference is
+[docs/configuration.md](docs/configuration.md).
 
 On a fresh install `./bastion up` seeds `data/rtl/RTL-Config.json` and mints an
 RTL access rune from CLN; both are created only if absent, so an existing
@@ -196,7 +201,7 @@ stack-bitcoin/config/cln_config     # CLN configuration (alias, plugins, proxy)
 stack-network/docker-compose.yml    # Network, WireGuard, and Tor config
 stack-web/html/index.html           # Hub landing page (edit to add/remove panels)
 bastion.conf                        # GENERATED - in .gitignore
-stack-*/.env                        # SYMLINKS - in .gitignore
+secrets/                            # GENERATED from bastion.conf - in .gitignore
 stack-*/data/                       # Volumes - in .gitignore
 stack-ai/docker-compose.yml        # CCR + CodeDeck+ integration
 stack-ai/ccr/Dockerfile.ccr             # CCR pinned commit + Claude Code

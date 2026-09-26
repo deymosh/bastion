@@ -53,9 +53,10 @@ how to move to a new host, and why the `.onion` stays stable - is in
 ## Watchtower (teosd) is opt-in
 
 `teosd` runs **your own** watchtower - a service that watches *other* people's
-channels (e.g. for tower swaps). It is **not** started by `./bastion up`. Enable
-it with `./bastion up --with-watchtower` (or `BASTION_PROFILES=watchtower`); it
-carries the `watchtower` compose profile. `stop` / `down` always tear it down so
+channels (e.g. for tower swaps). It is **not** started by default. Enable it
+permanently with `./bastion config set ENABLED_PROFILES watchtower`, or for one
+run with `./bastion up --with-watchtower`; it carries the `watchtower` compose
+profile. `stop` / `down` always tear it down so
 it is never orphaned.
 
 Unrelated: the CLN `watchtower-client` plugin (breach protection *for this node*,
@@ -99,7 +100,7 @@ PeerSwap can affect funds and channel operations.
 - `amboss-healthcheck.sh` - signs a timestamp with CLN and posts a heartbeat to
   Amboss.space over Tor. Every step runs inside the `lightningd` container, so
   the host needs only Docker (no `jq`, no `curl`, no published Tor port). Opt-in;
-  run it from cron (`*/5 * * * *`) or set `ENABLE_AMBOSS_HEARTBEAT=true` for
-  `services/bastion-daemon.sh`. `TOR_PROXY` / `AMBOSS_URL` / `CLN_CONTAINER`
+  run it from cron (`*/5 * * * *`) or let `services/bastion-daemon.sh` run it
+  (`./bastion config set AMBOSS_HEARTBEAT 1`). `TOR_PROXY` / `AMBOSS_URL` / `CLN_CONTAINER`
   override the defaults. Note: it ties the node's identity to Amboss.
 - `node-audit.py` - routing profitability summary (also `./bastion audit`).

@@ -56,13 +56,15 @@ usage() {
     echo -e "  ${CYAN}versions${NC}               -> Image pin vs. what is running"
     echo -e "  ${CYAN}audit${NC}                  -> Node profitability audit"
     echo -e "  ${BOLD}install-sysbox${NC}         -> Install the Sysbox runtime --with-agent-docker needs"
+    echo -e "  ${BOLD}config${NC}  [list|get|set]  -> Show or change bastion.conf settings (validated)"
     echo -e "  ${CYAN}tui${NC}                    -> Force the interactive dashboard"
     echo -e ""
     echo -e "${YELLOW}${BOLD}FLAGS:${NC}"
     echo -e "  ${BOLD}--recreate-networks${NC} -> On 'up', drop a stale bastion-network (old subnet) first"
     echo -e "  ${BOLD}--force${NC}, ${BOLD}-f${NC}         -> Allow 'stop'/'down' of stack-network while other stacks run"
-    echo -e "  ${BOLD}--with-watchtower${NC}   -> Also run teosd (your own watchtower); off by default"
-    echo -e "  ${BOLD}--with-agent-docker${NC} -> Also run the agent's private Docker daemon (needs Sysbox); off by default"
+    echo -e "  ${BOLD}--with-watchtower${NC}   -> Also run teosd (your own watchtower) this time"
+    echo -e "  ${BOLD}--with-agent-docker${NC} -> Also run the agent's private Docker daemon (needs Sysbox) this time"
+    echo -e "                         To enable either permanently: $0 config set ENABLED_PROFILES watchtower,agent-docker"
     echo -e ""
     echo -e "${YELLOW}${BOLD}STACKS:${NC}"
     for i in "${!STACKS[@]}"; do
@@ -126,7 +128,7 @@ preflight_networks() {
     if [ "$RECREATE_NETWORKS" = "1" ]; then
         echo -e "${CYAN}--> Removing it (all Bastion stacks will be brought down first)...${NC}"
         for (( i=${#STACKS[@]}-1; i>=0; i-- )); do
-            docker compose -f "./${STACKS[$i]}/docker-compose.yml" down 2>/dev/null || true
+            compose "${STACKS[$i]}" down 2>/dev/null || true
         done
         if docker network rm bastion-network >/dev/null 2>&1; then
             echo -e "${GREEN}[✔] Removed stale bastion-network; it will be recreated with the new subnet.${NC}"
@@ -247,9 +249,16 @@ resolve_stacks() {
 
 _contains() { local n="$1"; shift; local x; for x in "$@"; do [ "$x" = "$n" ] && return 0; done; return 1; }
 
+# Every compose call for one stack goes through here, interpolated from
+# bastion.conf directly - no per-stack .env copy of the config is needed.
+compose() {
+    local stack="$1"; shift
+    docker compose -f "./$stack/docker-compose.yml" --env-file "$CONFIG_FILE" "$@"
+}
+
 # Every compose profile Bastion knows about. `stop`/`down` activate all of them
 # so an opt-in service (e.g. teosd) is torn down even if the flag was omitted.
-ALL_PROFILES="watchtower,agent-docker"
+ALL_PROFILES=$(IFS=,; printf '%s' "${KNOWN_PROFILES[*]}")
 _profile_active() { case ",${COMPOSE_PROFILES:-}," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
 
 # stack-network owns the bastion-transit network and runs Tor; stack-bitcoin
@@ -306,7 +315,7 @@ do_up() {
     local stack
     for stack in "${stacks[@]}"; do
         echo -e "${CYAN}--> Starting:${NC} ${BOLD}$stack${NC}"
-        if ! docker compose -f "./$stack/docker-compose.yml" up -d; then
+        if ! compose "$stack" up -d; then
             echo -e "${RED}${BOLD}[✘] Failed to start $stack.${NC}"
             return 1
         fi
@@ -326,7 +335,7 @@ do_stop() {
     export COMPOSE_PROFILES="$ALL_PROFILES"   # also stop opt-in services
     echo -e "${RED}${BOLD}[-] Stopping: ${stacks[*]}${NC}"
     for (( i=${#stacks[@]}-1; i>=0; i-- )); do
-        docker compose -f "./${stacks[$i]}/docker-compose.yml" stop
+        compose "${stacks[$i]}" stop
     done
 }
 
@@ -336,7 +345,7 @@ do_down() {
     export COMPOSE_PROFILES="$ALL_PROFILES"   # also remove opt-in services
     echo -e "${RED}${BOLD}[-] Removing: ${stacks[*]}${NC}"
     for (( i=${#stacks[@]}-1; i>=0; i-- )); do
-        docker compose -f "./${stacks[$i]}/docker-compose.yml" down
+        compose "${stacks[$i]}" down
     done
 }
 
@@ -347,7 +356,7 @@ do_build() {
     fi
     for stack in "${stacks[@]}"; do
         echo -e "${CYAN}--> Building:${NC} ${BOLD}$stack${NC}"
-        docker compose -f "./$stack/docker-compose.yml" build || return 1
+        compose "$stack" build || return 1
     done
 }
 
@@ -355,7 +364,7 @@ do_logs() {
     local stacks=("$@") args=()
     local s; for s in "${stacks[@]}"; do args+=(-f "./$s/docker-compose.yml"); done
     echo -e "${CYAN}${BOLD}[!] Logs (Ctrl-C to stop): ${stacks[*]}${NC}"
-    docker compose "${args[@]}" logs -f --tail=50
+    docker compose "${args[@]}" --env-file "$CONFIG_FILE" logs -f --tail=50
 }
 
 # --- Per-container operations (so `docker compose` is never run by hand) ---
@@ -391,7 +400,6 @@ do_container() {
         echo -e "    Known: $(printf '%s ' "${!CONTAINER_STACK[@]}" | tr ' ' '\n' | sort | paste -sd' ' -)" >&2
         return 1
     fi
-    local cf="./$stack/docker-compose.yml"
     export COMPOSE_PROFILES="$ALL_PROFILES"   # so opt-in services are addressable
 
     case "$action" in
@@ -399,14 +407,14 @@ do_container() {
     esac
 
     case "$action" in
-        restart) echo -e "${CYAN}--> Restarting ${BOLD}$c${NC}"; docker compose -f "$cf" restart "$c" ;;
-        stop)    echo -e "${RED}--> Stopping ${BOLD}$c${NC}";    docker compose -f "$cf" stop "$c" ;;
-        start)   echo -e "${GREEN}--> Starting ${BOLD}$c${NC}";  docker compose -f "$cf" start "$c" ;;
+        restart) echo -e "${CYAN}--> Restarting ${BOLD}$c${NC}"; compose "$stack" restart "$c" ;;
+        stop)    echo -e "${RED}--> Stopping ${BOLD}$c${NC}";    compose "$stack" stop "$c" ;;
+        start)   echo -e "${GREEN}--> Starting ${BOLD}$c${NC}";  compose "$stack" start "$c" ;;
         logs)    echo -e "${CYAN}${BOLD}[!] Logs for $c (Ctrl-C to stop):${NC}"
-                 docker compose -f "$cf" logs -f --tail=100 "$c" ;;
-        exec)    MSYS_NO_PATHCONV=1 docker compose -f "$cf" exec "$c" "$@" ;;
+                 compose "$stack" logs -f --tail=100 "$c" ;;
+        exec)    MSYS_NO_PATHCONV=1 compose "$stack" exec "$c" "$@" ;;
         shell)   echo -e "${CYAN}--> Shell in ${BOLD}$c${NC} (exit to leave)${NC}"
-                 MSYS_NO_PATHCONV=1 docker compose -f "$cf" exec "$c" \
+                 MSYS_NO_PATHCONV=1 compose "$stack" exec "$c" \
                      sh -c 'command -v bash >/dev/null 2>&1 && exec bash || exec sh' ;;
         *) echo -e "${RED}[✘] Unknown container action: $action${NC}" >&2; return 1 ;;
     esac
@@ -459,6 +467,43 @@ do_versions() {
     done
 }
 
+# ./bastion config [list] | get KEY | set KEY VALUE
+# Scriptable access to bastion.conf through the settings registry: `set`
+# validates and refreshes the derived secret files exactly like the TUI editor.
+# `list` masks secrets; `get` prints the raw value (it is the operator's file).
+do_config() {
+    local sub="${1:-list}"
+    case "$sub" in
+        list)
+            local k section="" v
+            config_parse_file
+            for k in "${MANAGED_VARS[@]}"; do
+                if [ "${SETTING_SECTION[$k]}" != "$section" ]; then
+                    section=${SETTING_SECTION[$k]}
+                    echo -e "\n${BOLD}${section}${NC}"
+                fi
+                v=${CONFIG_VALUES[$k]:-}
+                if config_var_is_secret "$k"; then [ -n "$v" ] && v="********" || v="(unset)"; fi
+                printf '  %-44s %s\n' "$k" "${v:-(unset)}"
+            done ;;
+        get)
+            [ "$#" -eq 2 ] && config_is_managed "$2" \
+                || { echo -e "${RED}[✘] usage: $0 config get <SETTING>  (see: $0 config list)${NC}" >&2; return 1; }
+            config_parse_file
+            printf '%s\n' "${CONFIG_VALUES[$2]:-}" ;;
+        set)
+            [ "$#" -eq 3 ] || { echo -e "${RED}[✘] usage: $0 config set <SETTING> <VALUE>  (\"\" clears it)${NC}" >&2; return 1; }
+            local err
+            if ! err=$(config_set "$2" "$3"); then
+                echo -e "${RED}[✘] $2: $err${NC}" >&2; return 1
+            fi
+            echo -e "${GREEN}[✔] $2 saved.${NC}" ;;
+        *)
+            echo -e "${RED}[✘] usage: $0 config [list] | get <SETTING> | set <SETTING> <VALUE>${NC}" >&2
+            return 1 ;;
+    esac
+}
+
 # Entry points used by the TUI (utils/tui.sh).
 bastion_stack_action() {
     local action="$1"; shift
@@ -492,21 +537,29 @@ done
 set -- "${ARGS[@]}"
 CMD="${1:-}"
 
-# Compose profiles: --with-<profile> flags and/or BASTION_PROFILES (comma list)
-# select opt-in services. `docker compose` reads COMPOSE_PROFILES natively, so
-# exporting it here is all that is needed at the call sites.
-_profiles="${BASTION_PROFILES:-}"
-_add_profile() { case ",$_profiles," in *",$1,"*) : ;; *) _profiles="${_profiles:+$_profiles,}$1" ;; esac; }
-[ "$WITH_WATCHTOWER" = 1 ] && _add_profile watchtower
-[ "$WITH_AGENT_DOCKER" = 1 ] && _add_profile agent-docker
-[ -n "$_profiles" ] && export COMPOSE_PROFILES="$_profiles"
-
 # Help needs neither Docker nor config - answer it before touching either.
 case "$CMD" in -h|--help|help) usage ;; esac
 
 # Load bastion.conf + defaults for every real command. This never prompts;
 # only commands that boot containers (below) call require_essentials.
 load_config
+
+# Compose profiles select the opt-in services. The persisted ENABLED_PROFILES
+# setting applies to every run (so the boot daemon's plain `./bastion up` keeps
+# them); BASTION_PROFILES (comma list) and the --with-<profile> flags add to it
+# for this run only. `docker compose` reads COMPOSE_PROFILES natively.
+_profiles=""
+_add_profiles() {
+    local p
+    for p in ${1//,/ }; do
+        case ",$_profiles," in *",$p,"*) : ;; *) _profiles="${_profiles:+$_profiles,}$p" ;; esac
+    done
+}
+_add_profiles "${ENABLED_PROFILES:-}"
+_add_profiles "${BASTION_PROFILES:-}"
+[ "$WITH_WATCHTOWER" = 1 ] && _add_profiles watchtower
+[ "$WITH_AGENT_DOCKER" = 1 ] && _add_profiles agent-docker
+[ -n "$_profiles" ] && export COMPOSE_PROFILES="$_profiles"
 
 # No command (or `tui`) on a real terminal -> interactive dashboard.
 if { [ -z "$CMD" ] || [ "$CMD" = "tui" ]; } && [ -t 0 ] && [ -t 1 ]; then
@@ -522,6 +575,11 @@ fi
 [ -z "$CMD" ] && usage
 
 shift
+# `config` edits bastion.conf only - it must work with Docker stopped.
+if [ "$CMD" = config ]; then
+    do_config "$@"
+    exit $?
+fi
 check_docker
 case "$CMD" in
     up)

@@ -79,225 +79,203 @@ RED='\033[0;31m'
 YELLOW='\033[0;33m'
 NC='\033[0m' 
 
-# --- LOGIC ---
+# --- SETTINGS REGISTRY --------------------------------------------------------
+# Every bastion.conf setting is declared once, in utils/settings.registry (a
+# plain '|'-separated data file - its header documents the columns, types and
+# flags). Everything below derives from it.
+SETTINGS_REGISTRY="${SETTINGS_REGISTRY:-$(dirname "${BASH_SOURCE[0]}")/settings.registry}"
 
-# Emit "KEY='value'" with the value single-quoted so the file stays safe to
-# source: a value like "a b; rm -rf ~" or "$(...)" is data, not code. Empty
-# values become KEY='' . read_env_var() strips the surrounding quotes on read.
+# Opt-in compose profiles Bastion knows about (ENABLED_PROFILES / --with-* flags).
+KNOWN_PROFILES=(watchtower agent-docker)
+
+declare -A SETTING_SECTION=() SETTING_DEFAULT=() SETTING_TYPE=() SETTING_FLAGS=() SETTING_DESC=()
+MANAGED_VARS=()                # every managed key, in registry (display) order
+BASTION_REQUIRED_VARS=()       # the no-default essentials require_essentials asks for
+
+# Load the registry. A missing file or a malformed row is fatal: silently
+# dropping a setting would drop it from bastion.conf on the next write.
+_load_settings_registry() {
+    local line k s d t f desc n=0
+    [ -r "$SETTINGS_REGISTRY" ] || { echo "config.sh: settings registry not found: $SETTINGS_REGISTRY" >&2; exit 1; }
+    while IFS= read -r line || [ -n "$line" ]; do
+        n=$((n + 1)); line=${line%$'\r'}
+        [[ -z "${line//[[:space:]]/}" || $line == \#* ]] && continue
+        IFS='|' read -r k s d t f desc <<< "$line"
+        if [[ ! $k =~ ^[A-Z_][A-Z0-9_]*$ ]] || [ -z "$s" ] || [ -z "$t" ] || [ -z "$desc" ] \
+           || [ -n "${SETTING_TYPE[$k]+set}" ]; then
+            echo "config.sh: bad or duplicate row $n in $SETTINGS_REGISTRY: $line" >&2; exit 1
+        fi
+        MANAGED_VARS+=("$k")
+        SETTING_SECTION[$k]=$s; SETTING_DEFAULT[$k]=$d; SETTING_TYPE[$k]=$t
+        SETTING_FLAGS[$k]=$f;   SETTING_DESC[$k]=$desc
+        case ",$f," in *,required,*) BASTION_REQUIRED_VARS+=("$k") ;; esac
+    done < "$SETTINGS_REGISTRY"
+}
+_load_settings_registry
+
+config_is_managed()     { [ -n "${SETTING_TYPE[$1]+set}" ]; }
+_setting_has_flag()     { case ",${SETTING_FLAGS[$1]:-}," in *",$2,"*) return 0 ;; *) return 1 ;; esac; }
+# Keys whose value should be masked in any UI (and projected into secrets/).
+config_var_is_secret()  { _setting_has_flag "$1" secret; }
+
+# Resolve a key's default, running its generator if it has one.
+_setting_default() {
+    case "${SETTING_DEFAULT[$1]:-}" in
+        @tz)    cat /etc/timezone 2>/dev/null || echo UTC ;;
+        @uid)   id -u ;;
+        @gid)   id -g ;;
+        @hex16) openssl rand -hex 8 ;;
+        # 48 bytes -> 64 base64 chars, so stripping +/= still leaves >= 43.
+        # (32 bytes gave 44 chars, and every stripped +/ shortened the token.)
+        @token) openssl rand -base64 48 | tr -d '=+/\n' | cut -c1-43 ;;
+        *)      printf '%s' "${SETTING_DEFAULT[$1]:-}" ;;
+    esac
+}
+
+# --- bastion.conf format ----------------------------------------------------------
+# Written as KEY='value' - single-quoted, so the file is inert even if something
+# does source it: "a b; rm -rf ~" or "$(...)" stay data. Bastion itself never
+# sources it; config_parse_file reads it line by line.
+
+# Emit "KEY='value'", escaping embedded single quotes as '\''.
 _wc_kv() {
     local v=${2//\'/\'\\\'\'}
     printf "%s='%s'\n" "$1" "$v"
 }
 
-write_config() {
-    local temp_file extra_file
-    temp_file=$(mktemp "${CONFIG_FILE}.XXXXXX")
-    extra_file=$(mktemp "${CONFIG_FILE}.extra.XXXXXX")
-
-    if [ -f "$CONFIG_FILE" ]; then
-        awk '
-            BEGIN {
-                split("WIREGUARD_SERVERURL WIREGUARD_SERVERPORT WIREGUARD_PEERS NODE_ALIAS TIMEZONE USER_ID GROUP_ID PIHOLE_PASSWORD LXMF_ALLOWED_IDENTITY CODEDECK_RELAYS CODEDECK_TOR_PROXY_URL GIT_REPO GIT_USER GIT_EMAIL CODEDECK_OPENCODE_SERVER_URL CODEDECK_OPENCODE_AUTO_START CODEDECK_OPENCODE_PORT CODEDECK_GSD_AUTO_INSTALL CCR_WEB_AUTH_TOKEN CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY CCR_TOKEN_REFRESH CCR_REFRESH_INTERVAL CCR_REFRESH_SKEW_MS MCP_GATEWAY_TOKEN CONTEXT7_API_KEY CLAUDE_CODE_OAUTH_TOKEN GITHUB_TOKEN", managed)
-                for (position in managed) {
-                    known[managed[position]] = 1
-                }
-            }
-            {
-                line = $0
-                sub(/^[[:space:]]*export[[:space:]]+/, "", line)
-                if (line !~ /^[A-Za-z_][A-Za-z0-9_]*=/) {
-                    next
-                }
-                name = line
-                sub(/=.*/, "", name)
-                if (!known[name] && !seen[name]++) {
-                    print line
-                }
-            }
-        ' "$CONFIG_FILE" > "$extra_file"
+# Decode the value half of a KEY=... line into REPLY: 'single' (with '\''
+# un-escaping), "double" (quotes stripped), or a legacy bare value taken
+# literally. Sets REPLY instead of printing so callers need no $(...) subshell
+# - one fork per value made every ./bastion call measurably slow.
+_config_decode() {
+    REPLY=$1
+    if [[ $REPLY == \'*\' ]]; then
+        REPLY=${REPLY:1:${#REPLY}-2}
+        REPLY=${REPLY//\'\\\'\'/\'}
+    elif [[ $REPLY == \"*\" ]]; then
+        REPLY=${REPLY:1:${#REPLY}-2}
     fi
-
-    umask 077
-    {
-        echo "# BASTION configuration"
-        echo "# Generated and maintained by ./bastion. Edit values, not section headers."
-        echo
-        echo "# Network"
-        echo "# Public address or DNS name used by WireGuard clients."
-        _wc_kv WIREGUARD_SERVERURL "$WIREGUARD_SERVERURL"
-        echo "# UDP port exposed by the WireGuard server."
-        _wc_kv WIREGUARD_SERVERPORT "$WIREGUARD_SERVERPORT"
-        echo "# Number of WireGuard peer profiles to generate."
-        _wc_kv WIREGUARD_PEERS "$WIREGUARD_PEERS"
-        echo
-        echo "# Bitcoin and Core Lightning"
-        echo "# Alias announced by the Core Lightning node."
-        _wc_kv NODE_ALIAS "$NODE_ALIAS"
-        echo
-        echo "# Host and access defaults"
-        echo "# Container and host timezone."
-        _wc_kv TIMEZONE "$TIMEZONE"
-        echo "# Host UID/GID used by services that support non-root execution."
-        _wc_kv USER_ID "$USER_ID"
-        _wc_kv GROUP_ID "$GROUP_ID"
-        echo "# Pi-hole web administration password."
-        _wc_kv PIHOLE_PASSWORD "$PIHOLE_PASSWORD"
-        echo
-        echo "# Optional Bastion services"
-        echo "# LXMF identity allowed to access the bridge."
-        _wc_kv LXMF_ALLOWED_IDENTITY "$LXMF_ALLOWED_IDENTITY"
-        echo
-        echo "# CodeDeck+"
-        echo "# Comma-separated trusted Nostr relay URLs."
-        _wc_kv CODEDECK_RELAYS "$CODEDECK_RELAYS"
-        echo "# SOCKS5 proxy used for CodeDeck relay connections."
-        _wc_kv CODEDECK_TOR_PROXY_URL "$CODEDECK_TOR_PROXY_URL"
-        echo "# Optional comma-separated Git repositories cloned into CodeDeck workspaces."
-        _wc_kv GIT_REPO "$GIT_REPO"
-        echo "# Optional Git identity used by CodeDeck."
-        _wc_kv GIT_USER "$GIT_USER"
-        _wc_kv GIT_EMAIL "$GIT_EMAIL"
-        echo "# Optional OpenCode session backend (empty = Claude Code only, pre-v0.12.0 behaviour)."
-        _wc_kv CODEDECK_OPENCODE_SERVER_URL "$CODEDECK_OPENCODE_SERVER_URL"
-        _wc_kv CODEDECK_OPENCODE_AUTO_START "$CODEDECK_OPENCODE_AUTO_START"
-        _wc_kv CODEDECK_OPENCODE_PORT "$CODEDECK_OPENCODE_PORT"
-        echo "# Optional GSD planning workflow install on boot (empty/0 = skip)."
-        _wc_kv CODEDECK_GSD_AUTO_INSTALL "$CODEDECK_GSD_AUTO_INSTALL"
-        echo
-        echo "# Claude Code Router"
-        echo "# Authentication token for the CCR web UI."
-        _wc_kv CCR_WEB_AUTH_TOKEN "$CCR_WEB_AUTH_TOKEN"
-        echo "# 1 lets Claude Code populate its model picker from the gateway's /v1/models."
-        _wc_kv CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY "$CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"
-        echo "# 1 keeps the CCR OAuth credentials file refreshed in-container; 0 disables it."
-        _wc_kv CCR_TOKEN_REFRESH "$CCR_TOKEN_REFRESH"
-        echo "# Seconds between refresher checks."
-        _wc_kv CCR_REFRESH_INTERVAL "$CCR_REFRESH_INTERVAL"
-        echo "# Refresh the access token this many milliseconds before it expires."
-        _wc_kv CCR_REFRESH_SKEW_MS "$CCR_REFRESH_SKEW_MS"
-        echo
-        echo "# MCP gateway"
-        echo "# Bearer token every remote MCP client must send to the gateway (:8811)."
-        _wc_kv MCP_GATEWAY_TOKEN "$MCP_GATEWAY_TOKEN"
-        echo "# Optional Context7 API key for higher rate limits (empty = keyless)."
-        _wc_kv CONTEXT7_API_KEY "$CONTEXT7_API_KEY"
-        echo
-        echo "# CodeDeck Claude authentication"
-        echo "# Required by CodeDeck+; keep this file private."
-        _wc_kv CLAUDE_CODE_OAUTH_TOKEN "$CLAUDE_CODE_OAUTH_TOKEN"
-        echo "# Optional GitHub token for CodeDeck repository operations."
-        _wc_kv GITHUB_TOKEN "$GITHUB_TOKEN"
-        if [ -s "$extra_file" ]; then
-            echo
-            echo "# Additional custom variables"
-            cat "$extra_file"
-        fi
-    } > "$temp_file"
-
-    mv "$temp_file" "$CONFIG_FILE"
-    rm -f "$extra_file"
 }
 
-# Managed configuration keys, in display order. Kept in sync with write_config's
-# section layout and the awk allowlist above. The interactive editor (utils/tui.sh)
-# iterates this.
-MANAGED_VARS=(
-    WIREGUARD_SERVERURL WIREGUARD_SERVERPORT WIREGUARD_PEERS
-    NODE_ALIAS
-    TIMEZONE USER_ID GROUP_ID PIHOLE_PASSWORD
-    LXMF_ALLOWED_IDENTITY
-    CODEDECK_RELAYS CODEDECK_TOR_PROXY_URL GIT_REPO GIT_USER GIT_EMAIL
-    CODEDECK_OPENCODE_SERVER_URL CODEDECK_OPENCODE_AUTO_START CODEDECK_OPENCODE_PORT
-    CODEDECK_GSD_AUTO_INSTALL
-    CCR_WEB_AUTH_TOKEN CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY
-    CCR_TOKEN_REFRESH CCR_REFRESH_INTERVAL CCR_REFRESH_SKEW_MS
-    MCP_GATEWAY_TOKEN CONTEXT7_API_KEY
-    CLAUDE_CODE_OAUTH_TOKEN GITHUB_TOKEN
-)
-
-# Keys whose value should be masked in any UI.
-config_var_is_secret() {
-    case "$1" in
-        PIHOLE_PASSWORD|CCR_WEB_AUTH_TOKEN|MCP_GATEWAY_TOKEN|CONTEXT7_API_KEY|CLAUDE_CODE_OAUTH_TOKEN|GITHUB_TOKEN) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
-# Read one managed value straight from the config file (no sourcing). Decodes
-# the KEY='...' form write_config produces (including '\'' -> ' un-escaping),
-# and tolerates a legacy unquoted or double-quoted value.
-read_env_var() {
+# Parse CONFIG_FILE into CONFIG_VALUES (key -> decoded value) and CONFIG_KEYS
+# (keys in order of first appearance). A key assigned twice takes its LAST
+# value - the semantics the file had when it was sourced, so an operator who
+# appends an override still gets it. Comments, blanks and anything that is not
+# KEY=value are ignored; a leading `export ` is tolerated. Nothing in the file
+# is ever executed.
+declare -A CONFIG_VALUES=()
+CONFIG_KEYS=()
+config_parse_file() {
+    CONFIG_VALUES=(); CONFIG_KEYS=()
     [ -f "$CONFIG_FILE" ] || return 0
-    local line val
-    line=$(grep -m1 -E "^[[:space:]]*(export[[:space:]]+)?$1=" "$CONFIG_FILE" 2>/dev/null) || return 0
-    val=${line#*=}
-    if [[ $val == \'*\' ]]; then
-        val=${val:1:${#val}-2}
-        val=${val//\'\\\'\'/\'}
-    elif [[ $val == \"*\" ]]; then
-        val=${val:1:${#val}-2}
+    local line key
+    while IFS= read -r line || [ -n "$line" ]; do
+        line=${line%$'\r'}
+        [[ $line =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
+        key=${BASH_REMATCH[2]}
+        [ -n "${CONFIG_VALUES[$key]+set}" ] || CONFIG_KEYS+=("$key")
+        _config_decode "${BASH_REMATCH[3]}"
+        CONFIG_VALUES[$key]=$REPLY
+    done < "$CONFIG_FILE"
+}
+
+# Read one value straight from the config file.
+read_env_var() {
+    config_parse_file
+    printf '%s' "${CONFIG_VALUES[$1]:-}"
+}
+
+# Render the whole file from the current environment (managed keys, grouped by
+# registry section, each with its description) plus every non-managed key found
+# in the existing file, verbatim-decoded, under "Additional custom variables".
+_render_config() {
+    local k section="" extras=()
+    config_parse_file
+    for k in "${CONFIG_KEYS[@]}"; do config_is_managed "$k" || extras+=("$k"); done
+    echo "# BASTION configuration"
+    echo "# Generated and maintained by ./bastion. Edit values, not section headers."
+    for k in "${MANAGED_VARS[@]}"; do
+        if [ "${SETTING_SECTION[$k]}" != "$section" ]; then
+            section=${SETTING_SECTION[$k]}
+            echo; echo "# $section"
+        fi
+        echo "# ${SETTING_DESC[$k]}"
+        _wc_kv "$k" "${!k-}"
+    done
+    if [ "${#extras[@]}" -gt 0 ]; then
+        echo; echo "# Additional custom variables"
+        for k in "${extras[@]}"; do _wc_kv "$k" "${CONFIG_VALUES[$k]}"; done
     fi
-    printf '%s' "$val"
+}
+
+# Write CONFIG_FILE (mode 600) - but only when the content actually changes, so
+# read-only commands (status, logs, the TUI) leave the file untouched.
+write_config() {
+    local new cur="" tmp
+    # $(...) drops the trailing newline the rendered file ends with; add it back.
+    new="$(_render_config)"$'\n'
+    [ -f "$CONFIG_FILE" ] && { IFS= read -r -d '' cur < "$CONFIG_FILE" || true; }
+    [ "$new" = "$cur" ] && return 0
+    tmp=$(umask 077; mktemp "${CONFIG_FILE}.XXXXXX") || return 1
+    printf '%s' "$new" > "$tmp" && mv -f "$tmp" "$CONFIG_FILE"
 }
 
 # Validate a proposed value for a managed key. Prints an error and returns 1 on
-# failure; returns 0 (silent) when acceptable. Empty is allowed for optional keys.
+# failure; returns 0 (silent) when acceptable.
 validate_env_value() {
     local key="$1" val="$2"
-    case "$key" in
-        WIREGUARD_SERVERPORT)
-            [[ "$val" =~ ^[0-9]+$ ]] && [ "$val" -ge 1 ] && [ "$val" -le 65535 ] \
-                || { echo "must be a port number 1-65535"; return 1; } ;;
-        WIREGUARD_PEERS|USER_ID|GROUP_ID)
-            [[ "$val" =~ ^[0-9]+$ ]] || { echo "must be a non-negative integer"; return 1; } ;;
-        WIREGUARD_SERVERURL)
-            [ -n "$val" ] || { echo "required (public IP or hostname)"; return 1; }
-            [[ "$val" =~ ^[A-Za-z0-9.:_-]+$ ]] || { echo "not a valid host/IP"; return 1; } ;;
-        NODE_ALIAS)
-            [ "${#val}" -le 32 ] || { echo "max 32 characters"; return 1; } ;;
-        TIMEZONE)
-            [[ "$val" =~ ^[A-Za-z0-9+_/-]+$ ]] || { echo "not a valid tz name (e.g. Europe/Madrid)"; return 1; } ;;
-        CODEDECK_TOR_PROXY_URL)
-            [ -z "$val" ] || [[ "$val" =~ ^socks5h?:// ]] \
-                || { echo "must start with socks5:// or socks5h://"; return 1; } ;;
-        CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY|CCR_TOKEN_REFRESH)
-            [[ "$val" =~ ^[01]$ ]] || { echo "must be 0 or 1"; return 1; } ;;
-        CCR_REFRESH_INTERVAL|CCR_REFRESH_SKEW_MS)
-            [[ "$val" =~ ^[0-9]+$ ]] && [ "$val" -gt 0 ] \
-                || { echo "must be a positive integer"; return 1; } ;;
-        CODEDECK_OPENCODE_AUTO_START|CODEDECK_GSD_AUTO_INSTALL)
-            [ -z "$val" ] || [[ "$val" =~ ^[01]$ ]] \
-                || { echo "must be 0 or 1 (empty disables)"; return 1; } ;;
-        CODEDECK_OPENCODE_PORT)
-            [ -z "$val" ] || { [[ "$val" =~ ^[0-9]+$ ]] && [ "$val" -ge 1 ] && [ "$val" -le 65535 ]; } \
-                || { echo "must be empty or a port number 1-65535"; return 1; } ;;
-        CODEDECK_OPENCODE_SERVER_URL)
-            [ -z "$val" ] || [[ "$val" =~ ^https?:// ]] \
-                || { echo "must start with http:// or https://"; return 1; } ;;
-        GIT_EMAIL)
-            [ -z "$val" ] || [[ "$val" =~ ^[^@[:space:]]+@[^@[:space:]]+$ ]] \
-                || { echo "not a valid email"; return 1; } ;;
-        CODEDECK_RELAYS)
-            if [ -n "$val" ]; then
-                local _r _old_ifs="$IFS"; IFS=','
-                for _r in $val; do
-                    _r="${_r#"${_r%%[![:space:]]*}"}"   # ltrim
-                    [[ "$_r" =~ ^wss?:// ]] || { IFS="$_old_ifs"; echo "comma-separated ws:// or wss:// URLs"; return 1; }
-                done
-                IFS="$_old_ifs"
-            fi ;;
-        *) : ;;  # free-form / optional
+    if [ -z "$val" ]; then
+        _setting_has_flag "$key" required && { echo "required"; return 1; }
+        return 0
+    fi
+    case "${SETTING_TYPE[$key]:-text}" in
+        host)   [[ "$val" =~ ^[A-Za-z0-9.:_-]+$ ]] || { echo "not a valid host/IP"; return 1; } ;;
+        port)   [[ "$val" =~ ^[0-9]+$ ]] && [ "$val" -ge 1 ] && [ "$val" -le 65535 ] \
+                    || { echo "must be a port number 1-65535"; return 1; } ;;
+        int)    [[ "$val" =~ ^[0-9]+$ ]] || { echo "must be a non-negative integer"; return 1; } ;;
+        posint) [[ "$val" =~ ^[0-9]+$ ]] && [ "$val" -gt 0 ] || { echo "must be a positive integer"; return 1; } ;;
+        bool)   [[ "$val" =~ ^[01]$ ]] || { echo "must be 0 or 1"; return 1; } ;;
+        alias)  [ "${#val}" -le 32 ] || { echo "max 32 characters"; return 1; } ;;
+        tz)     [[ "$val" =~ ^[A-Za-z0-9+_/-]+$ ]] || { echo "not a valid tz name (e.g. Europe/Madrid)"; return 1; } ;;
+        socks)  [[ "$val" =~ ^socks5h?:// ]] || { echo "must start with socks5:// or socks5h://"; return 1; } ;;
+        http)   [[ "$val" =~ ^https?:// ]] || { echo "must start with http:// or https://"; return 1; } ;;
+        email)  [[ "$val" =~ ^[^@[:space:]]+@[^@[:space:]]+$ ]] || { echo "not a valid email"; return 1; } ;;
+        relays)
+            local _r _old_ifs="$IFS"; IFS=','
+            for _r in $val; do
+                _r="${_r#"${_r%%[![:space:]]*}"}"   # ltrim
+                [[ "$_r" =~ ^wss?:// ]] || { IFS="$_old_ifs"; echo "comma-separated ws:// or wss:// URLs"; return 1; }
+            done
+            IFS="$_old_ifs" ;;
+        profiles)
+            local _p
+            for _p in ${val//,/ }; do
+                case " ${KNOWN_PROFILES[*]} " in *" $_p "*) : ;;
+                    *) echo "unknown profile '$_p' (known: ${KNOWN_PROFILES[*]})"; return 1 ;; esac
+            done ;;
+        cpus)   [[ "$val" =~ ^[0-9]+(\.[0-9]+)?$ ]] && [[ ! "$val" =~ ^0+(\.0+)?$ ]] \
+                    || { echo "must be a positive number of CPUs, e.g. 2 or 1.5"; return 1; } ;;
+        mem)    [[ "$val" =~ ^[1-9][0-9]*[bkmgBKMG]?$ ]] || { echo "must be a size like 512m or 4g"; return 1; } ;;
+        path)   [[ "$val" == /* ]] || { echo "must be an absolute path"; return 1; } ;;
+        *) : ;;  # text: free-form
     esac
     return 0
 }
 
-# Symlink each stack's .env to the root config file.
+# Compose reads bastion.conf through `--env-file` (./bastion's compose()), so
+# the per-stack .env links older versions created are obsolete - and on a host
+# without symlink support (Git Bash on Windows) each one was a full copy of the
+# config, secrets included. Remove any that is a link, or a copy identical to
+# bastion.conf; a differing file is the operator's own and is left alone.
 # BASTION_SKIP_ENV_LINKS=1 skips this (used by the test suite).
-link_stack_envs() {
+remove_legacy_stack_envs() {
     [ "${BASTION_SKIP_ENV_LINKS:-0}" = 1 ] && return 0
-    local stack
+    local stack f
     for stack in "${STACKS[@]}"; do
-        [ -d "./$stack" ] && ln -sf "../$CONFIG_FILE" "./$stack/.env"
+        f="./$stack/.env"
+        if [ -L "$f" ] || { [ -f "$f" ] && cmp -s "$f" "$CONFIG_FILE"; }; then
+            rm -f "$f"
+        fi
     done
 }
 
@@ -312,14 +290,15 @@ link_stack_envs() {
 # entries expect.
 SECRETS_DIR="${SECRETS_DIR:-$(dirname "${CONFIG_FILE:-./bastion.conf}")/secrets}"
 write_secret_files() {
-    mkdir -p "$SECRETS_DIR" && chmod 700 "$SECRETS_DIR" 2>/dev/null || true
-    local var name f val cur
+    [ -d "$SECRETS_DIR" ] || { mkdir -p "$SECRETS_DIR" && chmod 700 "$SECRETS_DIR" 2>/dev/null; } || true
+    local var f val cur
     for var in "${MANAGED_VARS[@]}"; do
         config_var_is_secret "$var" || continue
-        name=$(printf '%s' "$var" | tr 'A-Z' 'a-z')
-        f="$SECRETS_DIR/$name"
+        f="$SECRETS_DIR/${var,,}"
         val="${!var-}"
-        cur=""; [ -f "$f" ] && cur=$(cat "$f")
+        # Read without a subshell (`read -d ''` keeps the exact bytes of a
+        # value with no trailing newline; it returns 1 at EOF, hence || true).
+        cur=""; [ -f "$f" ] && { IFS= read -r -d '' cur < "$f" || true; }
         # Always materialise the file (Compose `file:` needs it to exist even
         # when the value is empty), but only rewrite when the value changed.
         if [ ! -f "$f" ] || [ "$val" != "$cur" ]; then
@@ -329,75 +308,50 @@ write_secret_files() {
     done
 }
 
-# Persist the current environment to the config file and refresh the .env links
-# and the derived secret files. Used by the interactive editor after a change.
+# Persist the current environment to the config file and refresh the derived
+# secret files.
 save_config() {
     cp -f "$CONFIG_FILE" "${CONFIG_FILE}.bak" 2>/dev/null || true
     write_config
-    link_stack_envs
     write_secret_files
 }
 
-# Values that have no sensible default and that only matter when starting
-# containers. require_essentials() (below) is the only thing that asks for them,
-# and only for commands that boot a stack.
-BASTION_REQUIRED_VARS=(WIREGUARD_SERVERURL WIREGUARD_SERVERPORT NODE_ALIAS)
+# Change one managed setting: validate it, persist it (keeping every other value
+# exactly as it is in the file), and refresh the derived files. Prints the
+# validation error and returns 1 when the value is rejected.
+config_set() {
+    local key="$1" val="$2" err k
+    config_is_managed "$key" || { echo "unknown setting: $key"; return 1; }
+    err=$(validate_env_value "$key" "$val") || { echo "$err"; return 1; }
+    config_parse_file
+    (
+        for k in "${CONFIG_KEYS[@]}"; do export "$k=${CONFIG_VALUES[$k]}"; done
+        export "$key=$val"
+        save_config
+    ) || return 1
+    export "$key=$val"
+}
 
-# Load bastion.conf into the environment and fill in the generated defaults.
-# No prompts and no output on the happy path - safe to call for every command
-# (status, logs, the TUI, ...), not just "up". Re-writes the normalised file and
-# refreshes the per-stack .env links.
+# Load bastion.conf into the environment and fill in the defaults. No prompts
+# and no output on the happy path - safe to call for every command (status,
+# logs, the TUI, ...), not just "up". Values in the file win over the caller's
+# environment. The file is normalised (and derived files refreshed) only when
+# something actually changed.
 load_config() {
     if [ ! -f "$CONFIG_FILE" ]; then
-        touch "$CONFIG_FILE"
+        ( umask 077; touch "$CONFIG_FILE" )
         echo -e "${YELLOW}[!] Created $CONFIG_FILE${NC}"
     fi
 
-    set -a
-    # shellcheck disable=SC1090
-    source <(sed 's/^export //g' "$CONFIG_FILE" | grep -v '^[[:space:]]*#')
-    set +a
-
-    declare -A DEFAULTS=(
-        ["TIMEZONE"]=$(cat /etc/timezone 2>/dev/null || echo "UTC")
-        ["PIHOLE_PASSWORD"]=$(openssl rand -hex 8)
-        ["WIREGUARD_PEERS"]="1"
-        ["USER_ID"]=$(id -u)
-        ["GROUP_ID"]=$(id -g)
-        ["LXMF_ALLOWED_IDENTITY"]=""
-        ["CODEDECK_RELAYS"]=""
-        ["CODEDECK_TOR_PROXY_URL"]="socks5h://tor:9050"
-        ["GIT_REPO"]=""
-        ["GIT_USER"]=""
-        ["GIT_EMAIL"]=""
-        # Off by default: matches CodeDeck+'s own "no config = Claude Code only"
-        # behaviour (see .env.example).
-        ["CODEDECK_OPENCODE_SERVER_URL"]=""
-        ["CODEDECK_OPENCODE_AUTO_START"]=""
-        ["CODEDECK_OPENCODE_PORT"]=""
-        ["CODEDECK_GSD_AUTO_INSTALL"]=""
-        ["CCR_WEB_AUTH_TOKEN"]=$(openssl rand -base64 32 | tr -d '=+/\n' | cut -c1-43)
-        ["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"]="1"
-        # Match stack-ai/docker-compose.yml's own ${VAR:-default} fallbacks, so
-        # a freshly generated bastion.conf changes nothing for CCR at runtime.
-        ["CCR_TOKEN_REFRESH"]="1"
-        ["CCR_REFRESH_INTERVAL"]="300"
-        ["CCR_REFRESH_SKEW_MS"]="1800000"
-        # MCP gateway: same shape as the CCR web token (URL-safe random). The
-        # Context7 key is optional - an empty value serves keyless requests.
-        ["MCP_GATEWAY_TOKEN"]=$(openssl rand -base64 32 | tr -d '=+/\n' | cut -c1-43)
-        ["CONTEXT7_API_KEY"]=""
-        ["CLAUDE_CODE_OAUTH_TOKEN"]=""
-        ["GITHUB_TOKEN"]=""
-    )
-
-    local var
-    for var in "${!DEFAULTS[@]}"; do
-        [ -z "${!var}" ] && export "$var"="${DEFAULTS[$var]}"
+    local k
+    config_parse_file
+    for k in "${CONFIG_KEYS[@]}"; do export "$k=${CONFIG_VALUES[$k]}"; done
+    for k in "${MANAGED_VARS[@]}"; do
+        [ -n "${!k-}" ] || export "$k=$(_setting_default "$k")"
     done
 
     write_config
-    link_stack_envs
+    remove_legacy_stack_envs
     write_secret_files
 }
 
@@ -407,7 +361,7 @@ load_config() {
 require_essentials() {
     local var missing_vars=()
     for var in "${BASTION_REQUIRED_VARS[@]}"; do
-        [ -z "${!var}" ] && missing_vars+=("$var")
+        [ -z "${!var-}" ] && missing_vars+=("$var")
     done
     [ "${#missing_vars[@]}" -eq 0 ] && return 0
 
@@ -419,28 +373,20 @@ require_essentials() {
     fi
 
     echo -e "${YELLOW}${BOLD}[!] A few required values are not set yet.${NC}"
-    local val err prompt
+    local val err
     for var in "${missing_vars[@]}"; do
-        case "$var" in
-            WIREGUARD_SERVERURL)  prompt="Public IP or domain for WireGuard" ;;
-            WIREGUARD_SERVERPORT) prompt="Public UDP port for WireGuard" ;;
-            NODE_ALIAS)           prompt="Core Lightning node alias" ;;
-            *)                    prompt="$var" ;;
-        esac
         while :; do
-            echo -en "${CYAN}${BOLD}${prompt}: ${NC}"
+            echo -en "${CYAN}${BOLD}${SETTING_DESC[$var]} ${NC}${BOLD}[$var]: ${NC}"
             read -r val
-            if [ -n "$val" ] && err=$(validate_env_value "$var" "$val"); then
+            if err=$(validate_env_value "$var" "$val"); then
                 export "$var"="$val"
                 break
             fi
-            echo -e "${RED}  ${err:-a value is required}${NC}"
+            echo -e "${RED}  ${err}${NC}"
         done
     done
 
-    write_config
-    link_stack_envs
-    write_secret_files
+    save_config
     echo -e "${GREEN}[✔] Saved to $CONFIG_FILE.${NC}\n"
 }
 

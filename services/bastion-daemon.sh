@@ -17,29 +17,31 @@
 
 # --- 1. Configuration & Paths ---
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-CLN_DATA_DIR="$SCRIPT_DIR/../stack-bitcoin/data/cln"
-BACKUP_DEST="/mnt/backup_cln"
+BASTION_DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
+CLN_DATA_DIR="${CLN_DATA_DIR:-$BASTION_DIR/stack-bitcoin/data/cln}"
 CLN_CONTAINER="lightningd"
+
+# Settings live in bastion.conf ("Daemon" section; `./bastion config list`),
+# read through the settings registry: a missing value falls back to the
+# registry default. A variable already set in the environment wins (tests).
+CONFIG_FILE="${CONFIG_FILE:-$BASTION_DIR/bastion.conf}"
+# shellcheck source=../utils/config.sh
+source "$BASTION_DIR/utils/config.sh"
+config_parse_file
+_setting() {
+    local v="${CONFIG_VALUES[$1]:-}"
+    [ -n "$v" ] && printf '%s' "$v" || _setting_default "$1"
+}
+BACKUP_DEST="${BACKUP_DEST:-$(_setting BACKUP_DEST)}"
+CHECK_INTERVAL="${CHECK_INTERVAL:-$(_setting SCB_CHECK_INTERVAL)}"
+BACKUP_PLUGIN_COMPACT="${BACKUP_PLUGIN_COMPACT:-$(_setting BACKUP_PLUGIN_COMPACT)}"
+AMBOSS_HEARTBEAT="${AMBOSS_HEARTBEAT:-$(_setting AMBOSS_HEARTBEAT)}"
+AMBOSS_INTERVAL="${AMBOSS_INTERVAL:-$(_setting AMBOSS_INTERVAL)}"
+LAST_MAINTENANCE_DATE=""
 
 SCB_SOURCE="$CLN_DATA_DIR/emergency.recover"
 SCB_DEST_LIVE="$BACKUP_DEST/emergency.recover.live"
 SCB_HISTORY_DIR="$BACKUP_DEST/history"
-
-# Settings
-BACKUP_PLUGIN_COMPACT=false # Set to true if using backup plugin and want to compact it daily
-ENABLE_LXMF_BRIDGE=false # Set to true to enable the LXMF bridge (experimental)
-ENABLE_AMBOSS_HEARTBEAT=false # Set to true to post a signed heartbeat to Amboss
-AMBOSS_INTERVAL=300  # seconds between Amboss heartbeats
-CHECK_INTERVAL=3600  # 1 hour in seconds
-LAST_MAINTENANCE_DATE=""
-
-echo "[$(date)] BASTION Master Daemon started."
-
-# Start BASTION services.
-# teosd (your own watchtower) is opt-in: export BASTION_PROFILES=watchtower in
-# this service's environment (or pass --with-watchtower below) if you run one.
-echo "[$(date)] Launching BASTION stack..."
-./bastion up
 
 # --- 2. Function: Wait for Lightningd ---
 wait_for_cln() {
@@ -56,6 +58,17 @@ wait_for_cln() {
     echo "[$(date)] Lightning Node is officially ONLINE."
 }
 
+# The backup is only worth anything on a separate device. If the USB drive is
+# not mounted, BACKUP_DEST is a plain directory on the node's own disk: writing
+# there would look like success while protecting nothing. Refuse, loudly.
+backup_target_ok() {
+    if command -v mountpoint >/dev/null 2>&1 && ! mountpoint -q "$BACKUP_DEST"; then
+        echo "[$(date)] ERROR: $BACKUP_DEST is not a mounted filesystem - is the backup drive plugged in? SCB NOT backed up."
+        return 1
+    fi
+    return 0
+}
+
 # --- 3. Function: Daily Maintenance ---
 run_daily_maintenance() {
     CURRENT_DATE=$(date +%Y-%m-%d)
@@ -65,8 +78,8 @@ run_daily_maintenance() {
         echo "[$(date)] STARTING DAILY MAINTENANCE..."
         
         # A. Historical SCB Snapshot
-        mkdir -p "$SCB_HISTORY_DIR"
-        if [ -f "$SCB_SOURCE" ]; then
+        if [ -f "$SCB_SOURCE" ] && backup_target_ok; then
+            mkdir -p "$SCB_HISTORY_DIR"
             rm -f "$SCB_HISTORY_DIR/emergency.recover.$CURRENT_DATE" # Remove existing snapshot for today if exists (only happens if service restarted)
             cp -f "$SCB_SOURCE" "$SCB_HISTORY_DIR/emergency.recover.$CURRENT_DATE"
             echo "[SUCCESS] Historical snapshot created: $CURRENT_DATE"
@@ -75,7 +88,7 @@ run_daily_maintenance() {
         fi
 
         # B. SQLite Compaction (Conditional)
-        if [ "$BACKUP_PLUGIN_COMPACT" = true ]; then
+        if [ "$BACKUP_PLUGIN_COMPACT" = 1 ]; then
             echo "[Task] Compacting SQLite database..."
             JSON_OUT=$(docker exec $CLN_CONTAINER lightning-cli backup-compact 2>&1)
             
@@ -87,7 +100,7 @@ run_daily_maintenance() {
                 echo "[ERROR] Compaction failed: $JSON_OUT"
             fi
         else
-            echo "[Info] SQLite compaction skipped (BACKUP_PLUGIN_COMPACT=false)."
+            echo "[Info] SQLite compaction skipped (BACKUP_PLUGIN_COMPACT=0)."
         fi
         
         LAST_MAINTENANCE_DATE="$CURRENT_DATE"
@@ -96,31 +109,8 @@ run_daily_maintenance() {
     fi
 }
 
-start_LXMF_bridge() {
-    if [ "$ENABLE_LXMF_BRIDGE" = true ]; then
-        echo "[$(date)] Starting LXMF Bridge (experimental)..."
-        
-        # Create a python virtual environment for the bridge
-        if [ ! -d "venv" ]; then
-            python3 -m venv venv
-        fi
-
-        source venv/bin/activate
-
-        # Install dependencies (if any)
-        pip install --upgrade pip
-        pip install requests[socks] RNS LXMF
-
-        # Start the bridge in the background
-        python -u services/lxmf-bridge.py &
-        echo "[$(date)] LXMF Bridge started."
-    else
-        echo "[$(date)] LXMF Bridge is disabled (ENABLE_LXMF_BRIDGE=false)."
-    fi
-}
-
 start_amboss_heartbeat() {
-    if [ "$ENABLE_AMBOSS_HEARTBEAT" = true ]; then
+    if [ "$AMBOSS_HEARTBEAT" = 1 ]; then
         echo "[$(date)] Starting Amboss heartbeat (every ${AMBOSS_INTERVAL}s)..."
         (
             cd "$SCRIPT_DIR/.." || exit 1
@@ -130,50 +120,68 @@ start_amboss_heartbeat() {
             done
         ) &
     else
-        echo "[$(date)] Amboss heartbeat is disabled (ENABLE_AMBOSS_HEARTBEAT=false)."
+        echo "[$(date)] Amboss heartbeat is disabled (AMBOSS_HEARTBEAT=0)."
     fi
 }
 
-# --- 4. Main Execution Flow ---
+# --- 4. Function: Live SCB sync ---
+# Mirror emergency.recover to the backup drive when it changed. Returns 0 when
+# the live copy matches the source afterwards (or already did), 1 otherwise.
+sync_scb() {
+    local h_src h_dst h_tmp tmp
+    h_src=$(sha256sum "$SCB_SOURCE" | awk '{print $1}')
+    h_dst=$(sha256sum "$SCB_DEST_LIVE" 2>/dev/null | awk '{print $1}')
+    [ "$h_src" = "$h_dst" ] && return 0
 
-wait_for_cln
-start_LXMF_bridge
-start_amboss_heartbeat
+    echo "[$(date)] Change detected in SCB. Syncing to USB..."
+    backup_target_ok || return 1
 
-# Ensure the SCB file exists before starting the loop
-while [ ! -f "$SCB_SOURCE" ]; do
-    echo "[$(date)] Waiting for $SCB_SOURCE to be generated..."
-    sleep 5
-done
-
-echo "[$(date)] Starting Polling Service (Interval: ${CHECK_INTERVAL}s)"
-
-# --- 5. The Infinite Polling Loop ---
-while true; do
-    # Run maintenance check
-    run_daily_maintenance
-
-    # Compare current SCB with the one in the USB
-    H_SRC=$(sha256sum "$SCB_SOURCE" | awk '{print $1}')
-    H_DST=$(sha256sum "$SCB_DEST_LIVE" 2>/dev/null | awk '{print $1}')
-
-    if [ "$H_SRC" != "$H_DST" ]; then
-        echo "[$(date)] Change detected in SCB. Syncing to USB..."
-        
-        # Perform atomic-like copy
-        rm -f "$SCB_DEST_LIVE"
-        cp -f "$SCB_SOURCE" "$SCB_DEST_LIVE"
-        sync # Flush filesystem buffers to the USB hardware
-        
-        # Final Verification
-        H_VERIFY=$(sha256sum "$SCB_DEST_LIVE" | awk '{print $1}')
-        if [ "$H_SRC" == "$H_VERIFY" ]; then
-            echo "[$(date)] LIVE SYNC SUCCESS. Hash: ${H_SRC:0:8}..."
-        else
-            echo "[$(date)] ERROR: Integrity check failed after copy!"
-        fi
+    # Copy to a temp file on the same filesystem, verify it, flush it, and only
+    # then rename it over the live copy. rename(2) is atomic, so the destination
+    # always holds a complete backup - never a missing or half-written one, even
+    # if the host dies mid-copy.
+    tmp="$SCB_DEST_LIVE.tmp"
+    cp -f "$SCB_SOURCE" "$tmp"
+    h_tmp=$(sha256sum "$tmp" | awk '{print $1}')
+    if [ "$h_src" != "$h_tmp" ]; then
+        rm -f "$tmp"
+        echo "[$(date)] ERROR: Integrity check failed after copy - live backup left untouched."
+        return 1
     fi
+    sync "$tmp" 2>/dev/null || sync            # flush the data to the device
+    mv -f "$tmp" "$SCB_DEST_LIVE"
+    sync "$BACKUP_DEST" 2>/dev/null || sync    # persist the rename
+    echo "[$(date)] LIVE SYNC SUCCESS. Hash: ${h_src:0:8}..."
+}
 
-    # Wait for the next check
-    sleep "$CHECK_INTERVAL"
-done
+# --- 5. Main Execution Flow ---
+daemon_main() {
+    echo "[$(date)] BASTION Master Daemon started."
+
+    # Opt-in services (teosd, agent-docker) come from ENABLED_PROFILES in
+    # bastion.conf, which `./bastion up` applies on every run.
+    echo "[$(date)] Launching BASTION stack..."
+    cd "$BASTION_DIR" || exit 1
+    ./bastion up
+
+    wait_for_cln
+    start_amboss_heartbeat
+
+    # Ensure the SCB file exists before starting the loop
+    while [ ! -f "$SCB_SOURCE" ]; do
+        echo "[$(date)] Waiting for $SCB_SOURCE to be generated..."
+        sleep 5
+    done
+
+    echo "[$(date)] Starting Polling Service (Interval: ${CHECK_INTERVAL}s)"
+    while true; do
+        run_daily_maintenance
+        sync_scb || true
+        sleep "$CHECK_INTERVAL"
+    done
+}
+
+# Run only when executed; sourcing (the unit tests) just loads the functions.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    daemon_main
+fi
