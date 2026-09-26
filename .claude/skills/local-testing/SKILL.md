@@ -30,7 +30,7 @@ so `bastion.conf` and `secrets/` exist.
 |---|---|---|
 | Hub / `stack-web` | `docker compose --env-file bastion.conf -f stack-web/docker-compose.yml up -d` | fully standalone; or just open `stack-web/html/index.html` in a browser |
 | `stack-monitor` | that stack alone | self-contained, no Tor |
-| Tor / `torrc` / `Dockerfile.tor` | `stack-network` `tor` service only | `docker compose --env-file bastion.conf -f stack-network/docker-compose.yml up -d tor` |
+| Tor / `torrc` / the tor image pin | `stack-network` `tor` service only | `docker compose --env-file bastion.conf -f stack-network/docker-compose.yml up -d tor` |
 | CLN config / `cln_config` / CLN compose | `tor`, then `lightningd` (NO bitcoind) | trustedcoin path, see §2 |
 | TEOS / `teos.toml` / `rust-teos` | `tor`, `lightningd`, rebuilt `teosd` | `teosd` carries the `watchtower` profile — `./bastion build --with-watchtower stack-bitcoin` (or `utils/build_teos.sh force`) to build, `./bastion up --with-watchtower ...` to start it |
 | CCR / `stack-ai` | `stack-ai` alone (+ `tor` if testing relay/bridge egress) | `/health` on `:3458` |

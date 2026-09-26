@@ -20,9 +20,6 @@ build() { # label  docker-build-args...
   if docker build "$@"; then echo "  ok: $label"; else echo "  FAILED: $label"; rc=1; fi
 }
 
-build "stack-network/Dockerfile.tor" \
-  -f stack-network/Dockerfile.tor -t bastion-weekly/tor:ci stack-network
-
 build "stack-bitcoin/Dockerfile.lightningd" \
   -f stack-bitcoin/Dockerfile.lightningd -t lightningd-custom:latest stack-bitcoin
 

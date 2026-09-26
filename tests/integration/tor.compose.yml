@@ -1,6 +1,6 @@
 # Hermetic environment for the hidden-service reachability test.
 #
-# Builds the real Tor image from stack-network/Dockerfile.tor and runs it with
+# Runs the real Tor image (the one stack-network pins) with
 # a torrc derived from stack-network/config/torrc (the test harness rewrites the
 # 10.254.x transit addresses to the 10.253.x range below so the subnet can't
 # collide with a running Bastion). Mock listeners sit where CLN and TEOS
@@ -14,10 +14,9 @@ name: bastion-hs-test
 
 services:
   tor:
-    build:
-      context: ../../stack-network
-      dockerfile: Dockerfile.tor
-    image: bastion-hs-test-tor:latest
+    # The exact image production pins (read from stack-network/docker-compose.yml
+    # by the driving script).
+    image: ${TOR_IMAGE:?set by the test script}
     volumes:
       - ${HS_TEST_TORRC:-./torrc.generated}:/etc/tor/torrc:ro
       - tor-data:/data/.tor

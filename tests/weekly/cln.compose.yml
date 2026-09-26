@@ -1,4 +1,4 @@
-# Weekly-tier: real Core Lightning image + real Tor image + throwaway regtest
+# Weekly-tier: real Core Lightning image + the pinned Tor image + throwaway regtest
 # bitcoind. Driven by tests/weekly/cln-real-config.sh, which mounts a config
 # mechanically derived from the real stack-bitcoin/config/cln_config.
 #
@@ -8,10 +8,9 @@ name: bastion-cln-weekly
 
 services:
   tor:
-    build:
-      context: ../../stack-network
-      dockerfile: Dockerfile.tor
-    image: bastion-cln-weekly-tor:latest
+    # The exact image production pins (read from stack-network/docker-compose.yml
+    # by the driving script).
+    image: ${TOR_IMAGE:?set by the test script}
     volumes:
       - ${CLN_WEEKLY_DIR:-/tmp/bastion-cln-weekly}:/cfg:ro
       - tordata:/data/.tor

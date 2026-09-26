@@ -26,7 +26,6 @@ updates:
   # Base images of the images Bastion builds.
   - package-ecosystem: docker
     directories:
-      - /stack-network
       - /stack-bitcoin
       - /stack-ai/ccr
       - /stack-ai/mcp-gateway
