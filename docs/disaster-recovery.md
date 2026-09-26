@@ -9,7 +9,7 @@ Read this **before** you need it.
 |---|---|---|
 | `stack-bitcoin/data/cln/hsm_secret` | The CLN wallet seed. | **Total loss.** On-chain funds cannot be swept and channels cannot be closed. Without a backup there is no recovery. |
 | `stack-bitcoin/data/cln/lightningd.sqlite3` | Channel state, payments, the node database. | At best, every channel is force-closed. If a stale copy is restored while a peer has newer state, the peer can claim a penalty and **the funds are stolen**. |
-| `/mnt/backup_cln/lightningd.sqlite3` | The live replica. CLN writes every database transaction here as well (`wallet=` in `cln_config`); inside the container the drive is `/backup_usb`. | Your primary source for restoring the database. Keep the drive healthy. |
+| `$BACKUP_DEST/lightningd.sqlite3` (default `/mnt/backup_cln`) | The live replica. CLN writes every database transaction here as well (`wallet=` in `cln_config`); inside the container the drive is `/backup_usb`. | Your primary source for restoring the database. Keep the drive healthy. |
 | `stack-bitcoin/data/cln/emergency.recover` | CLN's Static Channel Backup (SCB). | Lets peers help you force-close after a full database loss. `bastion-daemon.sh` mirrors it to `$BACKUP_DEST/emergency.recover.live` on every change and keeps 30 daily snapshots in `$BACKUP_DEST/history/`. |
 | `stack-bitcoin/data/teos/` | The watchtower's tower key (only if you run `teosd`). | The tower gets a new identity and clients must re-register. No funds are lost. |
 | `bastion.conf` + `secrets/` | Generated config and secrets (git-ignored). | `./bastion` regenerates them, but you have to re-enter the WireGuard host and port, the node alias and any tokens. Back them up. |

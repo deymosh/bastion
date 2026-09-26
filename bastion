@@ -144,6 +144,21 @@ preflight_networks() {
     return 1
 }
 
+# CLN replicates its wallet DB to BACKUP_DEST (bind-mounted as /backup_usb).
+# If no drive is mounted there, the "replica" lands on the node's own disk and
+# protects nothing - and a drive mounted after lightningd starts is never seen
+# by the container. Warn loudly but do not block: a node kept offline over a
+# missing backup drive cannot answer a channel breach either. Skipped where
+# `mountpoint` does not exist (Docker Desktop dev hosts).
+preflight_backup_dest() {
+    local dest="${BACKUP_DEST:-/mnt/backup_cln}"
+    command -v mountpoint >/dev/null 2>&1 || return 0
+    mountpoint -q "$dest" 2>/dev/null && return 0
+    echo -e "${YELLOW}${BOLD}[!] BACKUP_DEST ${dest} is not a mounted filesystem.${NC}"
+    echo -e "${YELLOW}    CLN's live wallet replica will go to the node's own disk, which is no backup.${NC}"
+    echo -e "${YELLOW}    Mount the backup drive there, then: ./bastion restart lightningd${NC}"
+}
+
 _has_sysbox() {
     case "$(docker info --format '{{json .Runtimes}}' 2>/dev/null || true)" in
         *'"sysbox-runc"'*) return 0 ;;
@@ -302,6 +317,7 @@ do_up() {
         preflight_networks || return 1
     fi
     if _contains stack-bitcoin "${stacks[@]}"; then
+        preflight_backup_dest
         seed_runtime_config
         if _profile_active watchtower; then
             seed_teos_config

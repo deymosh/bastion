@@ -101,8 +101,9 @@ Then:
 
 - **Apply the firewall.** Every panel listens on `0.0.0.0` by design, so the
   host firewall is what controls access. See [docs/firewall.md](docs/firewall.md).
-- **Plug in the backup drive** at `/mnt/backup_cln` (`BACKUP_DEST`). CLN
-  mirrors its wallet database there live.
+- **Mount the backup drive** at `BACKUP_DEST` (default `/mnt/backup_cln`)
+  *before* `up`. CLN mirrors its wallet database there live, and `up` warns
+  if nothing is mounted.
 - **Install the boot daemon.** It brings Bastion up at boot and mirrors the
   channel backup (SCB):
   ```bash

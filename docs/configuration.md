@@ -157,7 +157,7 @@ The tables below are generated from the registry.
 
 | Setting | Default | Type | Description |
 |---|---|---|---|
-| `BACKUP_DEST` | `/mnt/backup_cln` | path | Mount point of the drive the daemon mirrors emergency.recover to. |
+| `BACKUP_DEST` | `/mnt/backup_cln` | path | Mount point of the backup drive: CLN replicates its wallet DB there and the daemon mirrors emergency.recover to it. |
 | `SCB_CHECK_INTERVAL` | `3600` | posint | Seconds between the daemon checks of emergency.recover. |
 | `BACKUP_PLUGIN_COMPACT` | `0` | bool | 1 compacts the CLN backup plugin database once a day. |
 | `AMBOSS_HEARTBEAT` | `0` | bool | 1 posts a signed health heartbeat to Amboss. |

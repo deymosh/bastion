@@ -45,7 +45,8 @@ Other settings in `cln_config`:
 
 - **Wallet replication.** `wallet=sqlite3://…:/backup_usb/lightningd.sqlite3`
   makes CLN write every database transaction to the backup drive as well as
-  its own. The drive is the host's `/mnt/backup_cln`. Use this *or* the
+  its own. The drive is `BACKUP_DEST` on the host (default `/mnt/backup_cln`);
+  mount it before `up`. Use this *or* the
   `backup` plugin, never both.
 - **Autoclean.** Failed payments and forwards are removed after 7 days, expired
   invoices after 30 days.

@@ -52,6 +52,16 @@ out=$(b up web ai);          assert_contains "$out" "Booting: stack-network stac
 out=$(b up stack-ai stack-web); assert_contains "$out" "Booting: stack-network stack-web stack-ai" "explicit names reordered to canonical"
 out=$(b up nope); rc=$?;     assert_contains "$out" "Unknown stack: stack-nope"    "unknown stack rejected"; assert_eq "$rc" 1 "unknown stack exits 1"
 
+echo "== backup drive preflight =="
+printf '#!/usr/bin/env bash\nexit "${MOCK_MOUNTPOINT_RC:-0}"\n' > "$MOCK_BIN/mountpoint"; chmod +x "$MOCK_BIN/mountpoint"
+out=$(MOCK_MOUNTPOINT_RC=1 b up bitcoin); rc=$?
+assert_contains "$out" "is not a mounted filesystem" "up bitcoin warns when BACKUP_DEST is not a mount"
+assert_contains "$out" "Booting: stack-network stack-bitcoin" "the warning never blocks the boot"
+assert_eq "$rc" 0 "up still succeeds"
+out=$(MOCK_MOUNTPOINT_RC=0 b up bitcoin); assert_not_contains "$out" "not a mounted filesystem" "no warning when the drive is mounted"
+out=$(MOCK_MOUNTPOINT_RC=1 b up web);     assert_not_contains "$out" "not a mounted filesystem" "stacks without CLN never check it"
+rm -f "$MOCK_BIN/mountpoint"
+
 echo "== mandatory stack-network =="
 out=$(b up web ai);  assert_contains "$out" "Adding stack-network" "stack-network auto-added when omitted"
 out=$(b up web);     assert_contains "$out" "Booting: stack-network stack-web" "auto-add lands first, canonical order"

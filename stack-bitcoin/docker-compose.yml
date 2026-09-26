@@ -19,8 +19,12 @@ services:
         max-size: "10m"   # Maximum 10 Megabytes per file
         max-file: "3"     # Only saves the last 3 files
     volumes:
-      # BACKUP
-      - /mnt/backup_cln:/backup_usb
+      # BACKUP - the separate drive CLN replicates its wallet DB to (wallet= in
+      # config/cln_config). Same setting the daemon mirrors the SCB to, so the
+      # two can never point at different places. Mount the drive BEFORE `up`:
+      # a filesystem mounted on the host later stays invisible to the running
+      # container, and CLN would keep writing to the node's own disk.
+      - ${BACKUP_DEST:-/mnt/backup_cln}:/backup_usb
       # CONFIG & DATA
       - ./config/cln_config:/root/.lightning/config
       - ./data/cln:/root/.lightning/bitcoin
