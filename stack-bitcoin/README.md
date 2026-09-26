@@ -1,106 +1,137 @@
-# Bitcoin Stack
+# Bitcoin stack
 
-Bastion's sensitive financial-services stack. It contains Bitcoin Core, Core
-Lightning, RTL, and TEOS. Treat changes to this directory as production changes
-when the node holds funds.
+The stack that holds funds: a pruned Bitcoin Core, Core Lightning with its
+plugins, RTL, and an optional watchtower. Treat every change here as a
+production change once the node is funded, and read
+[disaster recovery](../docs/disaster-recovery.md) first.
 
 ## Services
 
-| Service | `bastion-bitcoin` | `bastion-transit` | Purpose |
-|---|---|---|---|
-| Bitcoin Core | `10.20.0.3` | dynamic | Pruned Bitcoin backend (RPC `:8332`) |
-| Core Lightning | `10.20.0.2` (REST `:3001`) | `10.254.0.10` (P2P `:9735`) | Lightning node |
-| RTL | `10.20.0.4:3000` | — | Lightning UI |
-| TEOS | `10.20.0.5` (bitcoind RPC) | `10.254.0.11` (API `:9814`) | Watchtower daemon |
+| Service | `bastion-bitcoin` | `bastion-transit` | Host port | Purpose |
+|---|---|---|---|---|
+| `lightningd` | `10.20.0.2` (REST `:3001`) | `10.254.0.10` (P2P `:9735`) | `3001` | Core Lightning (custom image) |
+| `bitcoind` | `10.20.0.3` (RPC `:8332`) | dynamic | — | Pruned Bitcoin Core, P2P over Tor, no inbound |
+| `rtl` | `10.20.0.4` | — | `3000` | Lightning web UI |
+| `teosd` *(opt-in)* | `10.20.0.5` | `10.254.0.11` (API `:9814`) | — | Your own watchtower (rust-teos) |
 
-Tor itself runs in `stack-network`; this stack reaches it over `bastion-transit`
-at `tor:9050` (SOCKS) and `10.254.0.2:9051` (control). CLN and TEOS **publish**
-their onion services through that Tor: each advertises its pinned
-`bastion-transit` address (`10.254.0.10` / `10.254.0.11`) as the hidden-service
-forward target, since the `tor` container can only route within
-`bastion-transit`. `bind-addr` in `cln_config` and `api_bind` in `teos.toml`
-must stay on those addresses.
+**Tor.** Tor runs in `stack-network`. This stack reaches it over transit at
+`10.254.0.2:9050` (SOCKS) and `:9051` (control), and mounts the
+`bastion-tor-data` volume read-only for the control cookie. CLN and `teosd`
+publish their onion services through that Tor. Each one advertises its **pinned
+transit address** as the hidden-service forward target, because the `tor`
+container can only route within `bastion-transit`. For that reason `bind-addr`
+in `config/cln_config` and `api_bind` in `config/teos.toml` must stay on
+`10.254.0.10` and `10.254.0.11`, and must never be `0.0.0.0`.
 
-Compose publishes CLN REST on host port `3001` so a CLN-REST client on the
-WireGuard VPN can reach it at the host (raw LAN IP, or a Pi-hole local-DNS name
-such as `http://bastion.node:3001`). RTL is on host port `3000`. Lock these
-ports to the WireGuard interface/subnet in the host firewall; never expose them
-to the public Internet.
+**The `.onion` is stable.** `addr=statictor:` derives the onion key from
+`hsm_secret`, so rebuilding the containers, wiping the Tor volume or moving
+hosts all keep the same address.
 
-The stack owns the private `bastion-bitcoin` subnet (`10.20.0.0/24`) and joins
-the external `bastion-transit` network created by `stack-network`. Lightning,
-Bitcoin Core, and TEOS reach Tor through that transit network. CLN and TEOS mount
-the Tor state volume read-only so they can read the control cookie.
+## Core Lightning
 
-## Commands
+`Dockerfile.lightningd` builds the plugins from pinned commits on top of
+`elementsproject/lightningd`. `config/cln_config` enables them:
+
+| Plugin | Role |
+|---|---|
+| `trustedcoin` | **Chain backend** (`important-plugin`) in place of the disabled built-in `bcli`. It uses `bitcoind` through the `bitcoin-rpc*` lines when that node is reachable and has the block, and otherwise falls back to public block explorers over Tor. |
+| `watchtower-client` | Breach protection for *this* node against an external tower (`important-plugin`) |
+| `clboss` | Channel autopilot. **It opens channels and moves funds.** Tuned via `command:` in the compose file (min channel 1M sat, rebalance fee ≤ 250 ppm, no auto-close) |
+| `peerswap` | Submarine-swap rebalancing (state and config in `data/cln/peerswap/`) |
+| `darknet.py` | Local plugin that prefers peers' `.onion` addresses |
+| `backup` | Installed but **not enabled**. See below |
+
+Other settings in `cln_config`:
+
+- **Wallet replication.** `wallet=sqlite3://…:/backup_usb/lightningd.sqlite3`
+  makes CLN write every database transaction to the backup drive as well as
+  its own. The drive is the host's `/mnt/backup_cln`. Use this *or* the
+  `backup` plugin, never both.
+- **Autoclean.** Failed payments and forwards are removed after 7 days, expired
+  invoices after 30 days.
+- **REST.** `clnrest` listens on `:3001` over plain HTTP. Only reach it over
+  WireGuard or the LAN.
+- **Tor only.** `always-use-proxy=true`, so no clearnet connections.
+
+## Watchtower (`teosd`) is opt-in
+
+`teosd` runs **your own** tower, which watches *other* nodes' channels (for
+example for tower swaps). It carries the `watchtower` compose profile and is off
+by default:
 
 ```bash
-# Build the custom Lightning image and start the stack through Bastion.
-./bastion up
-
-# Or start only this Compose project after the network exists.
-docker compose -f ./stack-bitcoin/docker-compose.yml up -d
-docker compose -f ./stack-bitcoin/docker-compose.yml ps
-docker compose -f ./stack-bitcoin/docker-compose.yml logs -f lightningd
+./bastion config set ENABLED_PROFILES watchtower   # every up, boot included
+./bastion up --with-watchtower                     # or: this run only
 ```
 
-Use `docker compose stop` for a temporary stop. Do not use `down`, remove data
-folders, or change wallet/plugin configuration without a backup and a recovery
-plan. The full procedure - what is irreplaceable, how to back up, how to restore,
-how to move to a new host, and why the `.onion` stays stable - is in
-[../docs/disaster-recovery.md](../docs/disaster-recovery.md). Read it first.
+`./bastion` builds the `teosd:latest` image from the [`rust-teos`](../rust-teos)
+submodule (repo root) through `utils/build_teos.sh`. It rebuilds whenever the
+submodule commit changes. `stop` and `down` always include `teosd`, so it is
+never orphaned. The `watchtower-client` plugin above is unrelated to `teosd`
+and always on.
 
-## Watchtower (teosd) is opt-in
+## First-run seeding
 
-`teosd` runs **your own** watchtower - a service that watches *other* people's
-channels (e.g. for tower swaps). It is **not** started by default. Enable it
-permanently with `./bastion config set ENABLED_PROFILES watchtower`, or for one
-run with `./bastion up --with-watchtower`; it carries the `watchtower` compose
-profile. `stop` / `down` always tear it down so
-it is never orphaned.
+When an `up` includes this stack, `./bastion` creates the following files,
+**but only if they are missing**. An existing file is never touched.
 
-Unrelated: the CLN `watchtower-client` plugin (breach protection *for this node*,
-pointed at an external tower URL) is always on and needs no local `teosd`.
+| File | From |
+|---|---|
+| `data/rtl/RTL-Config.json` | `config/RTL-Config.json` |
+| `data/rtl/access.rune` | minted with `lightning-cli createrune`, mode `600`. If CLN is not ready yet this step is skipped with a warning, so run `up` again |
+| `data/teos/teos.toml` *(watchtower only)* | `config/teos.toml`. Without it rust-teos falls back to `127.0.0.1`, runs without Tor, and is unreachable |
 
-## First-run seeding (idempotent)
+After seeding, the files under `data/` belong to the operator. Edit the live
+copies, not the templates.
 
-On `./bastion up`, if they do not already exist:
+## Operations
 
-- `config/RTL-Config.json` is copied to `data/rtl/RTL-Config.json`.
-- `data/rtl/access.rune` is minted from CLN (`lightning-cli createrune`) and
-  written as `LIGHTNING_RUNE="<rune>"`, mode `600` - RTL reads it via `runePath`.
-  If CLN is not up yet this is skipped with a warning; re-run `./bastion up`.
-- **only with `--with-watchtower`:** `config/teos.toml` is copied to
-  `data/teos/teos.toml`. Without it `teosd` would fall back to rust-teos's
-  compiled-in defaults (`api_bind 127.0.0.1`, Tor off, `bitcoind` on localhost)
-  and never become reachable at its pinned transit address.
+```bash
+./bastion up bitcoin                                 # stack-network comes up first
+./bastion logs lightningd
+./bastion exec lightningd -- lightning-cli getinfo
+./bastion audit                                      # routing profitability (scripts/node-audit.py)
+```
 
-Anything that already exists is left exactly as it is - an established install is
-never touched.
+- **Stopping.** `./bastion stop bitcoin` gives `bitcoind` its full 5-minute
+  `stop_grace_period`. Never `docker kill` it.
+- **Bitcoin RPC credentials** are `bitcoind.user` / `bitcoind.pass`, set in the
+  compose `command:` and healthcheck and in `cln_config`. RPC only listens on
+  the stack network (`rpcallowip=10.20.0.0/24`). If you change them, change all
+  three places together.
 
-## Configuration and state
+### Optional helpers (`scripts/`)
 
-- `config/cln_config` controls CLN plugins, REST, Tor, and automation.
-- `config/RTL-Config.json` / `config/teos.toml` are templates; the live copies
-  under `data/` are seeded once (see above) and then owned by the operator.
-- `data/cln/`, `data/bitcoin/`, `data/rtl/`, and `data/teos/` are persistent state.
-- Tor runtime state lives in the external Docker volume `bastion-tor-data`, owned
-  by `stack-network`. It only holds Tor's client cache; CLN and TEOS keep their
-  own state (including onion identities) under `data/`, so recreating the Tor
-  volume is harmless.
-- `rust-teos/` is the initialized TEOS source submodule used by `utils/build_teos.sh`.
+- `amboss-healthcheck.sh` signs a timestamp with CLN and posts a heartbeat to
+  Amboss over Tor. Every step runs inside `lightningd`. Enable it through the
+  daemon with `./bastion config set AMBOSS_HEARTBEAT 1`. Note that this links
+  the node's identity to Amboss.
+- `node-audit.py` is the report behind `./bastion audit`.
 
-Review logs before restarting a service. Lightning plugins such as CLBoss and
-PeerSwap can affect funds and channel operations.
+### Switching to the `backup` plugin
 
-## Optional scripts
+Only switch if you want the plugin instead of native replication. Stop the
+node, comment out the `wallet=` line, enable
+`important-plugin=/usr/local/bin/backup/backup.py`, then initialise the backup
+file once:
 
-`scripts/` holds operator helpers that are **not** wired into `./bastion`:
+```bash
+docker run --rm -it --entrypoint /usr/local/bin/backup/backup-cli \
+  -v "$PWD/stack-bitcoin/data/cln:/root/.lightning/bitcoin" \
+  -v /mnt/backup_cln:/backup_usb \
+  lightningd-custom:latest \
+  init --lightning-dir /root/.lightning/bitcoin file:///backup_usb/backup.sqlite.bkp
+```
 
-- `amboss-healthcheck.sh` - signs a timestamp with CLN and posts a heartbeat to
-  Amboss.space over Tor. Every step runs inside the `lightningd` container, so
-  the host needs only Docker (no `jq`, no `curl`, no published Tor port). Opt-in;
-  run it from cron (`*/5 * * * *`) or let `services/bastion-daemon.sh` run it
-  (`./bastion config set AMBOSS_HEARTBEAT 1`). `TOR_PROXY` / `AMBOSS_URL` / `CLN_CONTAINER`
-  override the defaults. Note: it ties the node's identity to Amboss.
-- `node-audit.py` - routing profitability summary (also `./bastion audit`).
+To restore, run the same command with
+`restore file:///backup_usb/backup.sqlite.bkp --lightning-dir /root/.lightning/bitcoin`.
+`BACKUP_PLUGIN_COMPACT=1` makes the daemon compact the plugin's backup file once
+a day.
+
+### Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| CLN not syncing | `./bastion logs lightningd`, then look for `trustedcoin` lines; `./bastion ps` should show `tor` as healthy |
+| RTL cannot reach CLN | `./bastion exec lightningd -- lightning-cli getinfo`, then check `data/rtl/access.rune` exists |
+| No `.onion` in `getinfo` | `./bastion logs tor`; the `bastion-tor-data` cookie must be readable (see `stack-network`) |

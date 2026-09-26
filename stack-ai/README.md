@@ -1,136 +1,105 @@
-# AI Stack
+# AI stack
 
-The AI control plane for Bastion. It combines Claude Code Router (CCR) with the
-CodeDeck+ bridge for remote Claude Code sessions.
+The AI control plane:
+
+- **Claude Code Router** (CCR), the gateway to Claude;
+- the **CodeDeck+ bridge**, which lets you drive remote Claude Code sessions
+  from the Android app over Nostr;
+- an **MCP gateway**, which gives remote agents one authenticated tool endpoint.
 
 ## Services
 
-| Service | Address | Purpose |
-|---|---|---|
-| CCR | `http://localhost:3458` | Provider, routing, logs, and gateway UI |
-| CodeDeck bridge | `10.50.0.3` | Nostr bridge for the Android client |
-| MCP gateway | `http://localhost:8811/mcp` | Single Bearer-authenticated MCP endpoint for remote agents — [docs/mcp.md](../docs/mcp.md) |
-| SearXNG | `10.50.0.4` (no host port) | Internal metasearch for the gateway's `searxng` namespace |
-| agent-docker (opt-in) | `10.50.0.6` (no host port) | Private Docker daemon for the bridge's agent, on Sysbox — [docs/agent-docker.md](../docs/agent-docker.md) |
+| Service | Address | Host port | Purpose |
+|---|---|---|---|
+| `ccr` | `10.50.0.2` (gateway `ccr:8080`) | `3458` (UI) | Claude Code Router, built from a pinned upstream commit |
+| `codedeck-bridge` | `10.50.0.3` + transit | — | Nostr bridge for the CodeDeck+ app. Relay traffic goes over Tor |
+| `searxng` | `10.50.0.4` | — | Internal metasearch, used only by the gateway |
+| `mcp-gateway` | `10.50.0.5` | `8811` (`/mcp`) | Four MCP servers behind one Bearer token. See [docs/mcp.md](../docs/mcp.md) |
+| `agent-docker` *(opt-in)* | `10.50.0.6` | — | Private Docker daemon for the agent, on Sysbox. See [docs/agent-docker.md](../docs/agent-docker.md) |
 
-Inside `bastion-ai`, CodeDeck sends Claude requests to CCR at
-`http://ccr:8080`. The bridge and SearXNG have no published host port. Relay
-connections use Bastion's Tor service on `bastion-transit` at
-`socks5h://tor:9050` by default.
+The bridge sends Claude requests to CCR at `http://ccr:8080`, and its relay
+connections use Tor at `socks5h://tor:9050`. That is why it is the only
+service in this stack on `bastion-transit`.
+
+Every container here runs **unprivileged**, with `cap_drop: ALL` and
+`no-new-privileges`. The MCP gateway and SearXNG also run on a read-only
+root filesystem.
+
+## CCR
+
+`ccr/Dockerfile.ccr` builds CCR from the upstream commit pinned as `CCR_REF`
+(in the compose file). The comment there has the command for bumping it.
+The image also bundles Claude Code.
+
+The entrypoint wrapper (`ccr/ccr-entrypoint-wrapper.sh`) starts as root only to
+`chown` the writable paths to `USER_ID`/`GROUP_ID`, then drops privileges with
+`gosu`. The five `cap_add` entries are used only during that step, and the
+nginx, pm2 and node processes hold no capabilities. The UI token is read from
+`/run/secrets/ccr_web_auth_token`.
+
+### Authentication and token refresh
+
+Log in once, interactively:
+
+```bash
+./bastion exec ccr -- claude     # stores data/ccr/.claude/.credentials.json
+```
+
+A plain API key set in the CCR UI also works. The OAuth access token expires
+about once a day. A refresher bundled in the image (`ccr/ccr-token-refresher.mjs`)
+swaps the refresh token for a new pair shortly before expiry and rewrites the
+credentials file atomically. CCR re-reads the file on every request, so no
+restart is needed. If there is no credentials file, or it is not an OAuth file,
+the refresher just logs `idle`. On `invalid_grant`, log in again.
+
+The refresher's settings are `CCR_TOKEN_REFRESH`, `CCR_REFRESH_INTERVAL` and
+`CCR_REFRESH_SKEW_MS`. To debug it:
+`./bastion logs ccr | grep ccr-token-refresher`.
+
+## CodeDeck+ bridge
+
+The bridge is the published image `ghcr.io/deymosh/codedeck-plus-bridge`,
+pinned by digest. It runs as uid 1000 and keeps its identity, pairings,
+sessions and workspaces in `data/codedeck/`.
+
+1. Set `CODEDECK_RELAYS` (your trusted relays) and `CLAUDE_CODE_OAUTH_TOKEN`;
+   `GIT_*` and `GITHUB_TOKEN` are optional.
+2. `./bastion up ai`
+3. Pair the app by scanning the QR code in `./bastion logs codedeck-bridge`.
+
+Optional features: an OpenCode backend (`CODEDECK_OPENCODE_*`) and the GSD
+planning workflow (`CODEDECK_GSD_AUTO_INSTALL`). Both are off by default; see
+[docs/configuration.md](../docs/configuration.md#notes-on-specific-settings).
+
+With `agent-docker` running, the bridge also gets `docker` (with buildx and
+compose) on its `PATH`. The agent can then build and run a project's toolchain
+container against `/data/workspaces/<repo>`, over mutual TLS, while staying
+invisible to the host's Docker.
 
 ## MCP gateway
 
-`mcp-gateway` (built from `mcp-gateway/Dockerfile.mcp-gateway` + `mcp-gateway/gateway.py`) runs the
-four MCP servers — searxng, context7, memory, time — as **stdio children** of
-one container and serves their tools merged and namespaced (`searxng_web_search`,
-`memory_create_entities`, …) over **Streamable HTTP** at `:8811/mcp`, behind a
-single Bearer token read from `/run/secrets/mcp_gateway_token`. No MCP server
-is published individually; SearXNG itself is internal-only infrastructure.
-Endpoint, namespaces, auth rotation, and a ready-to-use `.mcp.json` live in
-[docs/mcp.md](../docs/mcp.md).
-
-The children are exact-pinned npm/PyPI packages baked in at build time (no
-`npx`/`uvx` at runtime). Both new containers drop all capabilities, forbid
-privilege escalation, and mount a read-only rootfs with a `/tmp` tmpfs; the
-gateway runs as uid/gid 1000 and the memory knowledge graph persists in the
-`mcp_memory_data` named volume. A crashed child only fails its own tool calls —
-the gateway reconnects it on the next call. The gateway has no `depends_on`:
-children connect lazily, so startup order never matters.
-
-## Agent Docker (opt-in)
-
-`./bastion up --with-agent-docker` adds `agent-docker`: a `docker:dind` sidecar
-running on the **Sysbox** runtime (never `privileged`), reachable only from
-`bastion-ai` over mutual TLS. The bridge gets `docker` (plus `buildx` and
-`compose`) on its `PATH`, published by the sidecar, so the agent can build and
-run a project's toolchain container against `/data/workspaces/<repo>`. Nothing
-it runs is visible to the host's Docker. `./bastion install-sysbox` installs
-the runtime (Ubuntu/Debian, Linux only). The full guide, including the
-security model and limits, is [docs/agent-docker.md](../docs/agent-docker.md).
-
-## CCR authentication and token refresh
-
-CCR can authenticate to Anthropic with a Claude Code OAuth token created by an
-interactive `claude` login (`docker exec -it ccr claude`, stored in
-`data/ccr/.claude/.credentials.json`), or with a plain API key configured in the
-CCR UI - either way CCR starts normally.
-
-For the OAuth case the access token expires roughly daily, so the image runs a
-small refresher alongside CCR that, shortly before expiry, exchanges the stored
-refresh token for a new one and rewrites the credentials file atomically. CCR
-re-reads the file on every upstream request, so no restart or signal is needed.
-The refresher never blocks CCR: with no credentials file, or a non-OAuth one, it
-just logs `idle` and keeps checking. If the refresh token is rejected
-(`invalid_grant`), the log says so and an operator must run `claude` login
-again. Controls (all optional, sane defaults):
-
-- `CCR_TOKEN_REFRESH` (default `1`) - set `0` to disable the refresher.
-- `CCR_REFRESH_INTERVAL` (default `300`) - seconds between checks.
-- `CCR_REFRESH_SKEW_MS` (default `1800000`) - refresh this long before expiry.
-
-All three are managed `bastion.conf` values - editable from the TUI's
-Configuration view, not just via `stack-ai/.env`.
-
-Debug: `docker logs ccr | grep ccr-token-refresher`.
-
-## Commands
-
-```bash
-docker compose -f ./stack-ai/docker-compose.yml up -d --build
-docker compose -f ./stack-ai/docker-compose.yml ps
-docker compose -f ./stack-ai/docker-compose.yml logs -f codedeck-bridge
-```
-
-Pair the Android app by scanning the QR code shown in the bridge logs.
+Four stdio MCP servers run as children of one container: `searxng`, `context7`,
+`memory` and `time`. The gateway serves their tools merged and namespaced
+(`searxng_web_search`, `memory_create_entities`, …) over Streamable HTTP at
+`:8811/mcp`. The packages are pinned exactly at build time, and nothing is
+fetched at runtime. A child that crashes only fails its own calls and is
+respawned on the next one. The endpoint, the tool list, token rotation and a
+ready-to-use `.mcp.json` are in [docs/mcp.md](../docs/mcp.md).
 
 ## Configuration
 
-Bastion supplies this stack from the root `bastion.conf` (`./bastion` runs
-Compose with `--env-file bastion.conf`). Every setting, its default and
-whether it is a secret is listed in [docs/configuration.md](../docs/configuration.md);
-change them with `./bastion config set` or the TUI.
+Every setting is in [docs/configuration.md](../docs/configuration.md). The
+secrets `CCR_WEB_AUTH_TOKEN`, `MCP_GATEWAY_TOKEN`, `CONTEXT7_API_KEY`,
+`CLAUDE_CODE_OAUTH_TOKEN` and `GITHUB_TOKEN` are mounted as
+`/run/secrets/<name>` files, only into the one service that needs each. CCR and
+the bridge fall back to the env var when the file is absent (a standalone run);
+the MCP gateway does not, and refuses to start without its token file.
 
-- `CCR_WEB_AUTH_TOKEN`, `MCP_GATEWAY_TOKEN`, `CONTEXT7_API_KEY`,
-  `CLAUDE_CODE_OAUTH_TOKEN`, `GITHUB_TOKEN` are
-  **secrets**: `./bastion` writes them to `secrets/<name>` (repo root,
-  git-ignored, `600`) from `bastion.conf`, and the compose file mounts each as
-  a file under `/run/secrets/` for the one service that needs it - never a
-  plaintext env var. `ccr-entrypoint-wrapper.sh` reads
-  `/run/secrets/ccr_web_auth_token`; the CodeDeck+ bridge image reads
-  `/run/secrets/{claude_code_oauth_token,github_token}` itself. Those three
-  fall back to the env var when the file is absent (standalone Compose runs);
-  the MCP gateway does **not** - it reads only the mounted token file and
-  refuses to start without it.
-- `MCP_GATEWAY_TOKEN`: Bearer token for the MCP gateway's `:8811/mcp`
-  endpoint. Generated automatically; rotate via `bastion.conf` + a gateway
-  restart.
-- `CONTEXT7_API_KEY`: optional Context7 rate-limit key; empty = keyless.
-- `CLAUDE_CODE_OAUTH_TOKEN`: used by CodeDeck+ for Claude Code sessions.
-- `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY`: `1` lets Claude Code fill its
-  `/model` picker from CCR's `/v1/models`. It makes no gateway request if
-  `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set anywhere; the manual
-  fallback is `ANTHROPIC_CUSTOM_MODEL_OPTION`.
-- `GITHUB_TOKEN`: optional Git credential support.
-- `CODEDECK_RELAYS`: trusted Nostr relay URLs.
-- `CODEDECK_TOR_PROXY_URL`: relay SOCKS5 proxy.
-- `GIT_REPO`, `GIT_USER`, `GIT_EMAIL`: optional workspace and Git settings.
-- `CODEDECK_OPENCODE_SERVER_URL`, `CODEDECK_OPENCODE_AUTO_START`,
-  `CODEDECK_OPENCODE_PORT`: optional second session backend
-  ([OpenCode](https://opencode.ai), CodeDeck+ >= v0.12.0). All empty by
-  default - a bridge with none of them set behaves exactly as it always has.
-- `CODEDECK_GSD_AUTO_INSTALL`: `1` installs the optional
-  [GSD](https://github.com/open-gsd/gsd-core) planning workflow on boot
-  (CodeDeck+ >= v0.12.0); empty/`0` skips it (default).
+## State
 
-Both containers run **unprivileged**. `ccr-entrypoint-wrapper.sh` starts as root
-only long enough to align ownership of the writable paths (nginx config/state,
-the `/data` bind mount) to the host uid/gid (`USER_ID`/`GROUP_ID`, passed as
-`PUID`/`PGID`), then drops to that user with `gosu` before running anything.
-The compose service adds `cap_drop: [ALL]` + `no-new-privileges:true`; the five
-`cap_add` entries are used only by the root wrapper at startup - the long-running
-nginx / pm2 / node processes hold no capabilities and run as the host user.
-Read-only rootfs is a possible future tightening (nginx writes to several
-locations that would each need a tmpfs).
-
-State is persisted under `data/`. Keep it intact to preserve CCR configuration,
-CodeDeck identity, pairings, sessions, and workspaces.
+| Path | What |
+|---|---|
+| `data/ccr/` | CCR config and the Claude login (`.claude/.credentials.json`, live secret) |
+| `data/codedeck/` | Bridge identity, pairings, sessions and `workspaces/` |
+| volume `mcp_memory_data` | The memory server's knowledge graph |
+| volumes `agent_docker_*` | The agent daemon's images, TLS tree and published CLI |

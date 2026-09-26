@@ -1,38 +1,34 @@
-# Web Stack
+# Web stack
 
-The Bastion operations Hub: a small static Nginx site that links to the services
-available on the current host.
+The Hub is a single static page, served read-only by nginx on port `80`, that
+links to every Bastion panel. It is self-contained, with its own network and no
+transit access.
 
-## Service
-
-| Service | Address | Purpose |
+| Service | Address | Host port |
 |---|---|---|
-| Hub | `http://localhost` | Service directory and access point |
+| `hub` | `10.40.0.2` | `80` |
 
-The Hub includes RTL, Grafana, Portainer, Prometheus, Pi-hole, and CCR. CCR is
-published on host port `3458`, so its Hub link works from the Bastion host and
-from clients connected through WireGuard.
+## How it works
 
-Picking a service keeps you inside the Hub instead of opening a new tab: a
-persistent top banner (Bastion icon + current section) stays visible while the
-service loads in an embedded panel, and clicking the icon returns to the
-directory. This is client-side routing only (`location.hash`, no server
-component) - a bookmark like `/#grafana` reopens straight into that service.
-Every embedded view keeps an "Open in new tab" button in the banner, because a
-service can send `X-Frame-Options`/`frame-ancestors` headers that refuse to be
-framed at all - the Hub has no control over another container's own response
-headers, so that button is the guaranteed fallback, not just a convenience.
+- Opening a panel keeps you in the Hub. A top banner (the Bastion icon and the
+  current section) stays visible while the panel loads in an embedded frame.
+  Clicking the icon returns to the directory.
+- Routing happens only in the browser (`location.hash`), so a bookmark like
+  `/#grafana` opens that panel directly.
+- Links are built from the hostname you are browsing with, so the Hub works the
+  same over `bastion.node`, a raw IP or `localhost`.
+- Every embedded view has an **Open in new tab** button. A service can refuse to
+  be framed (`X-Frame-Options` / `frame-ancestors`), and the Hub cannot override
+  another container's headers. Portainer and Pi-hole always open in a new tab.
 
-## Commands
+## Editing
+
+The panel list is the `services` array in `html/index.html`. Each entry needs a
+unique `key` (used in the URL hash) and a `port`/`path` that match what the
+compose file actually publishes. The page is mounted read-only, so a browser
+refresh is enough and no restart is needed.
 
 ```bash
-docker compose -f ./stack-web/docker-compose.yml up -d
-docker compose -f ./stack-web/docker-compose.yml ps
-docker compose -f ./stack-web/docker-compose.yml logs -f hub
+./bastion up web
+./bastion logs hub
 ```
-
-The site is served read-only from `html/`. `favicon.svg` is the local Bastion
-favicon. To add or remove a service, edit the `services` array in
-`html/index.html` (each entry needs a unique `key` for the URL hash); keep
-ports/paths aligned with what the corresponding Compose file actually
-publishes.

@@ -4,427 +4,208 @@
 
 # BASTION
 
-### Sovereign Infrastructure, Operations &amp; AI
+### Sovereign Infrastructure · Operations · AI
 
-Self-hosted systems for private networking, Bitcoin and Lightning, observability,
-and local AI workflows.
+A self-hosted node in a box: a pruned Bitcoin node and Core Lightning behind Tor,
+private DNS and WireGuard, observability, one web hub, and a Claude Code AI
+control plane. It is all Docker, and one script drives it.
+
+[![CI](https://github.com/deymosh/bastion/actions/workflows/ci.yml/badge.svg)](https://github.com/deymosh/bastion/actions/workflows/ci.yml)
+[![Weekly](https://github.com/deymosh/bastion/actions/workflows/weekly.yml/badge.svg)](https://github.com/deymosh/bastion/actions/workflows/weekly.yml)
 
 </div>
 
 ---
 
-## What It Is
+> [!WARNING]
+> A Lightning node holds real funds. This software is provided as-is; use it at
+> your own risk. Before you fund the node, read
+> **[disaster recovery](docs/disaster-recovery.md)** and set up the
+> **[host firewall](docs/firewall.md)**.
 
-Bastion is a deliberate Docker environment for the services that matter:
+## Design
 
-- A guarded network edge with private DNS and WireGuard.
-- Bitcoin, Core Lightning, Tor, TEOS, swaps, automation, and backups.
-- Monitoring, administration, and a single operations Hub.
-- An AI control plane built around Claude Code Router and CodeDeck+.
+- **Tor-first.** All Bitcoin, Lightning, watchtower and relay traffic goes out
+  through Tor. The node is reachable only through its `.onion`.
+- **Segmented.** Each stack runs on its own bridge network. One narrow
+  `bastion-transit` network carries the few services that must cross stacks.
+- **Secrets as files.** Tokens and passwords reach containers as
+  `/run/secrets/*` files, never as environment variables, so they never show up
+  in `docker inspect`.
+- **Pinned.** Every pulled image is pinned `tag@sha256:`, and every
+  source-built component is pinned to a commit.
+- **One config file.** `bastion.conf` is generated, validated and git-ignored.
+  All the other files are derived from it.
 
-## ⚠️ Disclaimer
+```mermaid
+flowchart LR
+    subgraph NET["stack-network · 10.10.0.0/24"]
+        pihole[Pi-hole] --> unbound[unbound]
+        wg[WireGuard]
+    end
+    subgraph TRANSIT["bastion-transit · 10.254.0.0/24"]
+        tor(("Tor<br/>10.254.0.2"))
+    end
+    subgraph BTC["stack-bitcoin · 10.20.0.0/24"]
+        bitcoind[bitcoind] --- cln["lightningd<br/>10.254.0.10"]
+        cln --- rtl[RTL]
+        teosd["teosd<br/>10.254.0.11<br/><i>opt-in</i>"]
+    end
+    subgraph AI["stack-ai · 10.50.0.0/24"]
+        ccr[CCR] --- bridge[CodeDeck+ bridge]
+        mcp[MCP gateway] --- searx[SearXNG]
+        agent["agent-docker<br/><i>opt-in</i>"]
+    end
+    MON["stack-monitor<br/>Prometheus · Grafana · Portainer"]
+    WEB["stack-web<br/>Hub"]
+    bitcoind & cln & teosd & bridge -.-> tor
+    tor ==> internet((Tor network))
+```
 
-Lightning nodes handle real funds. Software is provided as-is. **Use only at your own risk.** See [CLN security docs](https://docs.corelightning.org/).
+## Stacks
 
-Before you run this with real funds, read **[docs/disaster-recovery.md](docs/disaster-recovery.md)** (what to back up, how to restore, how to move hosts) and set up the host firewall ([docs/firewall.md](docs/firewall.md)).
+| Stack | Runs | Subnet |
+|---|---|---|
+| [`stack-network`](stack-network/README.md) | Tor, Pi-hole, unbound, WireGuard. Owns `bastion-transit` and the Tor volume | `10.10.0.0/24` |
+| [`stack-bitcoin`](stack-bitcoin/README.md) | `bitcoind` (pruned), Core Lightning + plugins, RTL, `teosd` *(opt-in)* | `10.20.0.0/24` |
+| [`stack-monitor`](stack-monitor/README.md) | Prometheus, Grafana, node-exporter, Portainer | `10.30.0.0/24` |
+| [`stack-web`](stack-web/README.md) | The Hub, a static landing page that embeds every panel | `10.40.0.0/24` |
+| [`stack-ai`](stack-ai/README.md) | Claude Code Router, CodeDeck+ bridge, MCP gateway, SearXNG, `agent-docker` *(opt-in)* | `10.50.0.0/24` |
 
-## 🚀 Quick Start
+`stack-network` is the foundation. `./bastion up` always starts it first and
+waits for Tor to be healthy. `stop`/`down` refuse to remove it while another
+stack is still running (`--force` overrides).
 
-### Prerequisites
-- Docker >= 24.0 & Docker Compose >= 2.0
-- Linux (Debian/Ubuntu)
-- 16GB+ RAM, 4+ CPU cores, 50GB+ storage
+## Quick start
 
-### Install
+**You need:** a Linux host (Debian/Ubuntu), Docker Engine ≥ 24 with the Compose
+plugin, 16 GB RAM, 4 cores, and at least 50 GB of disk (the node is pruned to
+about 20 GB of blocks).
+
 ```bash
-chmod +x bastion
+git clone --recurse-submodules https://github.com/deymosh/bastion.git
+cd bastion
 ./bastion up
 ```
 
-**What happens:**
-- Generates `bastion.conf` (auto-prompted for Wireguard URL, port, CLN alias)
-- Creates `.env` symlinks → `bastion.conf` (one source of truth)
-- Deploys: network → bitcoin → monitor → web → AI
+The first `up`:
 
-For a subset, name the stacks — `stack-network` is added automatically and always
-comes up first:
+1. creates `bastion.conf` and fills in generated values (tokens, the Pi-hole
+   password, your uid/gid and timezone);
+2. asks for the three values that have no default: the WireGuard public
+   host and port, and the Lightning node alias;
+3. writes `secrets/` and deploys network → bitcoin → monitor → web → ai;
+4. seeds RTL's config and mints its access rune from CLN.
 
-```bash
-./bastion up stack-ai            # brings up stack-network too
-./bastion up network bitcoin
-```
+Then:
 
-## 📦 Bastion Stacks
+- **Apply the firewall.** Every panel listens on `0.0.0.0` by design, so the
+  host firewall is what controls access. See [docs/firewall.md](docs/firewall.md).
+- **Plug in the backup drive** at `/mnt/backup_cln` (`BACKUP_DEST`). CLN
+  mirrors its wallet database there live.
+- **Install the boot daemon.** It brings Bastion up at boot and mirrors the
+  channel backup (SCB):
+  ```bash
+  sudo cp services/bastion-daemon.service /etc/systemd/system/
+  sudo systemctl edit --full bastion-daemon   # set WorkingDirectory= to this checkout
+  sudo systemctl enable --now bastion-daemon
+  journalctl -u bastion-daemon -f
+  ```
 
-| Stack | Services | IPs |
-|-------|----------|-----|
-| **network** | unbound DNS, WireGuard VPN, Pi-hole, Tor | 10.10.0.2-3 + transit |
-| **bitcoin** | bitcoind, lightningd, RTL (TEOS opt-in) | 10.20.0.2-5 + transit |
-| **monitor** | prometheus, grafana, portainer, node-exporter | 10.30.0.2-5 |
-| **web** | Bastion operations hub | 10.40.0.2 |
-| **ai** | Claude Code Router, CodeDeck+ bridge, MCP gateway, SearXNG (internal) | 10.50.0.2-5 |
+## Using it
 
-The private stack networks use `10.10.0.0/24` through `10.50.0.0/24`.
-Cross-stack services use the restricted `bastion-transit` network at
-`10.254.0.0/24`. Pinned there: Tor `10.254.0.2`, Core Lightning `10.254.0.10`,
-TEOS `10.254.0.11` — the last two publish their onion services through Tor and
-must advertise a transit address the `tor` container can route to.
-
-## ⚙️ Commands
-
-Run `./bastion` with no arguments on a terminal for the interactive dashboard
-(stack picker, live status, config editor, log viewer). For scripts and cron,
-use the subcommands:
+Run `./bastion` with no arguments for the interactive dashboard, which has a
+stack picker, live container status, a config editor and a log viewer. Every
+dashboard action is also available as a subcommand, for scripts and cron:
 
 ```bash
-./bastion up       [stack ...]        # Start stacks in order (default: all)
-./bastion stop     [stack | container]# Stop a stack set, or one container
-./bastion down     [stack ...]        # Remove containers (reverse order)
-./bastion build    [stack ...]        # Build images without starting
-./bastion logs     [stack | container]# Tail logs
-./bastion restart  <container>        # Restart one container
-./bastion start    <container>        # Start one stopped container
-./bastion exec     <container> -- ... # Run a command in a container
-./bastion shell    <container>        # Shell into a container
-./bastion ps                          # Every container: state + health + stack
-./bastion status                      # docker ps table
-./bastion versions                    # Image pin vs. running
-./bastion audit                       # Check node profitability
-./bastion tui                         # Force the dashboard
+./bastion up    [stack...]        # deploy (default: all, in order)
+./bastion stop  [stack|ctr...]    # stop a set of stacks, or one container
+./bastion down  [stack...]        # stop + remove containers (data is kept)
+./bastion build [stack...]        # build images without starting
+./bastion logs  [stack|ctr...]    # follow logs
+
+./bastion restart|start <ctr>     # one container
+./bastion exec  <ctr> -- <cmd>    # run a command in a container
+./bastion shell <ctr>             # bash if present, else sh
+
+./bastion ps                      # every container: state, health, stack
+./bastion versions                # pinned image vs. what is running
+./bastion config [get|set]        # read / change bastion.conf (validated)
+./bastion audit                   # routing profitability report
+./bastion install-sysbox          # runtime for agent-docker (restarts Docker)
 ```
 
-`docker compose` never needs to be run by hand: the per-container verbs above
-(and the TUI's **Containers** view) cover restart / stop / start / logs / shell.
+You can drop the `stack-` prefix (`./bastion up web ai`). Flags:
 
-A stack name may be given with or without the `stack-` prefix
-(`./bastion up web ai`). On `up`, `--recreate-networks` drops a stale
-`bastion-network` left from the old flat-network layout before starting.
-Two services are opt-in: `teosd` (your own watchtower) and `agent-docker`, a
-private, non-privileged Docker daemon for the CodeDeck agent to build projects
-in their own toolchain containers. Enable them permanently with
-`./bastion config set ENABLED_PROFILES watchtower,agent-docker`, which every
-`up` (including the boot daemon's) applies, or for one run with
-`--with-watchtower` / `--with-agent-docker`. `agent-docker` requires the Sysbox
-runtime on a Linux host: `./bastion install-sysbox` installs it, and `up`
-offers to on a terminal. See [docs/agent-docker.md](docs/agent-docker.md).
-`./bastion versions` shows the image pin vs. what is running.
+| Flag | Effect |
+|---|---|
+| `--with-watchtower` | also run `teosd`, your own watchtower, for this run |
+| `--with-agent-docker` | also run the agent's private Docker daemon (needs Sysbox) |
+| `--force`, `-f` | allow stopping `stack-network` while other stacks run |
+| `--recreate-networks` | drop a stale pre-transit `bastion-network` before `up` |
 
-All settings live in `bastion.conf`: list or change them with
-`./bastion config` (or the TUI's Configuration view). The full reference is
-[docs/configuration.md](docs/configuration.md).
+To enable opt-in services permanently (including for the boot daemon), run
+`./bastion config set ENABLED_PROFILES watchtower,agent-docker`.
 
-On a fresh install `./bastion up` seeds `data/rtl/RTL-Config.json` and mints an
-RTL access rune from CLN; both are created only if absent, so an existing
-install is untouched. See `stack-bitcoin/README.md`.
+You never need to run `docker compose` by hand: `./bastion` passes
+`--env-file bastion.conf` and the right profiles on every call.
 
-`stack-network` is the foundation - it owns the `bastion-transit` network and
-runs Tor, which the Bitcoin and AI stacks attach to. `./bastion up` always
-brings it up first and adds it automatically when it is left out of the list.
-For the same reason it will not `stop` or `down` `stack-network` while another
-stack still has containers running; bring those down first, or pass `--force`.
+## Access
 
-Any non-interactive invocation (a pipe, cron, `services/bastion-daemon.sh`)
-runs the plain path; the dashboard only opens on a real terminal.
+The Hub at **`http://bastion.node`** links to every panel. Pi-hole resolves
+`bastion.node` to the host's LAN IP.
 
-## 🌐 Access
+| Service | Port | Notes |
+|---|---|---|
+| Hub | `80` | Opens panels embedded, or in a new tab |
+| RTL | `3000` | Lightning UI (rune minted automatically) |
+| CLN REST | `3001` | For wallet apps over WireGuard |
+| CCR | `3458` | Claude Code Router UI (`CCR_WEB_AUTH_TOKEN`) |
+| Portainer | `4000` (https) | **Mounts the Docker socket.** Firewall it the most tightly of all |
+| Grafana | `4001` | Starts with `admin` / `admin`. Change it on first login |
+| Pi-hole | `8081/admin` | Password: `./bastion config get PIHOLE_PASSWORD` |
+| MCP gateway | `8811/mcp` | Bearer `MCP_GATEWAY_TOKEN`. See [docs/mcp.md](docs/mcp.md) |
+| Prometheus | `9090` | |
+| WireGuard | `51820/udp` | **The only port meant to face the internet** |
 
-| Service | Port | Location | Version |
-|---------|------|----------|---------|
-| **Hub** (Bastion operations hub) | 80 | http://bastion.node | nginx 1.31.5-alpine |
-| RTL (Lightning UI) | 3000 | http://bastion.node:3000 | v0.15.8 |
-| Grafana | 4001 | http://bastion.node:4001 | 13.2.1 |
-| Portainer | 4000 | https://bastion.node:4000 | 2.45.0 |
-| Prometheus | 9090 | http://bastion.node:9090 | v3.14.0 |
-| Pi-hole | 8081 | http://bastion.node:8081/admin | 2026.07.2 |
-| CLN REST API | 3001 | http://bastion.node:3001 | (CLN native) |
-| CCR management UI | 3458 | http://bastion.node:3458 | v3.1.1, commit `471e715` |
-| MCP gateway (AI tools API) | 8811 | http://bastion.node:8811/mcp | FastMCP 4.0.5, Bearer token — see [docs/mcp.md](docs/mcp.md) |
-| Wireguard VPN | 51820/udp | External (WAN) | 1.0.20260223-r0-ls121 |
+Each panel is reachable over WireGuard, from `localhost` and from the trusted
+LAN. Anything internal is never published: bitcoind RPC, Tor SOCKS/control,
+CLN P2P, the TEOS API, the CCR gateway, SearXNG and the CodeDeck bridge.
 
-Image versions are pinned by digest; `./bastion versions` shows the pin and what
-is actually running. Bitcoin Core (`v26.0`) and the built images
-(`lightningd-custom`, `teosd`, `tor-custom`, `bastion-claude-code-router`) are
-not on this list — they carry no published UI.
+## Documentation
 
-### Access model & firewall
+| | |
+|---|---|
+| [Configuration](docs/configuration.md) | Every `bastion.conf` setting, generated from `utils/settings.registry` |
+| [Disaster recovery](docs/disaster-recovery.md) | What to back up, how to restore, how to move hosts |
+| [Firewall](docs/firewall.md) | nftables ruleset and a `ufw` recipe |
+| [MCP gateway](docs/mcp.md) | The remote-agent tool endpoint, its namespaces and a ready-made `.mcp.json` |
+| [Agent Docker](docs/agent-docker.md) | A private Docker daemon for the AI agent on Sysbox, and its security model |
+| [Tests](tests/README.md) | The static / unit / integration / weekly lanes, and how to run them |
+| Stack READMEs | Per-stack services, addresses and operations (linked above) |
 
-Every service above is published on `0.0.0.0` **by design**, so you can reach it
-three ways:
+## Pinned components
 
-- **over WireGuard** — the recommended path from outside the LAN;
-- **from `localhost`** on the host itself;
-- **from the trusted LAN** — e.g. a desktop on the same network.
-
-Pi-hole holds a local-DNS record (`bastion.node → <host LAN IP>`) so the Hub and
-every panel work by name from all three. The Hub itself links panels using
-whatever hostname you are browsing with, so you never need to remember a port.
-
-Because the ports are open on every interface, **the host firewall is the access
-control** — this is not optional in production. [docs/firewall.md](docs/firewall.md)
-gives a ready-to-use nftables ruleset and a `ufw` recipe that allow these ports
-from the WireGuard subnet and the LAN and drop them everywhere else, in
-particular from any WAN interface / router port-forward. Only `51820/udp`
-(WireGuard) is meant to face the internet. Portainer (port `4000`) mounts the
-Docker socket — firewall it the most tightly of all.
-
-**Defaults (change immediately):**
-- Grafana: `admin:admin`
-- Pi-hole: `admin:${PIHOLE_PASSWORD}`
-- Bitcoin RPC: `bitcoind.user:bitcoind.pass`
-- CLN REST API: Access via `http://localhost:3001`
-
-## 🛠️ Configuration
-
-`./bastion` creates and maintains an organized `bastion.conf` - the single file
-you edit:
-- **Interactive prompts:** Wireguard URL/port, CLN node alias
-- **Auto-generated:** TIMEZONE, PIHOLE_PASSWORD, USER_ID, GROUP_ID, CCR web token
-- **AI settings:** CodeDeck relay, Tor proxy, Git, Claude, and GitHub variables
-- **Idempotent:** managed variables are rewritten without duplicates on repeated runs
-- **Symlinks:** each stack references `../bastion.conf` via `.env` on Linux
-- **Secrets:** the secret values (`PIHOLE_PASSWORD`, `CCR_WEB_AUTH_TOKEN`,
-  `MCP_GATEWAY_TOKEN`, `CONTEXT7_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`,
-  `GITHUB_TOKEN`) are also projected into `secrets/`
-  (git-ignored, `600`) and delivered to the one service that needs each as a
-  **file** under `/run/secrets/…`, not a plaintext env var - so they never
-  appear in `docker inspect`. `bastion.conf` stays the source of truth;
-  `secrets/` is regenerated from it and rewritten only when a value changes.
-
-On Windows, use a real `.env` file in each stack directory if symlinks are not
-enabled. Keep credentials out of Git in every environment.
-
-### Key Files
-
-```
-stack-bitcoin/docker-compose.yml    # Edit RPC user/pass, pruning settings
-stack-bitcoin/config/cln_config     # CLN configuration (alias, plugins, proxy)
-stack-network/docker-compose.yml    # Network, WireGuard, and Tor config
-stack-web/html/index.html           # Hub landing page (edit to add/remove panels)
-bastion.conf                        # GENERATED - in .gitignore
-secrets/                            # GENERATED from bastion.conf - in .gitignore
-stack-*/data/                       # Volumes - in .gitignore
-stack-ai/docker-compose.yml        # CCR + CodeDeck+ integration
-stack-ai/ccr/Dockerfile.ccr             # CCR pinned commit + Claude Code
-```
-
-### AI Stack
-
-The AI stack builds Claude Code Router from a **pinned commit** of the official
-upstream project (`CCR_REF` / `CCR_REPOSITORY` in `stack-ai/ccr/Dockerfile.ccr`;
-see that file's comment for the exact bump command - resolved via the actual
-latest release, not `tags[0]`, which isn't ordered by recency),
-and bakes in an OAuth token refresher so the login stays valid without manual
-re-auth. CCR includes Claude Code and runs **unprivileged**
-(`cap_drop: ALL`, `no-new-privileges`): its entrypoint wrapper starts as root only
-to align file ownership to `USER_ID`/`GROUP_ID`, then `gosu`-drops to that user.
-CodeDeck+ uses its published bridge image (`ghcr.io/deymosh/codedeck-plus-bridge`),
-runs as its own non-root user, and routes Claude Code requests through CCR at
-`http://ccr:8080`.
-
-AI state is persisted under `stack-ai/data/`. CCR authenticates with an
-interactive `claude` login stored under `stack-ai/data/ccr/.claude/`; CodeDeck's
-Claude OAuth token is a separate credential used by the bridge.
-
-### MCP gateway
-
-Remote AI agents get one Streamable HTTP MCP endpoint at
-`http://bastion.node:8811/mcp`, protected by a single Bearer token
-(`MCP_GATEWAY_TOKEN`, delivered as a secret file). The gateway aggregates four
-namespaced MCP servers — SearXNG search, Context7 docs, a persistent memory
-knowledge graph, and time — as stdio children of one unprivileged container;
-SearXNG itself runs as an internal-only instance with no published port. See
-[docs/mcp.md](docs/mcp.md) for the endpoint, namespaces, and a ready-to-use
-`.mcp.json`.
-
-Before starting Bastion, add these values to the generated `bastion.conf`:
-
-```bash
-CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat-...
-GITHUB_TOKEN=                 # optional
-CODEDECK_RELAYS=wss://your-trusted-relay.example
-```
-
-CodeDeck relay connections use Bastion's existing Tor service at
-`socks5h://tor:9050` by default. Pair the Android app by reading the bridge logs:
-
-```bash
-docker logs codedeck-bridge
-```
-
-### Bitcoin Core Defaults
-
-```dockerfile
--rpcuser=bitcoind.user              # RPC user (change if desired)
--rpcpassword=bitcoind.pass          # RPC password (change if desired)
--prune=20000                        # ~20GB block storage (adjust as needed)
--txindex=0                          # Disabled (not needed for CLN)
--rpcallowip=10.20.0.0/24            # Allow RPC from the Bitcoin stack network
--rpcbind=0.0.0.0                    # Listen on all interfaces (container network)
-```
-
-**Note:** RPC credentials must match those in `stack-bitcoin/config/cln_config` and RTL config.
-
-### Core Lightning Plugins
-
-Built into the `lightningd-custom` image; `cln_config` enables them by default
-(except `backup`, which is installed but left commented out):
-
-| Plugin | Commit | Purpose |
-|--------|--------|---------|
-| **clboss** | [95d195f8](https://github.com/ksedgwic/clboss/tree/95d195f8baafa1aa22f7aa95fa1dd1fd26003583) | Channel autopilot & rebalancing |
-| **watchtower-client** | [be344ecc](https://github.com/talaia-labs/rust-teos/tree/be344ecc5286dd9436bf343d30954135da8ad4ac) | TEOS breach watching |
-| **peerswap** | [23b32d3a](https://github.com/ElementsProject/peerswap/tree/23b32d3a1b1665c7c5e50e76d530fff5bf8be3d8) | Submarine swap rebalancing |
-| **backup** | [cb3adab](https://github.com/lightningd/plugins/tree/cb3adabfcb95e802ff27be85a53a353150a4907d) | Replication to USB/external |
-| **trustedcoin** | [v0.8.6](https://github.com/nbd-wtf/trustedcoin/releases/tag/v0.8.6) | Chain backend in place of `bcli`: `bitcoind` when reachable, public block explorers over Tor as fallback |
-| **darknet** | Local | Prefer .onion addresses for peers |
-
-**CLN Configuration:**
-```ini
-# Autopilot settings (clboss)
---clboss-min-channel=1000000       # Minimum channel: 1M sats
---clboss-max-rebalance-fee-ppm=250 # Max rebalancing fee
---clboss-auto-close=false          # Don't auto-close channels
-
-# Autoclean settings (remove failed payments & invoices)
-autoclean-failedpays-age=604800    # Remove failed pays after 7 days
-autoclean-failedforwards-age=604800 # Remove failed forwards after 7 days
-autoclean-expiredinvoices-age=2592000 # Remove expired invoices after 30 days
-
-# Wallet & backup
-wallet=sqlite3:///root/.lightning/bitcoin/lightningd.sqlite3:/backup_usb/lightningd.sqlite3
-
-# Network settings
-proxy=10.254.0.2:9050              # Tor SOCKS proxy (tor on bastion-transit)
-addr=statictor:10.254.0.2:9051     # Tor control port -> static onion
-always-use-proxy=true              # Route all traffic through Tor
-bind-addr=10.254.0.10:9735         # CLN's own bastion-transit address; this is
-                                   # the hidden-service forward target Tor dials,
-                                   # so it must NOT be 0.0.0.0 (Tor can't reach it)
-```
-
-**Important Plugins:**
-- `trustedcoin` - the chain backend in place of the built-in `bcli`. It uses
-  `bitcoind` through the `bitcoin-rpc*` lines in `cln_config` when that node is
-  reachable and has the block, and only falls back to public block explorers
-  (over Tor) otherwise. Marked `important-plugin`.
-- `watchtower-client` - Critical for channel security (marked as `important-plugin`)
-- `bcli` - the built-in backend, **disabled** (`disable-plugin=bcli`) so
-  `trustedcoin` can take over.
-
-### TEOS Configuration
-
-TEOS (`teosd`) is **opt-in** and off by default — start it with
-`./bastion up --with-watchtower` (it carries the `watchtower` compose profile).
-Running a watchtower on the same machine as your node is a deliberate choice: it
-is meant for offering the service to *other* nodes, not for watching your own
-(that is the always-on `watchtower-client` plugin, pointed at an external tower).
-
-`stack-bitcoin/config/teos.toml` is a template. On `./bastion up --with-watchtower`
-it is copied to `stack-bitcoin/data/teos/teos.toml` **only if that file does not
-exist yet** — an established install is never touched. Without it `teosd` would
-fall back to rust-teos's compiled-in defaults (`api_bind 127.0.0.1`, Tor off) and
-never be reachable at its pinned transit address.
-
-### RTL Configuration
-
-RTL connects to CLN via the Bitcoin stack network (`10.20.0.2:3001`).
-`stack-bitcoin/config/RTL-Config.json` is a template; on `./bastion up` it is
-seeded to `stack-bitcoin/data/rtl/RTL-Config.json` and an access rune is minted
-from CLN into `stack-bitcoin/data/rtl/access.rune` (`LIGHTNING_RUNE="…"`, mode
-`600`) — **both only if absent**. If you change CLN RPC credentials or ports,
-edit the live copy under `data/`. See `stack-bitcoin/README.md`.
-
-## 🔧 Troubleshooting
-General troubleshooting steps for common issues. Always check container logs first (`docker logs <container>`).
-The commands below assume you are in the project root and have the necessary permissions to run Docker commands. Adjust paths and container names as needed based on your specific setup.
-
-```bash
-# CLN backup plugin backup not initialized - ensure USB mount is correct and accessible
-# Example command to initialize backup plugin with mounted USB path:
-docker run --rm -it -v $(pwd)/stack-bitcoin/data/cln:~/.lightning/bitcoin -v /mnt/backup_cln:/backup_usb --entrypoint /usr/local/bin/backup/backup-cli lightningd-custom:latest init --lightning-dir ~/.lightning/bitcoin file:///backup_usb/backup.sqlite.bkp
-
-# CLN backup plugin - restore from backup file
-docker run --rm -it -v $(pwd)/stack-bitcoin/data/cln:~/.lightning/bitcoin -v /mnt/backup_cln:/backup_usb --entrypoint /usr/local/bin/backup/backup-cli lightningd-custom:latest restore file:///backup_usb/backup.sqlite.bkp --lightning-dir ~/.lightning/bitcoin
-
-# CLN backup plugin - compact backup file
-docker exec lightningd lightning-cli backup-compact
-
-# CLN not connecting to Bitcoin
-docker logs lightningd
-docker exec lightningd ping -c 3 10.20.0.3
-
-# RTL cannot reach CLN
-docker logs rtl
-docker exec lightningd lightning-cli getinfo
-
-# DNS issues
-docker exec unbound dig @127.0.0.1 google.com
-
-# TOR connectivity (config restart to refresh circuits)
-docker kill --signal=HUP tor
-docker logs tor
-
-# TOR connectivity (delete Tor state for fresh circuits)
-docker stop tor
-docker volume rm bastion-tor-data
-docker start tor
-
-# Container resource usage
-docker stats
-df -h
-```
-
-## 🔒 Security and Boundaries
-
-Each stack has a private Docker subnet. Cross-stack dependencies use the restricted
-`bastion-transit` network (`10.254.0.0/24`). Only `51820/udp` (WireGuard) is meant
-to face the internet; the Hub ports are open on every interface **on purpose** and
-the host firewall is the ACL — see "Access model & firewall" above and
-[docs/firewall.md](docs/firewall.md).
-
-**Internal isolation (never published on the host):**
-- Bitcoin RPC: `10.20.0.3:8332` (Bitcoin stack network only)
-- CLN P2P / TEOS API: only on `bastion-transit` (`10.254.0.10:9735` /
-  `10.254.0.11:9814`), reachable only through their Tor onion services
-- CCR gateway: `ccr:8080` (AI stack network only; the management UI on `3458` is
-  the only CCR port published)
-- CodeDeck bridge: no published host port; relay traffic uses `bastion-transit`
-- SearXNG: no published port (AI stack network only; the MCP gateway is its
-  only consumer)
-- MCP servers themselves: no per-server ports; only the aggregated, Bearer-
-  protected gateway on `8811` is published
-- Tor SOCKS/control (`9050`/`9051`): `bastion-transit` only, no host publish
-
-**Recommended:**
-- Change default passwords (Grafana `admin:admin`, Pi-hole, Bitcoin RPC)
-- Keep `.gitignore` / `secrets/` protected; never commit `bastion.conf`
-- Use WireGuard for remote access; apply [docs/firewall.md](docs/firewall.md)
-  before exposing the host
-
-## 📊 Versions
+The compose files and Dockerfiles are authoritative. `./bastion versions`
+compares each pin with what is running.
 
 | Component | Version |
-|-----------|---------|
+|---|---|
 | Bitcoin Core | v26.0 |
-| Core Lightning | v25.12.1 |
+| Core Lightning | v25.12.1, with clboss `95d195f8`, peerswap `23b32d3a`, watchtower-client `be344ecc`, trustedcoin v0.8.6, backup `cb3adab` |
+| Tor | 0.4.7.13 |
 | RTL | v0.15.8 |
-| Claude Code Router | v3.1.1, pinned commit `471e715` (`CCR_REF` in `stack-ai/ccr/Dockerfile.ccr`) |
+| Pi-hole · unbound · WireGuard | 2026.07.2 · 1.22.0 · 1.0.20260223-r0-ls121 |
+| Prometheus · Grafana · Portainer · node-exporter | v3.14.0 · 13.2.1 · 2.45.0 · v1.12.1 |
+| Hub (nginx) | 1.31.5-alpine |
+| Claude Code Router | commit `471e715` |
 | CodeDeck+ bridge | v0.12.0 |
-| MCP gateway | FastMCP 4.0.5; `mcp-searxng` 2.3.0, `context7` 4.1.1, `server-memory` 2026.8.31, `mcp-server-time` 2026.8.18 (`stack-ai/mcp-gateway/Dockerfile.mcp-gateway`) |
-| SearXNG | 2026.9.21 (`searxng/searxng`, digest-pinned) |
-| **CLN Plugins:** |
-| clboss | [95d195f8](https://github.com/ksedgwic/clboss/tree/95d195f8baafa1aa22f7aa95fa1dd1fd26003583) |
-| watchtower-client | [be344ecc](https://github.com/talaia-labs/rust-teos/tree/be344ecc5286dd9436bf343d30954135da8ad4ac) |
-| backup | [cb3adab](https://github.com/lightningd/plugins/tree/cb3adabfcb95e802ff27be85a53a353150a4907d) |
-| trustedcoin | [v0.8.6](https://github.com/nbd-wtf/trustedcoin/releases/tag/v0.8.6) (replaces the disabled `bcli`) |
-
-## 📚 Resources
-
-- **Bitcoin**: https://bitcoin.org
-- **Core Lightning**: https://github.com/ElementsProject/lightning
-- **Docker**: https://docs.docker.com
-- **Block explorer**: https://mempool.space
+| MCP gateway · SearXNG | FastMCP 4.0.5 · 2026.9.21 |
+| agent-docker · Sysbox | docker 29.8.1-dind · 0.7.1 |
 
 ---
 
-**Software provided as-is.** Use at your own risk. Change defaults immediately. Never commit secrets.
+<div align="center">
+<sub>No secrets in the tree: <code>bastion.conf</code>, <code>secrets/</code> and <code>stack-*/data/</code> are git-ignored. Keep it that way.</sub>
+</div>

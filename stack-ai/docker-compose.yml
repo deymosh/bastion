@@ -80,7 +80,8 @@ services:
       CODEDECK_OPENCODE_SERVER_URL: ${CODEDECK_OPENCODE_SERVER_URL:-}
       CODEDECK_OPENCODE_AUTO_START: ${CODEDECK_OPENCODE_AUTO_START:-}
       CODEDECK_OPENCODE_PORT: ${CODEDECK_OPENCODE_PORT:-}
-      # Optional GSD planning workflow (v0.12.0+); off by default (see .env.example).
+      # Optional GSD planning workflow (v0.12.0+); off by default
+      # (CODEDECK_GSD_AUTO_INSTALL in docs/configuration.md).
       CODEDECK_GSD_AUTO_INSTALL: ${CODEDECK_GSD_AUTO_INSTALL:-}
       # Private Docker daemon from the opt-in agent-docker sidecar, over mutual
       # TLS. Harmless while the sidecar is off: its CLI volume is then empty,

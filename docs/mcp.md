@@ -34,9 +34,9 @@ mode `600`), which Docker mounts into the gateway as
 variable and never appears in `docker inspect`. Requests without the token (or
 with the wrong one) get `401` with `WWW-Authenticate: Bearer`.
 
-Rotate the token by editing `MCP_GATEWAY_TOKEN` in `bastion.conf`, running
-`./bastion up stack-ai` (rewrites the secret file), then
-`./bastion restart mcp-gateway` (the token is read at startup).
+Rotate the token with `./bastion config set MCP_GATEWAY_TOKEN "<new>"` (this
+rewrites the secret file at once), then `./bastion restart mcp-gateway`, because
+the token is read at startup.
 
 ## Namespaces and tools
 
@@ -100,8 +100,8 @@ service (see the firewall section below).
 
 - The gateway publishes **only** `8811` on the host (`0.0.0.0` like every Hub
   service, so WireGuard, `localhost`, and the trusted LAN all work). The host
-  firewall is the access-control layer; `docs/firewall.md` includes `8811` in
-  `HUB_PORTS`.
+  firewall is the access-control layer; `docs/firewall.example.nft` includes
+  `8811` in `HUB_PORTS`.
 - `searxng` has **no published port**. It is internal infrastructure for the
   gateway's `searxng` namespace, reachable only inside `bastion-ai`.
 - No MCP service joins `bastion-transit`. The MCP layer is self-contained in
@@ -111,7 +111,7 @@ service (see the firewall section below).
 
 ## Hardening
 
-Both new containers run `cap_drop: ALL` + `no-new-privileges:true` with a
+Both containers run `cap_drop: ALL` + `no-new-privileges:true` with a
 **read-only root filesystem** (`/tmp` is the only writable path, a tmpfs):
 
 - `mcp-gateway` runs as uid/gid `1000` (no capabilities, no root wrapper —

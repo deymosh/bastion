@@ -118,8 +118,10 @@ Compose projects) — ordering between stacks is the script's job, ordering
 
 The current topology is the result of a migration from one flat `bastion-network`
 (`10.0.0.0/24`) to this model; older docs / a running deployment may still show
-`10.0.0.x`. The per-stack `.env` files are symlinks to `bastion.conf` created by
-`utils/config.sh` — every stack sees the same variables.
+`10.0.0.x`. There are no per-stack `.env` files: `./bastion` runs every compose
+call with `--env-file bastion.conf` (its `compose()` helper), so every stack
+sees the same variables. Secrets are not interpolated at all — they are
+`secrets:` entries backed by `../secrets/<name>` files.
 
 ## Related
 

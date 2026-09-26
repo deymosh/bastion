@@ -57,6 +57,8 @@ steps share Docker state and are always serial.
 | `tui.test.sh` | headless smoke of `utils/tui.sh`: every view (`main` / `stacks` / `config` / `logs` / `containers` / `container_actions`) builds without a runtime error, the Containers list is in compose order, back-navigation, the menu-scroll offset math, and the menu/status focus model |
 | `ccr-wrapper.test.sh` | `ccr-entrypoint-wrapper.sh` always `exec`s the upstream entrypoint (args passed through) whether or not a token exists; `CCR_TOKEN_REFRESH=0` only skips the helper; `CCR_WEB_AUTH_TOKEN` read from `/run/secrets/ccr_web_auth_token` (file wins over env, never logged, env fallback when absent); as root it `chown`s the writable paths then `gosu`-drops to `PUID:PGID` before handing off |
 | `ccr-refresher.test.mjs` | `node --test` for `ccr-token-refresher.mjs` against a mock endpoint: `idle` on no/API-key file, no request when far from expiry, refresh + both-token rotation + key preservation on expiry, a past `refreshTokenExpiresAt` short-circuits the POST, `invalid_grant` / 5xx leave the file intact |
+| `bastion-daemon.test.sh` | `services/bastion-daemon.sh` SCB handling (sourced, `mountpoint` stubbed): the live copy on the backup drive is replaced atomically and only with a verified copy; nothing is written when the drive is not mounted |
+| `install-sysbox.test.sh` | `utils/install-sysbox.sh --check` enforces every host precondition (distro, kernel, systemd, Docker source, arch) before anything is downloaded, via its `SYSBOX_*` test hooks |
 | `amboss-healthcheck.test.sh` | `amboss-healthcheck.sh` with a stubbed `docker`: signs via `docker exec lightningd`, strips the `zbase=` prefix, builds valid JSON, POSTs to `api.amboss.space/graphql` through `--proxy socks5h://10.254.0.2:9050`, exits non-zero on a signing failure / an error response, honours `TOR_PROXY` |
 
 ## `integration/` — real containers, hermetic, ~2-3 min
@@ -69,14 +71,15 @@ a Docker Hub pull.
 |---|---|
 | `tor.compose.yml` + `hidden-service-reachability.sh` | builds the real `Dockerfile.tor` with a torrc derived from the real one; asserts from inside the tor container that the CLN/TEOS forward targets (transit addresses) are reachable and that a per-stack-subnet address, `0.0.0.0`, and Tor's own loopback are **not**. Guards the class of bug where a service advertises an onion target Tor can't route to. |
 | `container-ops.sh` + `copstest/` | drives real `./bastion ps` / `exec` / `shell` / `logs` / `restart` / `stop` / `start` / unknown-name against an isolated one-service project (`bastion-copstest`, `10.199.0.0/24`) registered via the `BASTION_EXTRA_CONTAINER_STACK` test hook — proves the per-container verbs hit the right compose project without going near a production stack. |
-| `secrets.sh` + `sectest/` | writes a random value to a `file:` secret, brings up a probe container (`bastion-sectest`, `10.198.0.0/24`), and asserts the value is readable at `/run/secrets/<name>` but absent from `docker inspect`'s `.Config.Env` and `/proc/1/environ` (with a normal env var as the positive control). Turns the Phase-5 "secret is a file, not an env var" claim from operator-verified into CI-verified. |
+| `secrets.sh` + `sectest/` | writes a random value to a `file:` secret, brings up a probe container (`bastion-sectest`, `10.198.0.0/24`), and asserts the value is readable at `/run/secrets/<name>` but absent from `docker inspect`'s `.Config.Env` and `/proc/1/environ` (with a normal env var as the positive control). Makes "a secret is a file, not an env var" CI-verified rather than operator-verified. |
+| `agent-docker.sh` + `agentdocker/` | the opt-in `agent-docker` sidecar next to the real `codedeck-bridge` image as uid 1000: the published CLI + buildx/compose work, mutual TLS is verified against the cert hostname (plaintext and cert-less clients refused), a build container writes back into the shared workspace, nothing leaks into the host's Docker, and on Sysbox the sidecar is not privileged. Without Sysbox it falls back to a privileged sidecar for this throwaway test only; CI runs it on a real Sysbox install with `REQUIRE_SYSBOX=1`, which forbids that fallback. |
 | `mcp-gateway.sh` + `mcptest/` | end-to-end of the stack-ai MCP gateway in a throwaway project (`bastion-mcptest`) with **no published host ports** — the test client rides the project network. Builds the real gateway image, binds the real SearXNG settings template, and drives the gateway with the **official MCP SDK** (deliberately not fastmcp): missing/wrong/query-param tokens rejected with `401` + `WWW-Authenticate`, `healthz` open and secret-free, `tools/list` returns unique namespaced tools across all four namespaces, and a real call on each (SearXNG search, Context7 lookup, memory round-trip, configured-timezone time). Also asserts the token value never reaches `docker inspect`'s env. ~3-4 min uncached; needs internet (npm/pip pulls, context7 API). |
 
 ## `weekly/` — slow, non-blocking
 
 | File | Covers |
 |---|---|
-| `build-images.sh` | plain `docker build` of `Dockerfile.tor`, `Dockerfile.lightningd` (five CLN plugins from source, ~15 min), `Dockerfile.ccr` (clones the fork), and `rust-teos/docker/Dockerfile`. No `--push`, no registry, no cache export — catches a Dockerfile that broke because a pinned base moved or a build dep vanished. |
+| `build-images.sh` | plain `docker build` of `Dockerfile.tor`, `Dockerfile.lightningd` (five CLN plugins from source, ~15 min), `Dockerfile.ccr` (clones upstream CCR at the pinned `CCR_REF`), and `rust-teos/docker/Dockerfile`. No `--push`, no registry, no cache export — catches a Dockerfile that broke because a pinned base moved or a build dep vanished. |
 | `cln.compose.yml` + `cln-real-config.sh` | boots the **real `lightningd-custom` image** with a config **mechanically derived** from `stack-bitcoin/config/cln_config` — the derivation only swaps the chain backend to a throwaway regtest bitcoind and remaps the transit octet; the Tor block (`proxy` / `addr=statictor` / `always-use-proxy` / `bind-addr`) passes through untouched, so a break in those real lines breaks the test. Asserts CLN parses the real config with the real image and comes up, and that the static Tor service forwards to CLN's own pinned address, never `0.0.0.0`. Offline (regtest), ~1-2 min. |
 
 ## Not covered (deliberately)
@@ -97,9 +100,9 @@ a Docker Hub pull.
   explorer fallback by hand: drop the `bitcoin-rpc*` lines from a copy of
   `cln_config`, keep `network=bitcoin`, boot against
   `tests/integration/tor.compose.yml` (~7 s to `getinfo`, ~5 min to fully synced).
-- **`node-audit.py` / `services/*`** — operator helpers, not wired into the
-  per-push path of `./bastion`; lint-only. (`amboss-healthcheck.sh` is an
-  operator helper too but now has `amboss-healthcheck.test.sh` in `unit/`.)
+- **`node-audit.py` and the daemon's boot/maintenance loop** — operator
+  helpers, lint-only. (The daemon's SCB sync and `amboss-healthcheck.sh` do
+  have unit tests, above.)
 - **Full `./bastion up`** — the release-lane check: on a Linux host with a
   regtest bitcoind, `./bastion up`, then verify every panel loads, both onions
   are reachable end-to-end (rendezvous, not just the last hop), and the

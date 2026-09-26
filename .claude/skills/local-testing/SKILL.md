@@ -20,11 +20,17 @@ almost everything Tor-adjacent needs `10.254.0.2:9050/9051` reachable.
 
 ## 1. What each change needs
 
+Prefer `./bastion` (it passes `--env-file bastion.conf` and the profiles).
+Raw `docker compose` is only for starting a *single service* of a stack (e.g.
+`lightningd` without `bitcoind`); always pass `--env-file bastion.conf` then,
+or `${NODE_ALIAS}` & co. interpolate empty. Run `./bastion config` once first
+so `bastion.conf` and `secrets/` exist.
+
 | Change area | Minimum to bring up | Notes |
 |---|---|---|
-| Hub / `stack-web` | `docker compose -f stack-web/docker-compose.yml up -d` | fully standalone; or just open `stack-web/html/index.html` in a browser |
+| Hub / `stack-web` | `docker compose --env-file bastion.conf -f stack-web/docker-compose.yml up -d` | fully standalone; or just open `stack-web/html/index.html` in a browser |
 | `stack-monitor` | that stack alone | self-contained, no Tor |
-| Tor / `torrc` / `Dockerfile.tor` | `stack-network` `tor` service only | `docker compose -f stack-network/docker-compose.yml up -d tor` |
+| Tor / `torrc` / `Dockerfile.tor` | `stack-network` `tor` service only | `docker compose --env-file bastion.conf -f stack-network/docker-compose.yml up -d tor` |
 | CLN config / `cln_config` / CLN compose | `tor`, then `lightningd` (NO bitcoind) | trustedcoin path, see §2 |
 | TEOS / `teos.toml` / `rust-teos` | `tor`, `lightningd`, rebuilt `teosd` | `teosd` carries the `watchtower` profile — `./bastion build --with-watchtower stack-bitcoin` (or `utils/build_teos.sh force`) to build, `./bastion up --with-watchtower ...` to start it |
 | CCR / `stack-ai` | `stack-ai` alone (+ `tor` if testing relay/bridge egress) | `/health` on `:3458` |
@@ -41,9 +47,9 @@ alone. (In production `bitcoind` is up, so the explorer path is only a backstop.
 
 Procedure:
 
-1. `docker compose -f stack-network/docker-compose.yml up -d tor` and wait for
+1. `docker compose --env-file bastion.conf -f stack-network/docker-compose.yml up -d tor` and wait for
    `docker inspect --format '{{.State.Health.Status}}' tor` = `healthy`.
-2. `docker compose -f stack-bitcoin/docker-compose.yml up -d lightningd` — this
+2. `docker compose --env-file bastion.conf -f stack-bitcoin/docker-compose.yml up -d lightningd` — this
    starts *only* `lightningd` (it has no `depends_on`), with a throwaway data
    directory (see §3 for the volume). If you ever add a `depends_on: bitcoind`,
    pass `--no-deps` or you will start a full-chain sync.

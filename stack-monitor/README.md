@@ -1,50 +1,37 @@
-# Monitor Stack
+# Monitor stack
 
-Operational visibility and container administration for Bastion. This stack does
-not own node state; it reads metrics and provides management interfaces.
+Observability and container administration. This stack holds no node state. It
+is self-contained, with its own network and no transit access.
 
 ## Services
 
-| Service | Host address | Purpose |
-|---|---|---|
-| Portainer | `https://localhost:4000` | Container administration (`10.30.0.2`) |
-| Grafana | `http://localhost:4001` | Dashboards (`10.30.0.3`) |
-| Prometheus | `http://localhost:9090` | Metrics storage and queries (`10.30.0.5`) |
-| Node Exporter | `10.30.0.4:9100` | Host metrics |
+| Service | Address | Host port | Purpose |
+|---|---|---|---|
+| `portainer` | `10.30.0.2` | `4000` (https) | Container administration |
+| `grafana` | `10.30.0.3` | `4001` | Dashboards |
+| `node-exporter` | `10.30.0.4:9100` | — | Host metrics |
+| `prometheus` | `10.30.0.5` | `9090` | Metrics storage and queries (`prometheus.yml`) |
 
-All services join the private `bastion-monitor` subnet (`10.30.0.0/24`). Prometheus uses `prometheus.yml` and persists
-its data in a Docker-managed volume.
+State lives in the named volumes `portainer_data`, `grafana_data` and
+`prometheus_data`. `./bastion down` keeps them.
 
-### Security
+## Security
 
-**Portainer mounts the Docker socket** (`/var/run/docker.sock`). That is
-root-on-the-host equivalent: anyone who reaches the Portainer UI, or exploits it,
-can create a privileged container and escape. Port `4000` must be firewalled the
-most tightly of any Hub port - WireGuard + LAN only, never WAN (see
-`docs/firewall.md`). A `docker-socket-proxy` in front of Portainer, or
-dropping Portainer from the default deploy, is the planned hardening.
+- **Portainer mounts the Docker socket**, which is equivalent to root on the
+  host. Anyone who reaches its UI can escape to the host. Firewall port `4000`
+  the most tightly of any port (WireGuard and LAN only, never WAN). The planned
+  hardening is a `docker-socket-proxy` in front of it.
+- **Grafana** starts with `admin` / `admin`, and **Portainer** asks you to create
+  an admin on first visit. Do both right after the first `up`.
+- Grafana sets `GF_SECURITY_ALLOW_EMBEDDING=true` so the Hub can frame it; it
+  still requires a login. Portainer's CSP can only be lifted completely, and
+  that is not worth it for a container that holds the Docker socket, so the Hub
+  opens Portainer in a new tab instead.
 
-Images are pinned by digest; `./bastion versions` shows the pin vs. what runs.
-
-### Hub embedding
-
-The Hub (`stack-web`) opens Grafana in an embedded panel rather than a new
-tab; `GF_SECURITY_ALLOW_EMBEDDING=true` above is what makes that work (Grafana
-refuses framing by default). Portainer is deliberately excluded from that -
-its default `frame-ancestors 'none'` CSP has no scoped override, only a
-`--no-csp` flag that strips the header entirely, and that is not a trade worth
-making for a container holding the Docker socket. The Hub opens Portainer in
-a normal new tab instead.
-
-## Commands
+## Operations
 
 ```bash
-docker compose -f ./stack-monitor/docker-compose.yml up -d
-docker compose -f ./stack-monitor/docker-compose.yml ps
-docker compose -f ./stack-monitor/docker-compose.yml logs -f prometheus
+./bastion up monitor
+./bastion logs prometheus
+./bastion restart grafana
 ```
-
-Persistent volumes are managed by Docker: `portainer_data`, `grafana_data`, and
-`prometheus_data`. Do not remove them during routine troubleshooting.
-
-Change default Grafana and Portainer credentials immediately after first access.
