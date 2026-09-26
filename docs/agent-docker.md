@@ -88,12 +88,14 @@ affected. If those ranges clash with your LAN, set your own values in
 ## Enable
 
 ```bash
-./bastion up --with-agent-docker          # or BASTION_PROFILES=agent-docker ./bastion up
+./bastion config set ENABLED_PROFILES agent-docker   # every `up` from now on, boot included
+./bastion up --with-agent-docker                      # or: just this once
 ```
 
-The sidecar carries the `agent-docker` compose profile, so a plain `./bastion up`
-never starts it. `stop` / `down` always include it. Both flags combine:
-`./bastion up --with-watchtower --with-agent-docker`.
+The sidecar carries the `agent-docker` compose profile, so it only starts when
+that profile is active. `stop` / `down` always include it. With the watchtower
+too: `ENABLED_PROFILES=watchtower,agent-docker`, or both `--with-*` flags. The
+TUI's deploy picker has a toggle for each.
 
 ## Using it from the agent
 

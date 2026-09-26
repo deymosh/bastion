@@ -156,6 +156,11 @@ have 'file: \.\./secrets/mcp_gateway_token'       stack-ai/docker-compose.yml &&
 have 'run/secrets/mcp_gateway_token'             stack-ai/mcp-gateway/gateway.py && ok "mcp-gateway reads the mounted bearer token" || bad "mcp-gateway does not read the mounted token"
 have 'file: \.\./secrets/context7_api_key'        stack-ai/docker-compose.yml && ok "context7_api_key declared from ../secrets/" || bad "context7_api_key not a file: secret"
 
+echo "== docs/configuration.md matches the settings registry =="
+bash utils/gen-config-docs.sh --check >/dev/null 2>&1 \
+  && ok "the generated settings table is up to date" \
+  || bad "docs/configuration.md is stale - run utils/gen-config-docs.sh"
+
 echo "== CCR runs unprivileged =="
 AI="stack-ai/docker-compose.yml"
 awk '/^  ccr:/{c=1} c&&/^  [a-z]/&&!/^  ccr:/{c=0} c&&/cap_drop:/{d=1} c&&d&&/- ALL/{ok=1} END{exit ok?0:1}' "$AI" \

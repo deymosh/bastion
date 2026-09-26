@@ -14,7 +14,7 @@ and `README.md`:
 | Stack | What it runs |
 |---|---|
 | `stack-network` | Pi-hole, `unbound`, WireGuard, **Tor** (owns the shared Tor volume + the `bastion-transit` network) |
-| `stack-bitcoin` | `bitcoind`, `lightningd` (CLN), RTL; `teosd` (own watchtower, opt-in `--with-watchtower`) |
+| `stack-bitcoin` | `bitcoind`, `lightningd` (CLN), RTL; `teosd` (own watchtower, opt-in: `ENABLED_PROFILES` or `--with-watchtower`) |
 | `stack-monitor` | Portainer, Prometheus, Grafana, node-exporter |
 | `stack-web` | `hub` (static nginx landing page) |
 | `stack-ai` | `ccr` (Claude Code Router), `codedeck-bridge`, `mcp-gateway` + `searxng`; `agent-docker` (Sysbox dind for the agent, opt-in `--with-agent-docker`) |
@@ -26,8 +26,10 @@ tree** — no node alias/pubkey/onion, no real IPs/domains, no wallet-app names,
 account identifiers. Generic self-host documentation only.
 
 The root `bastion` bash script + `utils/config.sh` orchestrate the stacks.
-`rust-teos` is a git submodule (a fork). `bastion.conf` + the per-stack
-`stack-*/.env` symlinks are generated, git-ignored, and hold live secrets.
+`rust-teos` is a git submodule (a fork). `bastion.conf` (plus the derived
+`secrets/`) is generated, git-ignored, and holds live secrets. Every setting is
+declared once, in `utils/settings.registry`; `docs/configuration.md` is generated
+from it (`utils/gen-config-docs.sh`, checked by the static tests).
 
 ## Commands
 
@@ -49,6 +51,7 @@ deployment target is **Linux**. Bash syntax is identical either way.
 ./bastion versions              # image pin vs. running
 ./bastion audit                 # node profitability audit (python)
 ./bastion install-sysbox        # runtime for --with-agent-docker (Linux; restarts Docker)
+./bastion config [get|set]      # list / read / change bastion.conf settings (validated)
 ```
 
 A single container name on `stop`/`logs` uses the per-container path; a stack
@@ -119,12 +122,12 @@ blocks the run and explains why.
   token, Claude OAuth `accessToken`/`refreshToken` in
   `stack-ai/data/ccr/.claude/.credentials.json`, CLN state, HSM secret. They are
   git-ignored; keep it that way. `bastion.conf` is the operator's single source
-  of truth; `utils/config.sh write_secret_files` projects the four secret values
-  (see `config_var_is_secret`) into `secrets/<lower_name>` (mode 600) which the
-  compose files mount at `/run/secrets/<name>` — secrets reach a container as a
-  file, never a plaintext env var. Add a new secret → add it to
-  `config_var_is_secret`, wire the compose `secrets:` block, and the file is
-  created automatically.
+  of truth; `utils/config.sh write_secret_files` projects every setting flagged
+  `secret` in `utils/settings.registry` into `secrets/<lower_name>` (mode 600),
+  which the compose files mount at `/run/secrets/<name>` — secrets reach a
+  container as a file, never a plaintext env var. Add a new secret → add a
+  registry row with the `secret` flag, wire the compose `secrets:` block, and
+  the file is created automatically. `bastion.conf` is parsed, never sourced.
 - **Never start `bitcoind` in dev** (see above).
 - **`rust-teos` is a submodule.** Any change to it is a real commit *inside* the
   submodule (on a branch of the fork) plus a pointer bump in the superproject.
