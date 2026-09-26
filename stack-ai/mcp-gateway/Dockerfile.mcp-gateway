@@ -22,9 +22,12 @@ RUN npm ci \
 
 FROM python:3.14.7-slim-bookworm@sha256:82bc3c539b8813ada9d68c63b40158fa002f7f33de9bf3312a3dfdc0620dff56
 
-# TLS roots for outbound HTTPS (context7's API, SearXNG upstream engines).
+# TLS roots for outbound HTTPS (context7's API, SearXNG upstream engines),
+# and libatomic1: the copied node binary links it from Node >= 26 on, and the
+# python-slim base does not ship it - without it every npm MCP child dies at
+# startup with "libatomic.so.1: cannot open shared object file".
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates libatomic1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Node runtime (self-contained binary) + the lockfile-installed MCP servers.
