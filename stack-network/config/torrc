@@ -1,4 +1,9 @@
 # Tor client services for Bastion's transit network
+
+# The bastion-tor-data volume. Explicit, rather than relying on tor's default
+# of ~/.tor with toruser's home at /data.
+DataDirectory /data/.tor
+
 SocksPort 10.254.0.2:9050
 ControlPort 10.254.0.2:9051
 
