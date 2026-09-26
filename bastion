@@ -128,7 +128,7 @@ preflight_networks() {
     if [ "$RECREATE_NETWORKS" = "1" ]; then
         echo -e "${CYAN}--> Removing it (all Bastion stacks will be brought down first)...${NC}"
         for (( i=${#STACKS[@]}-1; i>=0; i-- )); do
-            docker compose -f "./${STACKS[$i]}/docker-compose.yml" down 2>/dev/null || true
+            compose "${STACKS[$i]}" down 2>/dev/null || true
         done
         if docker network rm bastion-network >/dev/null 2>&1; then
             echo -e "${GREEN}[✔] Removed stale bastion-network; it will be recreated with the new subnet.${NC}"
@@ -249,6 +249,13 @@ resolve_stacks() {
 
 _contains() { local n="$1"; shift; local x; for x in "$@"; do [ "$x" = "$n" ] && return 0; done; return 1; }
 
+# Every compose call for one stack goes through here, interpolated from
+# bastion.conf directly - no per-stack .env copy of the config is needed.
+compose() {
+    local stack="$1"; shift
+    docker compose -f "./$stack/docker-compose.yml" --env-file "$CONFIG_FILE" "$@"
+}
+
 # Every compose profile Bastion knows about. `stop`/`down` activate all of them
 # so an opt-in service (e.g. teosd) is torn down even if the flag was omitted.
 ALL_PROFILES=$(IFS=,; printf '%s' "${KNOWN_PROFILES[*]}")
@@ -308,7 +315,7 @@ do_up() {
     local stack
     for stack in "${stacks[@]}"; do
         echo -e "${CYAN}--> Starting:${NC} ${BOLD}$stack${NC}"
-        if ! docker compose -f "./$stack/docker-compose.yml" up -d; then
+        if ! compose "$stack" up -d; then
             echo -e "${RED}${BOLD}[✘] Failed to start $stack.${NC}"
             return 1
         fi
@@ -328,7 +335,7 @@ do_stop() {
     export COMPOSE_PROFILES="$ALL_PROFILES"   # also stop opt-in services
     echo -e "${RED}${BOLD}[-] Stopping: ${stacks[*]}${NC}"
     for (( i=${#stacks[@]}-1; i>=0; i-- )); do
-        docker compose -f "./${stacks[$i]}/docker-compose.yml" stop
+        compose "${stacks[$i]}" stop
     done
 }
 
@@ -338,7 +345,7 @@ do_down() {
     export COMPOSE_PROFILES="$ALL_PROFILES"   # also remove opt-in services
     echo -e "${RED}${BOLD}[-] Removing: ${stacks[*]}${NC}"
     for (( i=${#stacks[@]}-1; i>=0; i-- )); do
-        docker compose -f "./${stacks[$i]}/docker-compose.yml" down
+        compose "${stacks[$i]}" down
     done
 }
 
@@ -349,7 +356,7 @@ do_build() {
     fi
     for stack in "${stacks[@]}"; do
         echo -e "${CYAN}--> Building:${NC} ${BOLD}$stack${NC}"
-        docker compose -f "./$stack/docker-compose.yml" build || return 1
+        compose "$stack" build || return 1
     done
 }
 
@@ -357,7 +364,7 @@ do_logs() {
     local stacks=("$@") args=()
     local s; for s in "${stacks[@]}"; do args+=(-f "./$s/docker-compose.yml"); done
     echo -e "${CYAN}${BOLD}[!] Logs (Ctrl-C to stop): ${stacks[*]}${NC}"
-    docker compose "${args[@]}" logs -f --tail=50
+    docker compose "${args[@]}" --env-file "$CONFIG_FILE" logs -f --tail=50
 }
 
 # --- Per-container operations (so `docker compose` is never run by hand) ---
@@ -393,7 +400,6 @@ do_container() {
         echo -e "    Known: $(printf '%s ' "${!CONTAINER_STACK[@]}" | tr ' ' '\n' | sort | paste -sd' ' -)" >&2
         return 1
     fi
-    local cf="./$stack/docker-compose.yml"
     export COMPOSE_PROFILES="$ALL_PROFILES"   # so opt-in services are addressable
 
     case "$action" in
@@ -401,14 +407,14 @@ do_container() {
     esac
 
     case "$action" in
-        restart) echo -e "${CYAN}--> Restarting ${BOLD}$c${NC}"; docker compose -f "$cf" restart "$c" ;;
-        stop)    echo -e "${RED}--> Stopping ${BOLD}$c${NC}";    docker compose -f "$cf" stop "$c" ;;
-        start)   echo -e "${GREEN}--> Starting ${BOLD}$c${NC}";  docker compose -f "$cf" start "$c" ;;
+        restart) echo -e "${CYAN}--> Restarting ${BOLD}$c${NC}"; compose "$stack" restart "$c" ;;
+        stop)    echo -e "${RED}--> Stopping ${BOLD}$c${NC}";    compose "$stack" stop "$c" ;;
+        start)   echo -e "${GREEN}--> Starting ${BOLD}$c${NC}";  compose "$stack" start "$c" ;;
         logs)    echo -e "${CYAN}${BOLD}[!] Logs for $c (Ctrl-C to stop):${NC}"
-                 docker compose -f "$cf" logs -f --tail=100 "$c" ;;
-        exec)    MSYS_NO_PATHCONV=1 docker compose -f "$cf" exec "$c" "$@" ;;
+                 compose "$stack" logs -f --tail=100 "$c" ;;
+        exec)    MSYS_NO_PATHCONV=1 compose "$stack" exec "$c" "$@" ;;
         shell)   echo -e "${CYAN}--> Shell in ${BOLD}$c${NC} (exit to leave)${NC}"
-                 MSYS_NO_PATHCONV=1 docker compose -f "$cf" exec "$c" \
+                 MSYS_NO_PATHCONV=1 compose "$stack" exec "$c" \
                      sh -c 'command -v bash >/dev/null 2>&1 && exec bash || exec sh' ;;
         *) echo -e "${RED}[✘] Unknown container action: $action${NC}" >&2; return 1 ;;
     esac

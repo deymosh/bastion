@@ -261,13 +261,20 @@ validate_env_value() {
     return 0
 }
 
-# Symlink each stack's .env to the root config file.
+# Compose reads bastion.conf through `--env-file` (./bastion's compose()), so
+# the per-stack .env links older versions created are obsolete - and on a host
+# without symlink support (Git Bash on Windows) each one was a full copy of the
+# config, secrets included. Remove any that is a link, or a copy identical to
+# bastion.conf; a differing file is the operator's own and is left alone.
 # BASTION_SKIP_ENV_LINKS=1 skips this (used by the test suite).
-link_stack_envs() {
+remove_legacy_stack_envs() {
     [ "${BASTION_SKIP_ENV_LINKS:-0}" = 1 ] && return 0
-    local stack
+    local stack f
     for stack in "${STACKS[@]}"; do
-        [ -d "./$stack" ] && ln -sf "../$CONFIG_FILE" "./$stack/.env"
+        f="./$stack/.env"
+        if [ -L "$f" ] || { [ -f "$f" ] && cmp -s "$f" "$CONFIG_FILE"; }; then
+            rm -f "$f"
+        fi
     done
 }
 
@@ -298,12 +305,11 @@ write_secret_files() {
     done
 }
 
-# Persist the current environment to the config file and refresh the .env links
-# and the derived secret files.
+# Persist the current environment to the config file and refresh the derived
+# secret files.
 save_config() {
     cp -f "$CONFIG_FILE" "${CONFIG_FILE}.bak" 2>/dev/null || true
     write_config
-    link_stack_envs
     write_secret_files
 }
 
@@ -342,7 +348,7 @@ load_config() {
     done
 
     write_config
-    link_stack_envs
+    remove_legacy_stack_envs
     write_secret_files
 }
 

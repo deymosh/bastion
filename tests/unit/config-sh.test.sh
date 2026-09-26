@@ -15,7 +15,7 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 export CONFIG_FILE="$WORK/bastion.conf"
 
-# We only want config.sh's helper functions, not the prompts / .env links.
+# We only want config.sh's helper functions, not the prompts / legacy .env cleanup.
 export BASTION_SKIP_ENV_LINKS=1
 STACKS=()
 # shellcheck disable=SC1091
@@ -144,6 +144,17 @@ printf 'NO_DESC|Sec||text|\n' > "$WORK/bad2.registry"
 out=$(reg_load "$WORK/bad2.registry"); rc=$?; assert_eq "$rc" 1 "a row without a description is fatal"
 out=$(reg_load "$WORK/missing.registry"); rc=$?
 assert_eq "$rc" 1 "a missing registry is fatal"; assert_contains "$out" "not found" "says so"
+
+echo "== obsolete per-stack .env links / copies are cleaned up =="
+( cd "$WORK" && mkdir -p envs/stack-a envs/stack-b envs/stack-c && cd envs || exit 1
+  printf "NODE_ALIAS='x'\n" > bastion.conf
+  CONFIG_FILE=./bastion.conf STACKS=(stack-a stack-b stack-c) BASTION_SKIP_ENV_LINKS=0
+  ln -s ../bastion.conf stack-a/.env 2>/dev/null || cp bastion.conf stack-a/.env
+  cp bastion.conf stack-b/.env                       # identical copy (Git Bash "symlink")
+  printf 'OPERATOR=own\n' > stack-c/.env             # the operator's own file
+  remove_legacy_stack_envs
+  [ ! -e stack-a/.env ] && [ ! -e stack-b/.env ] && [ -f stack-c/.env ] )
+assert_eq "$?" 0 "links and identical copies removed; a differing .env is kept"
 
 echo "== bastion.conf is parsed, never executed =="
 cat > "$CONFIG_FILE" <<EOF
