@@ -13,8 +13,11 @@ exact commit (`Bastion 1.2.0 (git v1.2.0-3-gabc1234-dirty)`).
 It is automated by [release-please](https://github.com/googleapis/release-please)
 (`.github/workflows/release.yml`):
 
-1. Every merge to `master` updates a single open **release PR**. That PR bumps
-   `VERSION` and prepends the new entries to `CHANGELOG.md`.
+1. A merge to `master` that contains a `feat`, `fix`, `perf` or `revert`
+   commit opens or updates a single **release PR**. That PR bumps `VERSION` and
+   prepends the new entries to `CHANGELOG.md`. Merges with only `docs`,
+   `chore`, `ci`, `test`, `refactor` or `build` commits leave it alone and
+   never trigger a release on their own. They are not listed in the changelog.
 2. The version comes from the Conventional Commit types merged since the last
    tag:
 
@@ -24,10 +27,10 @@ It is automated by [release-please](https://github.com/googleapis/release-please
    | any `feat:` | minor (`1.2.3` → `1.3.0`) |
    | any `!` / `BREAKING CHANGE:` footer | major (`1.2.3` → `2.0.0`) |
 
-   `docs`, `refactor` and `build` appear in the changelog without bumping the
-   version on their own; `chore`, `ci` and `test` are left out of it.
 3. **Merging the release PR** creates the tag and the GitHub Release. Nothing
-   is released until a human merges it, so batch as many changes as you like.
+   is released until a human merges it. Leave the PR open while you merge as
+   many feature PRs as you want; it keeps accumulating them into one release,
+   and you merge it when you want to ship.
 
 Mark anything that needs operator action on upgrade (a new required setting,
 a data migration, a renamed container) as breaking, and say what to do in the
