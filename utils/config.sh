@@ -370,7 +370,9 @@ load_config() {
         ["CODEDECK_OPENCODE_AUTO_START"]=""
         ["CODEDECK_OPENCODE_PORT"]=""
         ["CODEDECK_GSD_AUTO_INSTALL"]=""
-        ["CCR_WEB_AUTH_TOKEN"]=$(openssl rand -base64 32 | tr -d '=+/\n' | cut -c1-43)
+        # 48 bytes -> 64 base64 chars, so stripping +/= still leaves >= 43.
+        # (32 bytes gave 44 chars, and every stripped +/ shortened the token.)
+        ["CCR_WEB_AUTH_TOKEN"]=$(openssl rand -base64 48 | tr -d '=+/\n' | cut -c1-43)
         ["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"]="1"
         # Match stack-ai/docker-compose.yml's own ${VAR:-default} fallbacks, so
         # a freshly generated bastion.conf changes nothing for CCR at runtime.
@@ -379,7 +381,7 @@ load_config() {
         ["CCR_REFRESH_SKEW_MS"]="1800000"
         # MCP gateway: same shape as the CCR web token (URL-safe random). The
         # Context7 key is optional - an empty value serves keyless requests.
-        ["MCP_GATEWAY_TOKEN"]=$(openssl rand -base64 32 | tr -d '=+/\n' | cut -c1-43)
+        ["MCP_GATEWAY_TOKEN"]=$(openssl rand -base64 48 | tr -d '=+/\n' | cut -c1-43)
         ["CONTEXT7_API_KEY"]=""
         ["CLAUDE_CODE_OAUTH_TOKEN"]=""
         ["GITHUB_TOKEN"]=""
