@@ -7,7 +7,7 @@
 # submodule / fork branch went bad. Nothing is kept - the images are local to
 # the run.
 #
-# Dockerfile.lightningd builds five CLN plugins from source (~15 min); that is
+# Dockerfile.lightningd compiles four CLN plugins (~15 min); that is
 # why this is weekly, not per-push. rust-teos needs the submodule checked out.
 ###############################################################################
 set -u

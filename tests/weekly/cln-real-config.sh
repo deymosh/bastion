@@ -56,7 +56,7 @@ sed -E '
   /^disable-plugin=bcli/d;                                  # regtest uses bcli
   \#^important-plugin=.*/trustedcoin#d;                     # backend is bcli
   \#^important-plugin=.*/watchtower-client#d;               # needs a tower
-  \#^plugin=.*/(darknet\.py|clboss|peerswap)#d;            # workspace plugins
+  \#^plugin=.*/(darknet\.py|clboss|xrebalance|peerswap)#d; # workspace plugins
   \#^wallet=sqlite3://#d;                                   # /backup_usb path
 ' "$REAL_CLN" > "$WORK/cln_config"
 printf '\nbitcoin-rpcport=18443\n' >> "$WORK/cln_config"    # regtest RPC port
