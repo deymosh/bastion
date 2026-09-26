@@ -54,7 +54,10 @@ async def mcp_session(token):
     async with streamable_http_client(MCP_URL, http_client=http_client) as streams:
         read, write, *rest = streams
         async with ClientSession(read, write) as session:
-            await session.initialize()
+            init = await session.initialize()
+            if "searxng_web_url_read" not in (init.instructions or ""):
+                die("initialize carries the gateway instructions", repr(init.instructions)[:120])
+            ok("initialize carries the gateway instructions")
             tools = (await session.list_tools()).tools
             names = [t.name for t in tools]
             if len(names) != len(set(names)):

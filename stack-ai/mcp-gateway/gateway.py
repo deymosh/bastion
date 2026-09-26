@@ -140,8 +140,22 @@ class BearerAuthMiddleware:
         await self.app(scope, receive, send)
 
 
+# Server-level instructions: MCP clients surface these to the model once per
+# session (Claude Code puts them in the system prompt), so they carry the
+# cross-namespace guidance no single upstream tool description can - including
+# the served names, since upstream descriptions still cite unprefixed ones
+# (mcp-searxng's search tool points at `web_url_read`).
+INSTRUCTIONS = """\
+Bastion node tools, namespaced <namespace>_<tool>:
+- searxng: private metasearch. searxng_web_search finds pages; read a result's full text with searxng_web_url_read.
+- context7: current library/framework docs. Call context7_resolve-library-id first, then context7_query-docs with the returned ID. Prefer it over web search for API questions.
+- memory: one persistent knowledge graph shared by every agent using this node. Search (memory_search_nodes) before creating, to avoid duplicates; store durable facts only, never secrets.
+- time: current time and timezone conversion; defaults to the node's local timezone.
+"""
+
+
 def build_app(token: str):
-    gateway = FastMCP(name="bastion-mcp")
+    gateway = FastMCP(name="bastion-mcp", instructions=INSTRUCTIONS)
     namespaces = []
     for name, transport, renames in build_backends():
         # One persistent Client per child: connected lazily on first use and
