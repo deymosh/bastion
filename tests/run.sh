@@ -35,6 +35,7 @@ run_unit() {
   step "amboss healthcheck" bash tests/unit/amboss-healthcheck.test.sh
   step "ccr entrypoint wrapper" bash tests/unit/ccr-wrapper.test.sh
   step "sysbox installer checks" bash tests/unit/install-sysbox.test.sh
+  step "daemon SCB backup"  bash tests/unit/bastion-daemon.test.sh
   step "ccr token refresher" node_test tests/unit/ccr-refresher.test.mjs
 }
 
