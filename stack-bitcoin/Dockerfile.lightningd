@@ -148,11 +148,14 @@ RUN apt-get update && apt-get install -y \
     libcurl4-gnutls-dev \
     libunwind-dev \
     python3-pip && \
-    rm -rf /var/lib/apt/lists/* && \
-    pip3 install --no-cache-dir --break-system-packages pyln-client==26.6.8 && \
-    pip3 cache purge 2>/dev/null || true
+    rm -rf /var/lib/apt/lists/*
+
 # pyln-client: darknet.py imports it. The v25 base image shipped it; from
 # v26.06 it does not, so it is installed here (pinned; pip pulls pyln-proto).
+# The import check fails the build instead of shipping an image whose darknet
+# plugin dies at startup (it is a plain plugin=, so lightningd would not stop).
+RUN pip3 install --no-cache-dir --break-system-packages pyln-client==26.6.8 && \
+    python3 -c 'import pyln.client'
 
 # Copy plugins from builder stage
 COPY --from=builder /usr/local/bin/clboss /usr/local/bin/clboss
