@@ -210,6 +210,12 @@ services:
       # /etc/searxng, and a single-file bind under it is shadowed by the
       # anonymous volume (the settings would silently never load).
       - ./config/searxng:/etc/searxng:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
     networks:
       net:
         ipv4_address: 10.50.0.4
@@ -260,6 +266,13 @@ services:
       - mcp_memory_data:/data
     ports:
       - "8811:8811"
+    # Unauthenticated liveness endpoint (no token involved).
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8811/healthz', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
     networks:
       net:
         ipv4_address: 10.50.0.5

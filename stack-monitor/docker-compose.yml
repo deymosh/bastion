@@ -44,6 +44,13 @@ services:
       - "4001:3000"
     volumes:
       - grafana_data:/var/lib/grafana
+    # First boot runs DB migrations for ~30s, hence the start period.
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
     networks:
       net:
         ipv4_address: 10.30.0.3
@@ -65,6 +72,12 @@ services:
       # mounts, not the host disks the /rootfs bind above exists for.
       - '--path.rootfs=/rootfs'
       - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:9100/metrics"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
     networks:
       net:
         ipv4_address: 10.30.0.4
@@ -80,6 +93,12 @@ services:
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus_data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
     networks:
       net:
         ipv4_address: 10.30.0.5

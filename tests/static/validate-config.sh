@@ -288,6 +288,24 @@ m=$(_missing_in_service '^    restart: unless-stopped')
 [ -z "$m" ] && ok "every service restarts unless-stopped (so ./bastion stop sticks)" \
   || bad "restart policy is not unless-stopped on: $(printf '%s' "$m" | paste -sd, -)"
 
+# A healthcheck makes `./bastion ps` and the TUI tell "running" from "working".
+# Exempt, each for a stated reason - anything else must define one.
+declare -A HC_EXEMPT=(
+  [pihole]="image HEALTHCHECK (dig pi.hole)"
+  [unbound]="image HEALTHCHECK (drill)"
+  [ccr]="image HEALTHCHECK (Dockerfile.ccr, /health)"
+  [portainer]="distroless image: no shell or HTTP client to probe with"
+  [wireguard]="kernel interface, nothing to probe over HTTP"
+  [codedeck-bridge]="no listening port (outbound Nostr client only)"
+  [teosd]="opt-in; its API needs client certs to query"
+)
+m=""
+while read -r _st _svc; do
+  [ -n "${HC_EXEMPT[$_svc]:-}" ] || m+="${m:+, }$_st/$_svc"
+done < <(_missing_in_service '^    healthcheck:')
+[ -z "$m" ] && ok "every service has a healthcheck (or a documented exemption)" \
+  || bad "no healthcheck and no exemption: $m"
+
 echo "== Submodule tracking =="
 have 'branch = bastion-integration' .gitmodules && ok ".gitmodules tracks rust-teos bastion-integration" \
   || bad ".gitmodules does not pin rust-teos to bastion-integration"
