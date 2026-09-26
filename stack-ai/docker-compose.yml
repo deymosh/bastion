@@ -64,7 +64,7 @@ services:
 
   codedeck-bridge:
     # Pinned by digest (version tag kept for readability). Pinned 2026-09-17.
-    image: ghcr.io/deymosh/codedeck-plus-bridge:v0.12.0@sha256:960319b55c3a8287a524d7324228ea86e319e74fd4e824362d4faea0e410c911
+    image: ghcr.io/deymosh/codedeck-plus-bridge:v1.0.1@sha256:f55d89f63baed4508fb7542fc613074e7d47e8f5195b4ac5d15fc249233ca2eb
     container_name: codedeck-bridge
     logging: *logging
     restart: unless-stopped
@@ -191,7 +191,7 @@ services:
     # output is enabled in ./config/searxng/settings.yml (mounted read-only) -
     # without it every mcp-searxng query answers 403.
     # Pinned by digest (date tag kept for readability). Pinned 2026-09-22.
-    image: searxng/searxng:2026.9.21-df67eb6c2@sha256:1ef964f6dcc811a60e01049717b6e526b25a1c52935350143f04e0ae291b3dbd
+    image: searxng/searxng:2026.9.23-dcf1d477a@sha256:205e303efc8b3fd024ba67f43376e16212a4a21a561de008f22ae07411e9d3ab
     container_name: searxng
     logging: *logging
     restart: unless-stopped
