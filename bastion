@@ -391,6 +391,20 @@ _is_stack() {
     _contains "$w" "${STACKS[@]}"
 }
 
+# exec/shell run compose with MSYS_NO_PATHCONV=1 so a POSIX path in the
+# exec'd command reaches the container untouched - but that also disables
+# Git Bash's conversion of --env-file, handing docker.exe a POSIX path it
+# cannot open when CONFIG_FILE lives outside the Windows mount table (e.g. a
+# test's /tmp scratch file). Convert it to a Windows path up front; a no-op
+# elsewhere.
+_win_envfile() {
+    case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*)
+            command -v cygpath >/dev/null 2>&1 && [ -n "${CONFIG_FILE:-}" ] \
+                && CONFIG_FILE=$(cygpath -w "$CONFIG_FILE") ;;
+    esac
+}
+
 # Refuse to stop/restart a stack-network container (tor, pihole, ...) while some
 # other stack still has containers up; --force overrides. Returns 0 to proceed.
 _network_container_guard() {
@@ -429,9 +443,9 @@ do_container() {
         start)   echo -e "${GREEN}--> Starting ${BOLD}$c${NC}";  compose "$stack" start "$c" ;;
         logs)    echo -e "${CYAN}${BOLD}[!] Logs for $c (Ctrl-C to stop):${NC}"
                  compose "$stack" logs -f --tail=100 "$c" ;;
-        exec)    MSYS_NO_PATHCONV=1 compose "$stack" exec "$c" "$@" ;;
+        exec)    _win_envfile; MSYS_NO_PATHCONV=1 compose "$stack" exec "$c" "$@" ;;
         shell)   echo -e "${CYAN}--> Shell in ${BOLD}$c${NC} (exit to leave)${NC}"
-                 MSYS_NO_PATHCONV=1 compose "$stack" exec "$c" \
+                 _win_envfile; MSYS_NO_PATHCONV=1 compose "$stack" exec "$c" \
                      sh -c 'command -v bash >/dev/null 2>&1 && exec bash || exec sh' ;;
         *) echo -e "${RED}[✘] Unknown container action: $action${NC}" >&2; return 1 ;;
     esac
