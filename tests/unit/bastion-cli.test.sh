@@ -208,7 +208,7 @@ rm -f "$WORK/rune"
 out=$(MOCK_EXEC_OUT=$'rune=abc123XYZ\nunique_id=0' b up bitcoin)
 assert_contains "$out" "Wrote $WORK/rune" "up mints the rune when absent"
 grep -q 'LIGHTNING_RUNE="abc123XYZ"' "$WORK/rune" && _t_ok "rune file has LIGHTNING_RUNE format" || _t_bad "rune file format wrong: $(cat "$WORK/rune")"
-[ "$(uname -s)" = Linux ] && { [ "$(stat -c '%a' "$WORK/rune")" = 600 ] && _t_ok "rune file is mode 600" || _t_bad "rune file not 600"; }
+assert_mode "$WORK/rune" 600 "rune file is mode 600"
 # second run: file present -> ensure_rtl_rune returns early, no rewrite
 out=$(MOCK_EXEC_OUT=$'rune=SHOULDNOTUSE\nunique_id=0' b up bitcoin)
 grep -q 'LIGHTNING_RUNE="abc123XYZ"' "$WORK/rune" && _t_ok "existing rune left untouched on re-run" || _t_bad "rune was overwritten"

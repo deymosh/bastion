@@ -38,6 +38,17 @@ assert_fail() { # command...
   if "$@" >/dev/null 2>&1; then _t_bad "expected failure: $*"; else _t_ok "fails as expected: $*"; fi
 }
 
+# Modification time with sub-second precision (GNU stat, then BSD stat), so a
+# "was this file rewritten?" check needs no `sleep 1` between the two reads.
+file_mtime() {  # path
+  stat -c %.9Y "$1" 2>/dev/null || stat -f %Fm "$1" 2>/dev/null
+}
+
+assert_mode() {  # path octal-mode [label]  - skipped off Linux (NTFS has ACLs, not modes)
+  [ "$(uname -s)" = Linux ] || return 0
+  assert_eq "$(stat -c '%a' "$1")" "$2" "${3:-$1 is mode $2}"
+}
+
 finish() {
   echo
   if [ "$_T_FAIL" -eq 0 ]; then

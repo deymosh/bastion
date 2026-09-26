@@ -203,10 +203,9 @@ echo "== load_config: defaults only fill empty keys; file untouched when unchang
 tok1=$(read_env_var MCP_GATEWAY_TOKEN)
 assert_eq "${#tok1}" 43 "a missing token is generated (43 URL-safe chars)"
 assert_eq "$(read_env_var CCR_REFRESH_INTERVAL)" "300" "a literal default is written"
-m1=$(stat -c %Y "$CONFIG_FILE" 2>/dev/null || stat -f %m "$CONFIG_FILE")
-sleep 1
+m1=$(file_mtime "$CONFIG_FILE")
 ( unset "${MANAGED_VARS[@]}"; load_config >/dev/null 2>&1 )
-m2=$(stat -c %Y "$CONFIG_FILE" 2>/dev/null || stat -f %m "$CONFIG_FILE")
+m2=$(file_mtime "$CONFIG_FILE")
 assert_eq "$m1" "$m2" "a second load with nothing to change does not rewrite bastion.conf"
 assert_eq "$(read_env_var MCP_GATEWAY_TOKEN)" "$tok1" "an existing token is never regenerated"
 
@@ -239,10 +238,9 @@ printf 'TEMPLATE\n' > "$WORK/tpl/src"
 SEED_TEMPLATES=("$WORK/tpl/src:$WORK/out/dst")
 seed_runtime_config >/dev/null
 assert_eq "$(cat "$WORK/out/dst" 2>/dev/null)" "TEMPLATE" "seeds a missing target from its template"
-mtime1=$(stat -c %Y "$WORK/out/dst" 2>/dev/null || stat -f %m "$WORK/out/dst")
-sleep 1
+mtime1=$(file_mtime "$WORK/out/dst")
 seed_runtime_config >/dev/null
-mtime2=$(stat -c %Y "$WORK/out/dst" 2>/dev/null || stat -f %m "$WORK/out/dst")
+mtime2=$(file_mtime "$WORK/out/dst")
 assert_eq "$mtime1" "$mtime2" "a second call does not rewrite an existing target"
 printf 'OPERATOR EDIT\n' > "$WORK/out/dst"
 seed_runtime_config >/dev/null
@@ -278,9 +276,7 @@ chmod +x "$mock_dir/docker"; PATH="$mock_dir:$PATH"
 RTL_RUNE_FILE="$WORK/rune"; RTL_RUNE_RETRIES=2; RTL_RUNE_WAIT=0
 MOCK_EXEC_OUT=$'rune=abcDEF123\nunique_id=0' ensure_rtl_rune >/dev/null
 assert_eq "$(cat "$WORK/rune" 2>/dev/null)" 'LIGHTNING_RUNE="abcDEF123"' "writes the rune in LIGHTNING_RUNE= form"
-# POSIX modes only round-trip reliably on Linux (Windows maps them to ACLs).
-[ "$(uname -s)" = Linux ] && \
-  assert_eq "$(stat -c '%a' "$WORK/rune")" "600" "rune file is mode 600"
+assert_mode "$WORK/rune" 600 "rune file is mode 600"
 MOCK_EXEC_OUT='rune=SHOULD_NOT_BE_USED' ensure_rtl_rune >/dev/null
 assert_eq "$(cat "$WORK/rune")" 'LIGHTNING_RUNE="abcDEF123"' "an existing rune is left untouched (early return)"
 rm -f "$WORK/rune"
@@ -306,16 +302,14 @@ done
 assert_eq "$(cat "$SECRETS_DIR/pihole_password")" "s3cr3t/with=weird+chars" "value written verbatim (no quoting, no newline)"
 assert_eq "$(wc -c < "$SECRETS_DIR/pihole_password")" "23" "no trailing newline"
 assert_eq "$(cat "$SECRETS_DIR/claude_code_oauth_token")" "" "an unset secret becomes an empty file"
-[ "$(uname -s)" = Linux ] && {
-  assert_eq "$(stat -c '%a' "$SECRETS_DIR")" "700" "secrets dir is 700"
-  assert_eq "$(stat -c '%a' "$SECRETS_DIR/pihole_password")" "600" "secret file is 600"
-}
+assert_mode "$SECRETS_DIR" 700 "secrets dir is 700"
+assert_mode "$SECRETS_DIR/pihole_password" 600 "secret file is 600"
 # non-secret managed vars never get a file
 assert_ok test '!' -e "$SECRETS_DIR/node_alias"
 # rewrite only on change
-mtb=$(stat -c %Y "$SECRETS_DIR/github_token" 2>/dev/null || stat -f %m "$SECRETS_DIR/github_token")
-sleep 1; write_secret_files
-mta=$(stat -c %Y "$SECRETS_DIR/github_token" 2>/dev/null || stat -f %m "$SECRETS_DIR/github_token")
+mtb=$(file_mtime "$SECRETS_DIR/github_token")
+write_secret_files
+mta=$(file_mtime "$SECRETS_DIR/github_token")
 assert_eq "$mtb" "$mta" "an unchanged value is not rewritten"
 GITHUB_TOKEN="rotated"; write_secret_files
 assert_eq "$(cat "$SECRETS_DIR/github_token")" "rotated" "a changed value is rewritten"
