@@ -94,8 +94,13 @@ copies, not the templates.
 ./bastion audit                                      # routing profitability (scripts/node-audit.py)
 ```
 
-- **Stopping.** `./bastion stop bitcoin` gives `bitcoind` its full 5-minute
-  `stop_grace_period`. Never `docker kill` it.
+- **Stopping.** `./bastion stop bitcoin` shuts both nodes down cleanly.
+  `lightningd` runs `lightning-cli stop` from its entrypoint
+  (`lightningd-entrypoint.sh`) and has up to 3 minutes; `bitcoind` has 5.
+  Never `docker kill` either of them.
+- **Health.** `./bastion ps` shows `lightningd` as healthy once its RPC
+  answers. After a restart that takes until the chain catch-up finishes,
+  which can be several minutes.
 - **Bitcoin RPC credentials** are `bitcoind.user` / `bitcoind.pass`, set in the
   compose `command:` and healthcheck and in `cln_config`. RPC only listens on
   the stack network (`rpcallowip=10.20.0.0/24`). If you change them, change all
