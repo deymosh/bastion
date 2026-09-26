@@ -27,7 +27,6 @@ SCB_HISTORY_DIR="$BACKUP_DEST/history"
 
 # Settings
 BACKUP_PLUGIN_COMPACT=false # Set to true if using backup plugin and want to compact it daily
-ENABLE_LXMF_BRIDGE=false # Set to true to enable the LXMF bridge (experimental)
 ENABLE_AMBOSS_HEARTBEAT=false # Set to true to post a signed heartbeat to Amboss
 AMBOSS_INTERVAL=300  # seconds between Amboss heartbeats
 CHECK_INTERVAL=3600  # 1 hour in seconds
@@ -96,29 +95,6 @@ run_daily_maintenance() {
     fi
 }
 
-start_LXMF_bridge() {
-    if [ "$ENABLE_LXMF_BRIDGE" = true ]; then
-        echo "[$(date)] Starting LXMF Bridge (experimental)..."
-        
-        # Create a python virtual environment for the bridge
-        if [ ! -d "venv" ]; then
-            python3 -m venv venv
-        fi
-
-        source venv/bin/activate
-
-        # Install dependencies (if any)
-        pip install --upgrade pip
-        pip install requests[socks] RNS LXMF
-
-        # Start the bridge in the background
-        python -u services/lxmf-bridge.py &
-        echo "[$(date)] LXMF Bridge started."
-    else
-        echo "[$(date)] LXMF Bridge is disabled (ENABLE_LXMF_BRIDGE=false)."
-    fi
-}
-
 start_amboss_heartbeat() {
     if [ "$ENABLE_AMBOSS_HEARTBEAT" = true ]; then
         echo "[$(date)] Starting Amboss heartbeat (every ${AMBOSS_INTERVAL}s)..."
@@ -137,7 +113,6 @@ start_amboss_heartbeat() {
 # --- 4. Main Execution Flow ---
 
 wait_for_cln
-start_LXMF_bridge
 start_amboss_heartbeat
 
 # Ensure the SCB file exists before starting the loop
