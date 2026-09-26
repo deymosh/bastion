@@ -16,7 +16,7 @@ mock_bin_init() {
 #!/usr/bin/env bash
 echo "docker $*" >> "$MOCK_LOG"
 case "$1 $2" in
-  "info "*)            exit "${MOCK_DOCKER_INFO_RC:-0}" ;;
+  "info "*)            printf '%s' "${MOCK_DOCKER_INFO_OUT:-}" ; exit "${MOCK_DOCKER_INFO_RC:-0}" ;;
   "network inspect")   printf '%s\n' "${MOCK_NETWORK_SUBNET:-}" ; exit "${MOCK_NETWORK_RC:-0}" ;;
   "images -q")         printf '%s\n' "${MOCK_IMAGE_ID:-}" ;;
   "image inspect")     printf '%s\n' "${MOCK_IMAGE_LABEL:-}" ;;

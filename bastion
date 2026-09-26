@@ -12,6 +12,8 @@
 #   ./bastion status | versions | audit | tui
 #   ./bastion up --recreate-networks
 #   ./bastion up --with-watchtower  # also run teosd (off by default)
+#   ./bastion up --with-agent-docker  # agent's private Docker daemon (needs Sysbox)
+#   ./bastion install-sysbox          # install that runtime (restarts Docker)
 #   ./bastion down stack-network --force
 #
 # stack-network is the foundation: every "up" brings it up first (it is added
@@ -53,12 +55,14 @@ usage() {
     echo -e "  ${CYAN}status${NC}                 -> docker ps table"
     echo -e "  ${CYAN}versions${NC}               -> Image pin vs. what is running"
     echo -e "  ${CYAN}audit${NC}                  -> Node profitability audit"
+    echo -e "  ${BOLD}install-sysbox${NC}         -> Install the Sysbox runtime --with-agent-docker needs"
     echo -e "  ${CYAN}tui${NC}                    -> Force the interactive dashboard"
     echo -e ""
     echo -e "${YELLOW}${BOLD}FLAGS:${NC}"
     echo -e "  ${BOLD}--recreate-networks${NC} -> On 'up', drop a stale bastion-network (old subnet) first"
     echo -e "  ${BOLD}--force${NC}, ${BOLD}-f${NC}         -> Allow 'stop'/'down' of stack-network while other stacks run"
     echo -e "  ${BOLD}--with-watchtower${NC}   -> Also run teosd (your own watchtower); off by default"
+    echo -e "  ${BOLD}--with-agent-docker${NC} -> Also run the agent's private Docker daemon (needs Sysbox); off by default"
     echo -e ""
     echo -e "${YELLOW}${BOLD}STACKS:${NC}"
     for i in "${!STACKS[@]}"; do
@@ -138,6 +142,81 @@ preflight_networks() {
     return 1
 }
 
+_has_sysbox() {
+    case "$(docker info --format '{{json .Runtimes}}' 2>/dev/null || true)" in
+        *'"sysbox-runc"'*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Install Sysbox. The install restarts Docker, whose own shutdown gives each
+# container ~15s - far below bitcoind's 5m stop_grace_period - so every running
+# stack is stopped through compose first and brought back afterwards.
+# Pass --yes when the caller has already obtained consent.
+do_install_sysbox() {
+    local assume_yes=0; [ "${1:-}" = "--yes" ] && assume_yes=1
+    if _has_sysbox; then
+        echo -e "${GREEN}[✔] Sysbox is already installed (Docker lists sysbox-runc).${NC}"
+        return 0
+    fi
+    bash "$SYSBOX_INSTALL_UTIL" --check || return 1
+
+    local live s running=()
+    live=$(running_stacks)
+    for s in "${STACKS[@]}"; do grep -qx "$s" <<<"$live" && running+=("$s"); done
+
+    if [ "$assume_yes" = 0 ] && [ -t 0 ] && [ -t 1 ]; then
+        echo -e "${YELLOW}${BOLD}[!] Installing Sysbox restarts Docker.${NC}"
+        [ "${#running[@]}" -gt 0 ] && echo -e "    These stacks will be stopped gracefully and started again: ${BOLD}${running[*]}${NC}"
+        local reply; read -r -p "    Continue? [y/N] " reply
+        case "$reply" in [yY]*) : ;; *) echo "    Aborted - nothing changed."; return 1 ;; esac
+    fi
+
+    if [ "${#running[@]}" -gt 0 ]; then
+        # Subshell: do_stop widens COMPOSE_PROFILES to every profile, which must
+        # not leak into the restart below (it would start teosd uninvited).
+        ( do_stop "${running[@]}" ) || return 1
+    fi
+    if ! bash "$SYSBOX_INSTALL_UTIL"; then
+        echo -e "${RED}${BOLD}[✘] Sysbox install failed.${NC}" >&2
+        [ "${#running[@]}" -gt 0 ] && echo -e "    Stacks were left stopped; bring them back with ${BOLD}./bastion up ${running[*]}${NC}" >&2
+        return 1
+    fi
+    if [ "${#running[@]}" -gt 0 ]; then
+        echo -e "${CYAN}--> Restarting the stacks that were running: ${running[*]}${NC}"
+        do_up "${running[@]}" || return 1
+    fi
+}
+
+# The agent-docker sidecar is only safe under Sysbox: without it the stock
+# dind image needs `privileged`, i.e. root on this host. Refuse to start it on
+# any other runtime - there is deliberately no fallback. On a terminal, offer
+# to install Sysbox (after checking this host can take it); otherwise explain
+# how. Then pre-create the bind-mounted workspaces dir as the operator: the
+# compose entry sets create_host_path: false, because a dir Docker creates is
+# root-owned and the bridge's uid 1000 could no longer clone into it.
+AGENT_WORKSPACES_DIR="${AGENT_WORKSPACES_DIR:-./stack-ai/data/codedeck/workspaces}"
+preflight_agent_docker() {
+    if ! _has_sysbox; then
+        echo -e "${RED}${BOLD}[✘] --with-agent-docker needs the Sysbox runtime (sysbox-runc), which this Docker daemon does not have.${NC}" >&2
+        echo -e "    Without it the agent's Docker daemon would have to run privileged (root on this host)," >&2
+        echo -e "    so Bastion will not start it." >&2
+        echo -e "    ${CYAN}Install:${NC} ${BOLD}./bastion install-sysbox${NC}  (Ubuntu/Debian, kernel >= 5.12; restarts Docker," >&2
+        echo -e "             stopping the running stacks gracefully first). Manual steps: ${BOLD}docs/agent-docker.md${NC}" >&2
+        [ -t 0 ] && [ -t 1 ] || return 1
+
+        local check reply
+        if ! check=$(bash "$SYSBOX_INSTALL_UTIL" --check 2>&1); then
+            echo -e "$check" >&2
+            return 1
+        fi
+        read -r -p "    Install Sysbox now? Running stacks are stopped gracefully while Docker restarts. [y/N] " reply
+        case "$reply" in [yY]*) : ;; *) return 1 ;; esac
+        do_install_sysbox --yes || return 1
+    fi
+    mkdir -p "$AGENT_WORKSPACES_DIR"
+}
+
 # --- Stack selection --------------------------------------------------------
 # Populates SELECTED_STACKS (subset of STACKS, canonical order). No args = all.
 resolve_stacks() {
@@ -170,7 +249,7 @@ _contains() { local n="$1"; shift; local x; for x in "$@"; do [ "$x" = "$n" ] &&
 
 # Every compose profile Bastion knows about. `stop`/`down` activate all of them
 # so an opt-in service (e.g. teosd) is torn down even if the flag was omitted.
-ALL_PROFILES="watchtower"
+ALL_PROFILES="watchtower,agent-docker"
 _profile_active() { case ",${COMPOSE_PROFILES:-}," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
 
 # stack-network owns the bastion-transit network and runs Tor; stack-bitcoin
@@ -219,6 +298,9 @@ do_up() {
             seed_teos_config
             bash "$TEOS_BUILD_UTIL" || return 1
         fi
+    fi
+    if _contains stack-ai "${stacks[@]}" && _profile_active agent-docker; then
+        preflight_agent_docker || return 1
     fi
     echo -e "${GREEN}${BOLD}[+] Booting: ${stacks[*]}${NC}"
     local stack
@@ -396,23 +478,27 @@ bastion_container_action() { do_container "$@"; }   # TUI Containers view
 RECREATE_NETWORKS=0
 FORCE=0
 WITH_WATCHTOWER=0
+WITH_AGENT_DOCKER=0
 ARGS=()
 for arg in "$@"; do
     case "$arg" in
         --recreate-networks) RECREATE_NETWORKS=1 ;;
         --force|-f)          FORCE=1 ;;
         --with-watchtower)   WITH_WATCHTOWER=1 ;;
+        --with-agent-docker) WITH_AGENT_DOCKER=1 ;;
         *) ARGS+=("$arg") ;;
     esac
 done
 set -- "${ARGS[@]}"
 CMD="${1:-}"
 
-# Compose profiles: --with-watchtower and/or BASTION_PROFILES (comma list) select
-# opt-in services. `docker compose` reads COMPOSE_PROFILES natively, so exporting
-# it here is all that is needed at the call sites.
+# Compose profiles: --with-<profile> flags and/or BASTION_PROFILES (comma list)
+# select opt-in services. `docker compose` reads COMPOSE_PROFILES natively, so
+# exporting it here is all that is needed at the call sites.
 _profiles="${BASTION_PROFILES:-}"
-[ "$WITH_WATCHTOWER" = 1 ] && case ",$_profiles," in *,watchtower,*) : ;; *) _profiles="${_profiles:+$_profiles,}watchtower" ;; esac
+_add_profile() { case ",$_profiles," in *",$1,"*) : ;; *) _profiles="${_profiles:+$_profiles,}$1" ;; esac; }
+[ "$WITH_WATCHTOWER" = 1 ] && _add_profile watchtower
+[ "$WITH_AGENT_DOCKER" = 1 ] && _add_profile agent-docker
 [ -n "$_profiles" ] && export COMPOSE_PROFILES="$_profiles"
 
 # Help needs neither Docker nor config - answer it before touching either.
@@ -494,6 +580,10 @@ case "$CMD" in
     versions)
         print_header
         do_versions
+        ;;
+    install-sysbox)
+        print_header
+        do_install_sysbox
         ;;
     audit)
         if [ -f "$AUDIT_SCRIPT" ]; then

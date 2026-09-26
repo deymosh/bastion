@@ -199,6 +199,46 @@ have '^\s*user: "977:977"' "$AI" \
 have '^USER 1000:1000' stack-ai/mcp-gateway/Dockerfile.mcp-gateway \
   && ok "mcp-gateway image pins USER 1000:1000" || bad "mcp-gateway image does not pin an unprivileged USER"
 
+echo "== agent-docker is opt-in, Sysbox-isolated and internal =="
+# Everything in the agent-docker service block, one line per entry.
+ad=$(awk '/^  agent-docker:/{c=1; next} c && /^  [a-z]/{c=0} c' "$AI")
+grep -qE '^\s*profiles: \["agent-docker"\]' <<<"$ad" \
+  && ok "agent-docker carries the 'agent-docker' compose profile (opt-in)" \
+  || bad "agent-docker is missing profiles: [\"agent-docker\"] - it would start by default"
+grep -qE '^\s*runtime: sysbox-runc\s*$' <<<"$ad" \
+  && ok "agent-docker runs on the sysbox-runc runtime" || bad "agent-docker is not on runtime: sysbox-runc"
+# A privileged dind is root on the host: the whole design rests on never
+# needing it.
+grep -qE '^\s*privileged:' <<<"$ad" \
+  && bad "agent-docker sets privileged: - Sysbox exists precisely so it never has to" \
+  || ok "agent-docker is not privileged"
+grep -qE '^\s*ports:' <<<"$ad" \
+  && bad "agent-docker publishes a host port (its daemon is bastion-ai internal)" \
+  || ok "agent-docker publishes no host port"
+grep -qE '^      transit:' <<<"$ad" \
+  && bad "agent-docker joins bastion-transit" || ok "agent-docker stays off bastion-transit"
+grep -qE '^\s*DOCKER_TLS_CERTDIR: /certs\s*$' <<<"$ad" \
+  && ok "agent-docker serves its API over mutual TLS" || bad "agent-docker has no DOCKER_TLS_CERTDIR (API would be plaintext 2375)"
+# The server cert SAN comes from the hostname; it must match DOCKER_HOST.
+grep -qE '^\s*hostname: agent-docker\s*$' <<<"$ad" \
+  && have 'DOCKER_HOST: tcp://agent-docker:2376' "$AI" \
+  && have 'DOCKER_TLS_VERIFY: "1"' "$AI" \
+  && ok "bridge verifies TLS against the sidecar's certificate hostname" \
+  || bad "agent-docker hostname / bridge DOCKER_HOST / DOCKER_TLS_VERIFY out of sync"
+# Only the repos are shared with builds, at the bridge's own path - never the
+# bridge's whole /data (agent config + auth live there).
+grep -qE '^\s*source: \./data/codedeck/workspaces\s*$' <<<"$ad" \
+  && grep -qE '^\s*target: /data/workspaces\s*$' <<<"$ad" \
+  && ok "agent-docker shares only data/codedeck/workspaces, at the bridge's path" \
+  || bad "agent-docker workspace bind is not ./data/codedeck/workspaces -> /data/workspaces"
+grep -qE '^\s*- \./data/codedeck:' <<<"$ad" \
+  && bad "agent-docker mounts the bridge's whole data dir" || ok "agent-docker cannot see the bridge's credentials"
+grep -qE '^\s*image: docker:[0-9.]+-dind@sha256:[0-9a-f]{64}\s*$' <<<"$ad" \
+  && ok "agent-docker image is a digest-pinned docker:<version>-dind" || bad "agent-docker image is not a digest-pinned dind"
+# The CLI gate: ./bastion must refuse to start the sidecar without Sysbox.
+grep -q '"sysbox-runc"' bastion && grep -q 'preflight_agent_docker || return 1' bastion \
+  && ok "./bastion refuses --with-agent-docker without sysbox-runc" || bad "./bastion has no Sysbox preflight for agent-docker"
+
 echo "== MCP gateway builds are reproducible =="
 # npm children install from a committed lockfile (hash-verified by npm ci),
 # never from a floating `npm install`.

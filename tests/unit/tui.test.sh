@@ -38,7 +38,7 @@ case " ${MENU_IDS[*]} " in *" containers "*) _t_ok "main menu has a Containers e
 echo "== Containers view lists every service in compose order =="
 TUI_CSTATE=([tor]="running (healthy)" [rtl]=exited)
 TUI_VIEW=containers; MENU_IDS=(); MENU_LABELS=(); tui_build_menu
-assert_eq "${#MENU_IDS[@]}" 17 "17 containers listed"
+assert_eq "${#MENU_IDS[@]}" 18 "18 containers listed"
 assert_eq "${MENU_IDS[0]}" "pihole" "first is pihole (stack-network, compose order)"
 assert_eq "${MENU_IDS[-1]}" "mcp-gateway" "last is mcp-gateway (stack-ai)"
 case "${MENU_LABELS[3]}" in *"running (healthy)"*) _t_ok "tor row shows its probed state" ;; *) _t_bad "tor row missing state: ${MENU_LABELS[3]}" ;; esac
