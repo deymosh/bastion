@@ -11,6 +11,7 @@ CodeDeck+ bridge for remote Claude Code sessions.
 | CodeDeck bridge | `10.50.0.3` | Nostr bridge for the Android client |
 | MCP gateway | `http://localhost:8811/mcp` | Single Bearer-authenticated MCP endpoint for remote agents — [docs/mcp.md](../docs/mcp.md) |
 | SearXNG | `10.50.0.4` (no host port) | Internal metasearch for the gateway's `searxng` namespace |
+| agent-docker (opt-in) | `10.50.0.6` (no host port) | Private Docker daemon for the bridge's agent, on Sysbox — [docs/agent-docker.md](../docs/agent-docker.md) |
 
 Inside `bastion-ai`, CodeDeck sends Claude requests to CCR at
 `http://ccr:8080`. The bridge and SearXNG have no published host port. Relay
@@ -35,6 +36,17 @@ gateway runs as uid/gid 1000 and the memory knowledge graph persists in the
 `mcp_memory_data` named volume. A crashed child only fails its own tool calls —
 the gateway reconnects it on the next call. The gateway has no `depends_on`:
 children connect lazily, so startup order never matters.
+
+## Agent Docker (opt-in)
+
+`./bastion up --with-agent-docker` adds `agent-docker`: a `docker:dind` sidecar
+running on the **Sysbox** runtime (never `privileged`), reachable only from
+`bastion-ai` over mutual TLS. The bridge gets `docker` (plus `buildx` and
+`compose`) on its `PATH`, published by the sidecar, so the agent can build and
+run a project's toolchain container against `/data/workspaces/<repo>`. Nothing
+it runs is visible to the host's Docker. `./bastion install-sysbox` installs
+the runtime (Ubuntu/Debian, Linux only). The full guide, including the
+security model and limits, is [docs/agent-docker.md](../docs/agent-docker.md).
 
 ## CCR authentication and token refresh
 

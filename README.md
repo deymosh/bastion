@@ -100,7 +100,12 @@ A stack name may be given with or without the `stack-` prefix
 (`./bastion up web ai`). On `up`, `--recreate-networks` drops a stale
 `bastion-network` left from the old flat-network layout before starting.
 `--with-watchtower` (or `BASTION_PROFILES=watchtower`) also starts `teosd` -
-your own watchtower - which is otherwise off. `./bastion versions` shows the
+your own watchtower - which is otherwise off. `--with-agent-docker` (or
+`BASTION_PROFILES=agent-docker`) also starts `agent-docker`, a private,
+non-privileged Docker daemon for the CodeDeck agent to build projects in their
+own toolchain containers. It requires the Sysbox runtime on a Linux host:
+`./bastion install-sysbox` installs it, and `up` offers to on a terminal. See
+[docs/agent-docker.md](docs/agent-docker.md). `./bastion versions` shows the
 image pin vs. what is running.
 
 On a fresh install `./bastion up` seeds `data/rtl/RTL-Config.json` and mints an
