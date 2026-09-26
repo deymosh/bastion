@@ -14,7 +14,7 @@ CONF='{extends: relaxed, rules: {line-length: {max: 200}, comments: {min-spaces-
 if command -v yamllint >/dev/null 2>&1; then
   yamllint -d "$CONF" "${files[@]}"
 elif command -v docker >/dev/null 2>&1; then
-  docker run --rm -v "$PWD:/d:ro" -w /d cytopia/yamllint -d "$CONF" "${files[@]}"
+  MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD:/d:ro" -w /d cytopia/yamllint -d "$CONF" "${files[@]}"
 else
   echo "yamllint not available (no yamllint binary, no docker) - skipped"
   exit 0

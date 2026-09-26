@@ -33,6 +33,12 @@ GitHub auto-disables the weekly schedule after 60 days of repo inactivity.
 
 Individual files run directly (`bash tests/unit/config-sh.test.sh`).
 
+The static and unit tiers run their steps concurrently and replay each step's
+output in order when the tier finishes (every step prints its duration, and the
+run prints a total). `TESTS_SERIAL=1 ./tests/run.sh` runs them one at a time
+with live output, which is easier when debugging a hang. Integration and weekly
+steps share Docker state and are always serial.
+
 ## `static/` — no daemon, milliseconds
 
 | File | Guards against |
