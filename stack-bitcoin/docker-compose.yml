@@ -17,11 +17,12 @@ services:
     container_name: lightningd
     logging: *logging
     restart: unless-stopped
-    # Docker's default 10s ends in SIGKILL. CLN writes each transaction to both
-    # its DB and the backup-drive replica (wallet= in cln_config) and has
-    # plugins to stop; give it time to shut down cleanly rather than be killed
-    # mid-write.
-    stop_grace_period: 1m
+    # docker stop -> the image entrypoint runs `lightning-cli stop` (clean
+    # shutdown: plugins stopped, wallet DB and its backup-drive replica closed).
+    # CLN finishes any startup chain catch-up before it honours a stop, which
+    # took ~100s on a dev node syncing over explorers; Docker's default 10s
+    # would SIGKILL it. Generous margin, like bitcoind's 5m.
+    stop_grace_period: 3m
     # No depends_on bitcoind: the chain backend is trustedcoin (bcli disabled),
     # so CLN never queries bitcoind, and a hard dependency would make
     # `docker compose up lightningd` also start a full bitcoind sync - the one
@@ -45,7 +46,7 @@ services:
       test: ["CMD", "lightning-cli", "getinfo"]
       interval: 30s
       timeout: 10s
-      start_period: 2m
+      start_period: 5m   # RPC opens only after the initial chain catch-up
       retries: 3
     networks:
       net:

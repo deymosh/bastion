@@ -167,5 +167,8 @@ COPY --from=builder /usr/local/bin/peerswap /usr/local/bin/peerswap
 COPY darknet.py /usr/local/bin/darknet.py
 RUN chmod +x /usr/local/bin/darknet.py
 
-# Set entrypoint as the oficial lightningd image
-ENTRYPOINT ["/entrypoint.sh"]
+# Signal-forwarding entrypoint (the upstream one never passes SIGTERM on to
+# lightningd, so every `docker stop` ended in SIGKILL). See the script header.
+COPY lightningd-entrypoint.sh /usr/local/bin/lightningd-entrypoint.sh
+RUN chmod +x /usr/local/bin/lightningd-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/lightningd-entrypoint.sh"]
