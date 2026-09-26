@@ -197,7 +197,7 @@ compares each pin with what is running.
 | Component | Version |
 |---|---|
 | Bitcoin Core | v26.0 |
-| Core Lightning | v25.12.1, with clboss `95d195f8`, peerswap `23b32d3a`, watchtower-client `be344ecc`, trustedcoin v0.8.6, backup `cb3adab` |
+| Core Lightning | v26.06.8, with clboss v0.17.1-rc1, xrebalance v0.4.7, peerswap v7.0.1, watchtower-client `be344ecc`, trustedcoin v0.8.7 |
 | Tor | 0.4.9.13 ([`ghcr.io/deymosh/tor`](https://github.com/deymosh/tor), from the Tor Project Debian repo) |
 | RTL | v0.15.8 |
 | Pi-hole · unbound · WireGuard | 2026.07.2 · 1.22.0 · 1.0.20260223-r0-ls121 |

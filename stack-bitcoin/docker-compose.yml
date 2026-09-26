@@ -42,6 +42,12 @@ services:
       - ./config/peerswap.conf:/root/.lightning/bitcoin/peerswap/peerswap.conf:ro
       - ./data/cln:/root/.lightning/bitcoin
       - tor-data:/data/.tor:ro
+    environment:
+      # watchtower-client keeps its keys, registered towers and pending
+      # appointments in ~/.watchtower by default - the container's writable
+      # layer, wiped on every recreate (each image upgrade), which silently
+      # dropped breach protection. Keep them in the persisted node data dir.
+      TOWERS_DATA_DIR: /root/.lightning/bitcoin/watchtower
     ports:
       - "3001:3001"
     # RPC answers - the same call ./bastion and the daemon rely on.
@@ -63,9 +69,20 @@ services:
       - --alias=${NODE_ALIAS}
       - --network=bitcoin
       - --log-level=info
+      # Conservative clboss: never open channels smaller than 1M sat, never
+      # auto-close, and always keep at least 100k sat unspent on-chain
+      # (default 30k) - clboss funds channels only from the on-chain balance
+      # above that floor.
       - --clboss-min-channel=1000000
-      - --clboss-max-rebalance-fee-ppm=250
       - --clboss-auto-close=false
+      - --clboss-min-onchain=100000
+      # Rebalance pricing since clboss v0.17 (which removed
+      # --clboss-max-rebalance-fee-ppm): gain 1 is the strict guard - a
+      # rebalance route must not cost more than the peer's measured earnings
+      # rate. clboss-xrebalance-grant stays at its default 0 (record-only:
+      # peers with no forwarding history get no rebalance credit). xrebalance
+      # has no fee option; its defaults are kept.
+      - --clboss-xrebalance-gain=1
 
   bitcoind:
     # Version tag + digest. Pinned 2026-09-09.

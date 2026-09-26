@@ -29,25 +29,29 @@ hosts all keep the same address.
 
 ## Core Lightning
 
-`Dockerfile.lightningd` builds the plugins from pinned commits on top of
-`elementsproject/lightningd`. `config/cln_config` enables them:
+`Dockerfile.lightningd` builds the plugin set on top of a digest-pinned
+`elementsproject/lightningd` image: clboss, peerswap and xrebalance compile
+from pinned commits, watchtower-client from upstream `rust-teos` at a pinned commit,
+and trustedcoin is a prebuilt binary verified by its release checksum.
+`config/cln_config` enables them:
 
 | Plugin | Role |
 |---|---|
 | `trustedcoin` | **Chain backend** (`important-plugin`) in place of the disabled built-in `bcli`. It uses `bitcoind` through the `bitcoin-rpc*` lines when that node is reachable and has the block, and otherwise falls back to public block explorers over Tor. |
-| `watchtower-client` | Breach protection for *this* node against an external tower (`important-plugin`) |
-| `clboss` | Channel autopilot. **It opens channels and moves funds.** Tuned via `command:` in the compose file (min channel 1M sat, rebalance fee ≤ 250 ppm, no auto-close) |
-| `peerswap` | Submarine-swap rebalancing, **Bitcoin swaps only** (`config/peerswap.conf`, mounted read-only; state in `data/cln/peerswap/`) |
+| `watchtower-client` | Breach protection for *this* node against an external tower (`important-plugin`). Keys, registered towers and appointments persist in `data/cln/watchtower/` (`TOWERS_DATA_DIR` in the compose file) |
+| `clboss` | Channel autopilot (v0.17.x, requires CLN ≥ v25.09). **It opens channels and moves funds.** Tuned via `command:` in the compose file (min channel 1M sat, no auto-close). Since v0.17 rebalancing runs through `xrebalance` |
+| `xrebalance` | clboss's rebalancing executor, a separate plugin since clboss v0.17 (without it clboss runs but never rebalances) |
+| `peerswap` | Submarine-swap rebalancing, **Bitcoin swaps only** (`config/peerswap.conf`, mounted read-only; state in `data/cln/peerswap/`). Protocol v7: swaps only work between peers running the same protocol version |
 | `darknet.py` | Local plugin that prefers peers' `.onion` addresses |
-| `backup` | Installed but **not enabled**. See below |
 
 Other settings in `cln_config`:
 
 - **Wallet replication.** `wallet=sqlite3://…:/backup_usb/lightningd.sqlite3`
   makes CLN write every database transaction to the backup drive as well as
-  its own. The drive is `BACKUP_DEST` on the host (default `/mnt/backup_cln`);
-  mount it before `up`. Use this *or* the
-  `backup` plugin, never both.
+  its own, in one commit — the replica is never stale. The drive is
+  `BACKUP_DEST` on the host (default `/mnt/backup_cln`); mount it before `up`.
+  This native replication is the only backup mechanism; the old `backup`
+  plugin is not shipped.
 - **Autoclean.** Failed payments and forwards are removed after 7 days, expired
   invoices after 30 days.
 - **REST.** `clnrest` listens on `:3001` over plain HTTP. Only reach it over
@@ -113,26 +117,6 @@ copies, not the templates.
   daemon with `./bastion config set AMBOSS_HEARTBEAT 1`. Note that this links
   the node's identity to Amboss.
 - `node-audit.py` is the report behind `./bastion audit`.
-
-### Switching to the `backup` plugin
-
-Only switch if you want the plugin instead of native replication. Stop the
-node, comment out the `wallet=` line, enable
-`important-plugin=/usr/local/bin/backup/backup.py`, then initialise the backup
-file once:
-
-```bash
-docker run --rm -it --entrypoint /usr/local/bin/backup/backup-cli \
-  -v "$PWD/stack-bitcoin/data/cln:/root/.lightning/bitcoin" \
-  -v /mnt/backup_cln:/backup_usb \
-  lightningd-custom:latest \
-  init --lightning-dir /root/.lightning/bitcoin file:///backup_usb/backup.sqlite.bkp
-```
-
-To restore, run the same command with
-`restore file:///backup_usb/backup.sqlite.bkp --lightning-dir /root/.lightning/bitcoin`.
-`BACKUP_PLUGIN_COMPACT=1` makes the daemon compact the plugin's backup file once
-a day.
 
 ### Troubleshooting
 
