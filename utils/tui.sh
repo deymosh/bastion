@@ -8,8 +8,8 @@
 # TUI is a convenience layer, never the only way in.
 #
 # Depends on: config.sh (already sourced) for STACKS, MANAGED_VARS,
-# CONTAINER_STACK, read_env_var, validate_env_value, config_var_is_secret,
-# save_config, and the styling vars. Also uses runners defined in ./bastion:
+# CONTAINER_STACK, config_parse_file / CONFIG_VALUES, read_env_var,
+# validate_env_value, config_var_is_secret, config_set, and the styling vars. Also uses runners defined in ./bastion:
 # bastion_stack_action, bastion_stack_logs, bastion_container_action,
 # do_versions, and _compose_service_images.
 ################################################################################
@@ -549,8 +549,9 @@ tui_build_config_cache() {
     local cap=$(( _LW - 14 )); [ "$cap" -lt 12 ] && cap=12
     [ "$kw" -gt "$cap" ] && kw=$cap
     vw=$(( _LW - kw - 1 )); [ "$vw" -lt 6 ] && vw=6
+    config_parse_file                     # one read for every row
     for k in "${MANAGED_VARS[@]}"; do
-        v=$(read_env_var "$k")
+        v=${CONFIG_VALUES[$k]:-}
         if config_var_is_secret "$k"; then
             [ -n "$v" ] && shown="********" || shown="(unset)"
         else
@@ -712,16 +713,11 @@ tui_do_config_edit() {
         tui_message "Invalid value for $key" "$err"
         return 0
     fi
-    # Persist: source current config, override the one var, rewrite + relink.
-    if ( set -a
-         source <(sed 's/^export //g' "$CONFIG_FILE" | grep -v '^[[:space:]]*#')
-         set +a
-         export "$key=$newval"
-         save_config ); then
+    if err=$(config_set "$key" "$newval"); then
         CONFIG_CACHE_DIRTY=1
-        tui_message "Saved" "$key updated. bastion.conf and every stack .env are refreshed (previous file kept as bastion.conf.bak)."
+        tui_message "Saved" "$key updated. bastion.conf and the derived files are refreshed (previous file kept as bastion.conf.bak)."
     else
-        tui_message "Save failed" "Could not write bastion.conf."
+        tui_message "Save failed" "Could not write bastion.conf: $err"
     fi
     TUI_NEED_MENU=1
 }

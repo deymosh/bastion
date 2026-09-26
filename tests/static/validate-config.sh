@@ -135,8 +135,14 @@ echo "== Secrets are mounted files, not env vars =="
 # The secrets must never appear as ${...} interpolations in a compose file
 # (comments excluded). `docker compose config` in compose-lint already checks
 # that every service `secrets:` entry resolves to a top-level declaration.
+# The secret list comes from the settings registry, so a new secret is covered
+# the moment it is declared.
+secret_re=$(CONFIG_FILE=/dev/null bash -c 'source utils/config.sh >/dev/null 2>&1
+  for k in "${MANAGED_VARS[@]}"; do config_var_is_secret "$k" && printf "%s|" "$k"; done')
+secret_re=${secret_re%|}
+[ -n "$secret_re" ] || bad "could not read the secret list from the settings registry"
 sleak=$(grep -RhE -v '^[[:space:]]*#' stack-*/docker-compose.yml 2>/dev/null \
-        | grep -oE '\$\{(PIHOLE_PASSWORD|CCR_WEB_AUTH_TOKEN|MCP_GATEWAY_TOKEN|CONTEXT7_API_KEY|CLAUDE_CODE_OAUTH_TOKEN|GITHUB_TOKEN)\}' || true)
+        | grep -oE "\\\$\{($secret_re)(:[-?+][^}]*)?\}" || true)
 [ -z "$sleak" ] && ok "no secret is interpolated as an env var in a compose file" \
   || bad "secret still passed as env: $sleak"
 # Each of them is wired to its file-based delivery mechanism.
