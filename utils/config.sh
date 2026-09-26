@@ -143,17 +143,18 @@ _wc_kv() {
     printf "%s='%s'\n" "$1" "$v"
 }
 
-# Decode the value half of a KEY=... line: 'single' (with '\'' un-escaping),
-# "double" (quotes stripped), or a legacy bare value taken literally.
+# Decode the value half of a KEY=... line into REPLY: 'single' (with '\''
+# un-escaping), "double" (quotes stripped), or a legacy bare value taken
+# literally. Sets REPLY instead of printing so callers need no $(...) subshell
+# - one fork per value made every ./bastion call measurably slow.
 _config_decode() {
-    local val=$1
-    if [[ $val == \'*\' ]]; then
-        val=${val:1:${#val}-2}
-        val=${val//\'\\\'\'/\'}
-    elif [[ $val == \"*\" ]]; then
-        val=${val:1:${#val}-2}
+    REPLY=$1
+    if [[ $REPLY == \'*\' ]]; then
+        REPLY=${REPLY:1:${#REPLY}-2}
+        REPLY=${REPLY//\'\\\'\'/\'}
+    elif [[ $REPLY == \"*\" ]]; then
+        REPLY=${REPLY:1:${#REPLY}-2}
     fi
-    printf '%s' "$val"
 }
 
 # Parse CONFIG_FILE into CONFIG_VALUES (key -> decoded value) and CONFIG_KEYS
@@ -173,7 +174,8 @@ config_parse_file() {
         [[ $line =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
         key=${BASH_REMATCH[2]}
         [ -n "${CONFIG_VALUES[$key]+set}" ] || CONFIG_KEYS+=("$key")
-        CONFIG_VALUES[$key]=$(_config_decode "${BASH_REMATCH[3]}")
+        _config_decode "${BASH_REMATCH[3]}"
+        CONFIG_VALUES[$key]=$REPLY
     done < "$CONFIG_FILE"
 }
 
@@ -209,14 +211,13 @@ _render_config() {
 # Write CONFIG_FILE (mode 600) - but only when the content actually changes, so
 # read-only commands (status, logs, the TUI) leave the file untouched.
 write_config() {
-    local tmp
+    local new cur="" tmp
+    # $(...) drops the trailing newline the rendered file ends with; add it back.
+    new="$(_render_config)"$'\n'
+    [ -f "$CONFIG_FILE" ] && { IFS= read -r -d '' cur < "$CONFIG_FILE" || true; }
+    [ "$new" = "$cur" ] && return 0
     tmp=$(umask 077; mktemp "${CONFIG_FILE}.XXXXXX") || return 1
-    _render_config > "$tmp"
-    if [ -f "$CONFIG_FILE" ] && cmp -s "$tmp" "$CONFIG_FILE"; then
-        rm -f "$tmp"
-    else
-        mv -f "$tmp" "$CONFIG_FILE"
-    fi
+    printf '%s' "$new" > "$tmp" && mv -f "$tmp" "$CONFIG_FILE"
 }
 
 # Validate a proposed value for a managed key. Prints an error and returns 1 on
@@ -289,13 +290,15 @@ remove_legacy_stack_envs() {
 # entries expect.
 SECRETS_DIR="${SECRETS_DIR:-$(dirname "${CONFIG_FILE:-./bastion.conf}")/secrets}"
 write_secret_files() {
-    mkdir -p "$SECRETS_DIR" && chmod 700 "$SECRETS_DIR" 2>/dev/null || true
+    [ -d "$SECRETS_DIR" ] || { mkdir -p "$SECRETS_DIR" && chmod 700 "$SECRETS_DIR" 2>/dev/null; } || true
     local var f val cur
     for var in "${MANAGED_VARS[@]}"; do
         config_var_is_secret "$var" || continue
         f="$SECRETS_DIR/${var,,}"
         val="${!var-}"
-        cur=""; [ -f "$f" ] && cur=$(cat "$f")
+        # Read without a subshell (`read -d ''` keeps the exact bytes of a
+        # value with no trailing newline; it returns 1 at EOF, hence || true).
+        cur=""; [ -f "$f" ] && { IFS= read -r -d '' cur < "$f" || true; }
         # Always materialise the file (Compose `file:` needs it to exist even
         # when the value is empty), but only rewrite when the value changed.
         if [ ! -f "$f" ] || [ "$val" != "$cur" ]; then
