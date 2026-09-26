@@ -37,7 +37,7 @@ declare -A CONTAINER_STACK=(
     [bitcoind]=stack-bitcoin [lightningd]=stack-bitcoin [rtl]=stack-bitcoin [teosd]=stack-bitcoin
     [portainer]=stack-monitor [grafana]=stack-monitor [prometheus]=stack-monitor [node-exporter]=stack-monitor
     [hub]=stack-web
-    [ccr]=stack-ai [codedeck-bridge]=stack-ai
+    [ccr]=stack-ai [codedeck-bridge]=stack-ai [searxng]=stack-ai [mcp-gateway]=stack-ai
 )
 
 # Test hook: BASTION_EXTRA_CONTAINER_STACK="name=dir[,name2=dir2]" registers extra
@@ -95,7 +95,7 @@ write_config() {
     if [ -f "$CONFIG_FILE" ]; then
         awk '
             BEGIN {
-                split("WIREGUARD_SERVERURL WIREGUARD_SERVERPORT WIREGUARD_PEERS NODE_ALIAS TIMEZONE USER_ID GROUP_ID PIHOLE_PASSWORD LXMF_ALLOWED_IDENTITY CODEDECK_RELAYS CODEDECK_TOR_PROXY_URL GIT_REPO GIT_USER GIT_EMAIL CODEDECK_OPENCODE_SERVER_URL CODEDECK_OPENCODE_AUTO_START CODEDECK_OPENCODE_PORT CODEDECK_GSD_AUTO_INSTALL CCR_WEB_AUTH_TOKEN CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY CCR_TOKEN_REFRESH CCR_REFRESH_INTERVAL CCR_REFRESH_SKEW_MS CLAUDE_CODE_OAUTH_TOKEN GITHUB_TOKEN", managed)
+                split("WIREGUARD_SERVERURL WIREGUARD_SERVERPORT WIREGUARD_PEERS NODE_ALIAS TIMEZONE USER_ID GROUP_ID PIHOLE_PASSWORD LXMF_ALLOWED_IDENTITY CODEDECK_RELAYS CODEDECK_TOR_PROXY_URL GIT_REPO GIT_USER GIT_EMAIL CODEDECK_OPENCODE_SERVER_URL CODEDECK_OPENCODE_AUTO_START CODEDECK_OPENCODE_PORT CODEDECK_GSD_AUTO_INSTALL CCR_WEB_AUTH_TOKEN CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY CCR_TOKEN_REFRESH CCR_REFRESH_INTERVAL CCR_REFRESH_SKEW_MS MCP_GATEWAY_TOKEN CONTEXT7_API_KEY CLAUDE_CODE_OAUTH_TOKEN GITHUB_TOKEN", managed)
                 for (position in managed) {
                     known[managed[position]] = 1
                 }
@@ -174,6 +174,12 @@ write_config() {
         echo "# Refresh the access token this many milliseconds before it expires."
         _wc_kv CCR_REFRESH_SKEW_MS "$CCR_REFRESH_SKEW_MS"
         echo
+        echo "# MCP gateway"
+        echo "# Bearer token every remote MCP client must send to the gateway (:8811)."
+        _wc_kv MCP_GATEWAY_TOKEN "$MCP_GATEWAY_TOKEN"
+        echo "# Optional Context7 API key for higher rate limits (empty = keyless)."
+        _wc_kv CONTEXT7_API_KEY "$CONTEXT7_API_KEY"
+        echo
         echo "# CodeDeck Claude authentication"
         echo "# Required by CodeDeck+; keep this file private."
         _wc_kv CLAUDE_CODE_OAUTH_TOKEN "$CLAUDE_CODE_OAUTH_TOKEN"
@@ -203,13 +209,14 @@ MANAGED_VARS=(
     CODEDECK_GSD_AUTO_INSTALL
     CCR_WEB_AUTH_TOKEN CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY
     CCR_TOKEN_REFRESH CCR_REFRESH_INTERVAL CCR_REFRESH_SKEW_MS
+    MCP_GATEWAY_TOKEN CONTEXT7_API_KEY
     CLAUDE_CODE_OAUTH_TOKEN GITHUB_TOKEN
 )
 
 # Keys whose value should be masked in any UI.
 config_var_is_secret() {
     case "$1" in
-        PIHOLE_PASSWORD|CCR_WEB_AUTH_TOKEN|CLAUDE_CODE_OAUTH_TOKEN|GITHUB_TOKEN) return 0 ;;
+        PIHOLE_PASSWORD|CCR_WEB_AUTH_TOKEN|MCP_GATEWAY_TOKEN|CONTEXT7_API_KEY|CLAUDE_CODE_OAUTH_TOKEN|GITHUB_TOKEN) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -374,6 +381,10 @@ load_config() {
         ["CCR_TOKEN_REFRESH"]="1"
         ["CCR_REFRESH_INTERVAL"]="300"
         ["CCR_REFRESH_SKEW_MS"]="1800000"
+        # MCP gateway: same shape as the CCR web token (URL-safe random). The
+        # Context7 key is optional - an empty value serves keyless requests.
+        ["MCP_GATEWAY_TOKEN"]=$(openssl rand -base64 32 | tr -d '=+/\n' | cut -c1-43)
+        ["CONTEXT7_API_KEY"]=""
         ["CLAUDE_CODE_OAUTH_TOKEN"]=""
         ["GITHUB_TOKEN"]=""
     )

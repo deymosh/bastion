@@ -10,7 +10,7 @@ description: Use when working on CCR (Claude Code Router) auth in stack-ai — t
 CCR authenticates to `api.anthropic.com` with the Claude Code OAuth
 **access token**, read from a credentials file on disk. That token is
 short-lived (~a day). CCR (>= commit `561c2d8`, which the pinned `CCR_REF`
-commit in `stack-ai/Dockerfile.ccr` includes) **re-reads the file on every
+commit in `stack-ai/ccr/Dockerfile.ccr` includes) **re-reads the file on every
 upstream request**, so a rotated token is picked up with **no gateway restart** — but CCR
 itself never refreshes it for the Claude-Code provider path (unlike its Grok /
 Kimi paths). In a headless container nothing rotates the file, so it 401s daily.
@@ -18,8 +18,8 @@ Bastion fixes this with a tiny refresher process started alongside CCR.
 
 ## When to use this skill
 
-- Editing `stack-ai/Dockerfile.ccr`, `stack-ai/ccr-entrypoint-wrapper.sh`, or
-  `stack-ai/ccr-token-refresher.mjs`.
+- Editing `stack-ai/ccr/Dockerfile.ccr`, `stack-ai/ccr/ccr-entrypoint-wrapper.sh`, or
+  `stack-ai/ccr/ccr-token-refresher.mjs`.
 - CCR returns 401 / "please run /login" after working for a while.
 - Changing `CLAUDE_CONFIG_DIR` or the CCR data volume.
 
@@ -86,7 +86,7 @@ Error handling:
 
 ## 3. How the refresher runs
 
-`stack-ai/ccr-entrypoint-wrapper.sh` is the image `ENTRYPOINT`. It starts as
+`stack-ai/ccr/ccr-entrypoint-wrapper.sh` is the image `ENTRYPOINT`. It starts as
 root, and in order: `chown`s the writable paths (nginx state, `/data`, the
 `ccr_web_auth_token` secret) to `PUID:PGID`; exports `CCR_WEB_AUTH_TOKEN` from
 `/run/secrets/ccr_web_auth_token` if that file is present (else the env var

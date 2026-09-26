@@ -3,7 +3,7 @@ name: stack-ai
 services:
   ccr:
     build:
-      context: .
+      context: ./ccr
       dockerfile: Dockerfile.ccr
       args:
         # Pin to a commit, not a moving ref. Bump to a newer release with
@@ -98,6 +98,83 @@ services:
         ipv4_address: 10.50.0.3
       transit:
 
+  searxng:
+    # Internal-only infrastructure for the gateway's searxng backend: no host
+    # port is published and it is reachable only inside bastion-ai. JSON
+    # output is enabled in ./config/searxng/settings.yml (mounted read-only) -
+    # without it every mcp-searxng query answers 403.
+    # Pinned by digest (date tag kept for readability). Pinned 2026-09-22.
+    image: searxng/searxng:2026.9.21-df67eb6c2@sha256:1ef964f6dcc811a60e01049717b6e526b25a1c52935350143f04e0ae291b3dbd
+    container_name: searxng
+    restart: unless-stopped
+    # Runs as the image's unprivileged "searxng" user (977) with no
+    # capabilities; the writable paths it needs (/tmp) come from the tmpfs.
+    user: "977:977"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      # Bind the directory, not the file: the image declares a VOLUME over
+      # /etc/searxng, and a single-file bind under it is shadowed by the
+      # anonymous volume (the settings would silently never load).
+      - ./config/searxng:/etc/searxng:ro
+    networks:
+      net:
+        ipv4_address: 10.50.0.4
+
+  mcp-gateway:
+    # Single MCP entry point for remote agents: the four stdio MCP servers
+    # (searxng, context7, memory, time) run as children of this one container
+    # and their tools are merged, namespaced (<namespace>_<tool>), and served
+    # over Streamable HTTP at /mcp behind one Bearer token. See docs/mcp.md.
+    # Built from a pinned package set (Dockerfile.mcp-gateway); no depends_on:
+    # children are lazy and reconnect, so startup order never matters.
+    build:
+      context: ./mcp-gateway
+      dockerfile: Dockerfile.mcp-gateway
+    image: bastion-mcp-gateway:1.0.0
+    container_name: mcp-gateway
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment:
+      # Secret values are NOT env vars: these are paths to /run/secrets files
+      # the gateway reads at startup, plus plain non-secret settings.
+      MCP_TOKEN_FILE: /run/secrets/mcp_gateway_token
+      MCP_CONTEXT7_API_KEY_FILE: /run/secrets/context7_api_key
+      MCP_SEARXNG_URL: http://searxng:8080
+      MCP_MEMORY_FILE_PATH: /data/memory.json
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8811"
+      TIMEZONE: ${TIMEZONE:-UTC}
+    secrets:
+      - source: mcp_gateway_token
+        uid: "1000"
+        gid: "1000"
+        mode: 0440
+      - source: context7_api_key
+        uid: "1000"
+        gid: "1000"
+        mode: 0440
+    volumes:
+      # Knowledge-graph file for the memory server (named volume, not a bind:
+      # it is owned by the container's uid 1000 from the image, not the host).
+      - mcp_memory_data:/data
+    ports:
+      - "8811:8811"
+    networks:
+      net:
+        ipv4_address: 10.50.0.5
+
 # Derived from bastion.conf by ./bastion (utils/config.sh write_secret_files);
 # git-ignored, mode 600. Delivered to the container as files under /run/secrets,
 # never as plaintext env vars.
@@ -108,6 +185,13 @@ secrets:
     file: ../secrets/claude_code_oauth_token
   github_token:
     file: ../secrets/github_token
+  mcp_gateway_token:
+    file: ../secrets/mcp_gateway_token
+  context7_api_key:
+    file: ../secrets/context7_api_key
+
+volumes:
+  mcp_memory_data:
 
 networks:
   net:

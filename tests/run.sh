@@ -41,6 +41,7 @@ run_integration() {
   step "hidden-service reachability" bash tests/integration/hidden-service-reachability.sh
   step "per-container operations"    bash tests/integration/container-ops.sh
   step "secrets are mounted files"   bash tests/integration/secrets.sh
+  step "MCP gateway end-to-end"      bash tests/integration/mcp-gateway.sh
 }
 
 run_weekly() {

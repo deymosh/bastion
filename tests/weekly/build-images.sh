@@ -26,8 +26,8 @@ build "stack-network/Dockerfile.tor" \
 build "stack-bitcoin/Dockerfile.lightningd" \
   -f stack-bitcoin/Dockerfile.lightningd -t lightningd-custom:latest stack-bitcoin
 
-build "stack-ai/Dockerfile.ccr" \
-  -f stack-ai/Dockerfile.ccr -t bastion-weekly/ccr:ci stack-ai
+build "stack-ai/ccr/Dockerfile.ccr" \
+  -f stack-ai/ccr/Dockerfile.ccr -t bastion-weekly/ccr:ci stack-ai/ccr
 
 if [ -e rust-teos/docker/Dockerfile ]; then
   build "rust-teos/docker/Dockerfile (teosd)" \

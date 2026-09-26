@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 ###############################################################################
-# stack-ai/ccr-entrypoint-wrapper.sh must ALWAYS hand off to the upstream
+# stack-ai/ccr/ccr-entrypoint-wrapper.sh must ALWAYS hand off to the upstream
 # entrypoint (CCR runs with an OAuth login, a plain API key, or nothing);
 # CCR_TOKEN_REFRESH only gates the background refresher.
 ###############################################################################
@@ -8,14 +8,14 @@ set -u
 cd "$(dirname "$0")/../.." || exit 1
 source tests/lib/assert.sh
 
-WRAP="$PWD/stack-ai/ccr-entrypoint-wrapper.sh"
+WRAP="$PWD/stack-ai/ccr/ccr-entrypoint-wrapper.sh"
 BIN=$(mktemp -d); trap 'rm -rf "$BIN"' EXIT
 printf '#!/bin/sh\necho "CCR-STARTED args=[$*]"\n'          > "$BIN/ccr-entrypoint"; chmod +x "$BIN/ccr-entrypoint"
 # The stub exits at once - a long-lived background child would hold the
 # command-substitution pipe open and hang the assertions.
 printf '#!/bin/sh\necho "refresher-ran"\n'                 > "$BIN/node";           chmod +x "$BIN/node"
 export PATH="$BIN:$PATH"
-cp stack-ai/ccr-token-refresher.mjs "$BIN/ccr-token-refresher.mjs" 2>/dev/null || true
+cp stack-ai/ccr/ccr-token-refresher.mjs "$BIN/ccr-token-refresher.mjs" 2>/dev/null || true
 
 echo "== default: refresher on, no credentials file =="
 out=$(timeout 5 sh "$WRAP" --some-flag 2>&1)

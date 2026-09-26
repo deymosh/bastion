@@ -29,6 +29,8 @@ assert_eq "$CONFIG_FILE" "$WORK/bastion.conf" "config.sh keeps our scratch CONFI
 echo "== config_var_is_secret =="
 assert_ok   config_var_is_secret PIHOLE_PASSWORD
 assert_ok   config_var_is_secret CLAUDE_CODE_OAUTH_TOKEN
+assert_ok   config_var_is_secret MCP_GATEWAY_TOKEN
+assert_ok   config_var_is_secret CONTEXT7_API_KEY
 assert_fail config_var_is_secret NODE_ALIAS
 assert_fail config_var_is_secret WIREGUARD_SERVERURL
 

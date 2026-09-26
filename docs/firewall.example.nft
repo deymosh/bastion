@@ -21,7 +21,8 @@ define WG_SUBNET  = 10.13.13.0/24          # WireGuard INTERNAL_SUBNET (stack-ne
 
 # Hub service ports (host side). Keep in sync with the Access table in README.md.
 # 8081 is Pi-hole's admin UI (Pi-hole runs network_mode: host, Linux only).
-define HUB_PORTS  = { 80, 3000, 3001, 3458, 4000, 4001, 8081, 9090 }
+# 8811 is the MCP gateway - bearer-token protected, but still LAN/WG-only.
+define HUB_PORTS  = { 80, 3000, 3001, 3458, 4000, 4001, 8081, 8811, 9090 }
 
 table inet bastion {
     chain input {

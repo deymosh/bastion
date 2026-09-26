@@ -1,5 +1,5 @@
 /*
- * Tests for stack-ai/ccr-token-refresher.mjs
+ * Tests for stack-ai/ccr/ccr-token-refresher.mjs
  *
  *   node --test tests/ccr-refresher.test.mjs
  *
@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const REFRESHER = resolve(dirname(fileURLToPath(import.meta.url)), "../../stack-ai/ccr-token-refresher.mjs");
+const REFRESHER = resolve(dirname(fileURLToPath(import.meta.url)), "../../stack-ai/ccr/ccr-token-refresher.mjs");
 
 function mockEndpoint(handler) {
   const srv = createServer((req, res) => {
