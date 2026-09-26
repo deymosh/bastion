@@ -37,7 +37,7 @@ hosts all keep the same address.
 | `trustedcoin` | **Chain backend** (`important-plugin`) in place of the disabled built-in `bcli`. It uses `bitcoind` through the `bitcoin-rpc*` lines when that node is reachable and has the block, and otherwise falls back to public block explorers over Tor. |
 | `watchtower-client` | Breach protection for *this* node against an external tower (`important-plugin`) |
 | `clboss` | Channel autopilot. **It opens channels and moves funds.** Tuned via `command:` in the compose file (min channel 1M sat, rebalance fee ≤ 250 ppm, no auto-close) |
-| `peerswap` | Submarine-swap rebalancing (state and config in `data/cln/peerswap/`) |
+| `peerswap` | Submarine-swap rebalancing, **Bitcoin swaps only** (`config/peerswap.conf`, mounted read-only; state in `data/cln/peerswap/`) |
 | `darknet.py` | Local plugin that prefers peers' `.onion` addresses |
 | `backup` | Installed but **not enabled**. See below |
 

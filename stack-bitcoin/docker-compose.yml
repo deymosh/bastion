@@ -37,6 +37,9 @@ services:
       - ${BACKUP_DEST:-/mnt/backup_cln}:/backup_usb
       # CONFIG & DATA
       - ./config/cln_config:/root/.lightning/config
+      # peerswap reads <lightning-dir>/peerswap/peerswap.conf: Bitcoin swaps only
+      # (see the file). Read-only and versioned here, like cln_config.
+      - ./config/peerswap.conf:/root/.lightning/bitcoin/peerswap/peerswap.conf:ro
       - ./data/cln:/root/.lightning/bitcoin
       - tor-data:/data/.tor:ro
     ports:
