@@ -31,7 +31,7 @@ hosts all keep the same address.
 
 `Dockerfile.lightningd` builds the plugin set on top of a digest-pinned
 `elementsproject/lightningd` image: clboss, peerswap and xrebalance compile
-from pinned commits, watchtower-client from the pinned `rust-teos` source,
+from pinned commits, watchtower-client from upstream `rust-teos` at a pinned commit,
 and trustedcoin is a prebuilt binary verified by its release checksum.
 `config/cln_config` enables them:
 

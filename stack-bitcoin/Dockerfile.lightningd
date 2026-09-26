@@ -44,7 +44,8 @@ RUN echo "--- Installing TrustedCoin Plugin ---" && \
     echo "--- TrustedCoin Plugin installed successfully ---"
 
 ## Define PeerSwap plugin version
-ENV PEERSWAP_COMMIT="578c740e8684e2121b6f8343569f262f6bd69f12"
+## v7.0.1 (Bitcoin-only here; this release also rejects new Liquid swaps)
+ENV PEERSWAP_COMMIT="0d398008c8902816a300505962e672e9a24807a9"
 ENV GO_VERSION="1.23.4"
 # sha256 of go$GO_VERSION.linux-amd64.tar.gz, from https://go.dev/dl/?mode=json&include=all
 ENV GO_SHA256="6924efde5de86fe277676e929dc9917d466efa02fb934197bc2eba35d5680971"
@@ -112,8 +113,9 @@ RUN echo "--- Installing xrebalance Plugin ---" && \
 ## Define clboss version - v0.17.x requires CLN >= v25.09 and treats v26.04+
 ## as its tested floor (it reads the getroutes fields v26.04/v26.06 provide;
 ## older CLN is refused at startup, which as an important-plugin stops
-## lightningd). This commit is the 0.17.1 release commit; the final tag was
-## not yet cut when this pin was made (v0.17.1-rc1 points at it).
+## lightningd). This commit is tag v0.17.1-rc1: chosen over v0.17.0 for its
+## fund-safety fixes (no duplicate channel to an existing peer, no peer
+## demerits during a Tor/network blackout). Move to v0.17.1 once it is tagged.
 ENV CLBOSS_COMMIT="e65b4344995cc45e12c74ae020594ae519d061be"
 
 # Install clboss plugin
