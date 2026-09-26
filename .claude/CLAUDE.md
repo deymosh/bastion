@@ -17,7 +17,7 @@ and `README.md`:
 | `stack-bitcoin` | `bitcoind`, `lightningd` (CLN), RTL; `teosd` (own watchtower, opt-in `--with-watchtower`) |
 | `stack-monitor` | Portainer, Prometheus, Grafana, node-exporter |
 | `stack-web` | `hub` (static nginx landing page) |
-| `stack-ai` | `ccr` (Claude Code Router), `codedeck-bridge` |
+| `stack-ai` | `ccr` (Claude Code Router), `codedeck-bridge`, `mcp-gateway` + `searxng`; `agent-docker` (Sysbox dind for the agent, opt-in `--with-agent-docker`) |
 
 Design ethos: Tor-first (all outbound Bitcoin/Lightning/relay traffic proxied),
 network-segmented (one bridge network per stack, a single narrow `bastion-transit`
@@ -48,6 +48,7 @@ deployment target is **Linux**. Bash syntax is identical either way.
 ./bastion status                # docker ps table
 ./bastion versions              # image pin vs. running
 ./bastion audit                 # node profitability audit (python)
+./bastion install-sysbox        # runtime for --with-agent-docker (Linux; restarts Docker)
 ```
 
 A single container name on `stop`/`logs` uses the per-container path; a stack
@@ -156,6 +157,13 @@ blocks the run and explains why.
   optional in production). Do not switch any of these to `127.0.0.1:` bindings.
   This does **not** extend to `bitcoind` RPC, the Tor SOCKS/control ports, or any
   other internal endpoint — those are never published.
+- **`agent-docker` never runs `privileged`.** Its isolation is the Sysbox
+  runtime (`runtime: sysbox-runc`); `./bastion` refuses to start it without
+  Sysbox, and there is deliberately no privileged fallback — a privileged dind
+  is root on the host holding the Lightning keys. The only privileged dind
+  anywhere is the throwaway fallback in `tests/integration/agent-docker.sh`,
+  which CI forbids (`REQUIRE_SYSBOX=1`). Sysbox cannot run on Docker Desktop, so
+  in dev that test covers the wiring only; see `docs/agent-docker.md`.
 - Do not downgrade a pinned image tag / toolchain version to work around a build
   failure — fix the root cause. Pulled images are pinned `repo:<version>@sha256:…`;
   bump the version *and* re-resolve the digest together. `./bastion versions`
@@ -176,7 +184,10 @@ stack-bitcoin   bitcoind, lightningd, rtl  (+ teosd only with --with-watchtower;
      │          on rust-teos defaults, unreachable at its pinned transit IP).
 stack-monitor   self-contained (own network, no transit)
 stack-web       self-contained
-stack-ai        ccr + codedeck-bridge
+stack-ai        ccr, codedeck-bridge, mcp-gateway, searxng (+ agent-docker only
+                with --with-agent-docker; "agent-docker" profile. On up,
+                ./bastion first requires sysbox-runc - offering to install it on
+                a TTY - and pre-creates data/codedeck/workspaces as the operator)
 ```
 
 Networks: each stack owns `bastion-<stack>` (`10.<10|20|30|40|50>.0.0/24`, first

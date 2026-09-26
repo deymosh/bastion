@@ -34,6 +34,7 @@ run_unit() {
   step "tui.sh (headless)"  bash tests/unit/tui.test.sh
   step "amboss healthcheck" bash tests/unit/amboss-healthcheck.test.sh
   step "ccr entrypoint wrapper" bash tests/unit/ccr-wrapper.test.sh
+  step "sysbox installer checks" bash tests/unit/install-sysbox.test.sh
   step "ccr token refresher" node_test tests/unit/ccr-refresher.test.mjs
 }
 
@@ -42,6 +43,7 @@ run_integration() {
   step "per-container operations"    bash tests/integration/container-ops.sh
   step "secrets are mounted files"   bash tests/integration/secrets.sh
   step "MCP gateway end-to-end"      bash tests/integration/mcp-gateway.sh
+  step "agent-docker end-to-end"     bash tests/integration/agent-docker.sh
 }
 
 run_weekly() {

@@ -1,0 +1,57 @@
+# Throwaway project for tests/integration/agent-docker.sh. Mirrors the
+# stack-ai agent-docker <-> codedeck-bridge wiring (hostname/SAN, mutual TLS,
+# the published CLI volume, the shared workspaces path) with the REAL images
+# and the REAL entrypoint script; the driver passes the image pins in from
+# stack-ai/docker-compose.yml so they cannot drift. No host ports; `down -v`.
+name: bastion-agentdockertest
+
+services:
+  agent-docker:
+    image: ${AGENT_DOCKER_IMAGE:?}
+    container_name: bastion-agentdockertest-daemon
+    hostname: agent-docker
+    # sysbox-runc wherever it is installed (CI requires it). The driver only
+    # substitutes runc + privileged on a dev box without Sysbox, and says so -
+    # that fallback exists in this test and nowhere else.
+    runtime: ${AGENT_DOCKER_TEST_RUNTIME:-sysbox-runc}
+    privileged: ${AGENT_DOCKER_TEST_PRIVILEGED:-false}
+    entrypoint: ["/bin/sh", "/opt/agent-docker/entrypoint.sh"]
+    environment:
+      DOCKER_TLS_CERTDIR: /certs
+    volumes:
+      - ../../../stack-ai/agent-docker/entrypoint.sh:/opt/agent-docker/entrypoint.sh:ro
+      - data:/var/lib/docker
+      - certs:/certs
+      - cli:/cli
+      - ./workspaces:/data/workspaces
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 2s
+      timeout: 10s
+      retries: 60
+    networks: [net]
+
+  bridge:
+    image: ${BRIDGE_IMAGE:?}
+    container_name: bastion-agentdockertest-bridge
+    # The real bridge image and user (uid 1000), idling instead of running
+    # its app: the test drives the docker CLI from here as the agent would.
+    entrypoint: ["sleep", "infinity"]
+    environment:
+      DOCKER_HOST: tcp://agent-docker:2376
+      DOCKER_TLS_VERIFY: "1"
+      DOCKER_CERT_PATH: /certs/agent-docker/client
+      PATH: /usr/local/libexec/docker/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    volumes:
+      - certs:/certs/agent-docker:ro
+      - cli:/usr/local/libexec/docker:ro
+      - ./workspaces:/data/workspaces
+    networks: [net]
+
+volumes:
+  data:
+  certs:
+  cli:
+
+networks:
+  net: {}

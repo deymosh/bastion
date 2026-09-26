@@ -21,7 +21,7 @@ EOF
 b() {
   BASTION_SKIP_ENV_LINKS=1 CONFIG_FILE="$WORK/bastion.conf" \
   RTL_RUNE_FILE="$WORK/rune" RTL_RUNE_RETRIES=1 RTL_RUNE_WAIT=0 \
-  TEOS_SEED_DST="$WORK/teos.toml" \
+  TEOS_SEED_DST="$WORK/teos.toml" AGENT_WORKSPACES_DIR="$WORK/workspaces" \
   ./bastion "$@" </dev/null 2>&1
 }
 
@@ -110,6 +110,57 @@ out=$(b down web); assert_contains "$out" "COMPOSE_PROFILES=watchtower" "down ac
 out=$(b stop web); assert_contains "$out" "COMPOSE_PROFILES=watchtower" "stop activates all profiles for teardown"
 out=$(b build --with-watchtower stack-bitcoin); assert_contains "$out" "TEOS" "build --with-watchtower force-builds teosd"
 out=$(b build stack-bitcoin); assert_not_contains "$out" "TEOS" "plain build skips teosd"
+
+echo "== agent-docker opt-in profile (Sysbox only, fail closed) =="
+SYSBOX='{"io.containerd.runc.v2":{"path":"runc"},"runc":{"path":"runc"},"sysbox-runc":{"path":"/usr/bin/sysbox-runc"}}'
+NO_SYSBOX='{"io.containerd.runc.v2":{"path":"runc"},"runc":{"path":"runc"}}'
+out=$(MOCK_DOCKER_INFO_OUT="$NO_SYSBOX" b up --with-agent-docker ai); rc=$?
+assert_contains "$out" "needs the Sysbox runtime" "refuses to start agent-docker without sysbox-runc"
+assert_not_contains "$out" "Booting:" "nothing boots when Sysbox is missing"
+assert_eq "$rc" 1 "missing Sysbox exits 1"
+assert_ok test '!' -e "$WORK/workspaces"
+out=$(MOCK_DOCKER_INFO_OUT="" b up --with-agent-docker ai); rc=$?
+assert_eq "$rc" 1 "unreadable runtime list is treated as no Sysbox"
+out=$(MOCK_DOCKER_INFO_OUT="$SYSBOX" b up --with-agent-docker ai); rc=$?
+assert_contains "$out" "Booting: stack-network stack-ai" "boots once sysbox-runc is registered"
+assert_contains "$out" "COMPOSE_PROFILES=agent-docker" "--with-agent-docker activates the profile"
+assert_ok test -d "$WORK/workspaces"
+out=$(MOCK_DOCKER_INFO_OUT="$NO_SYSBOX" b up --with-agent-docker web); rc=$?
+assert_eq "$rc" 0 "no Sysbox check when stack-ai is not in the set"
+out=$(MOCK_DOCKER_INFO_OUT="$NO_SYSBOX" b up ai); rc=$?
+assert_eq "$rc" 0 "plain 'up' never requires Sysbox"
+assert_not_contains "$out" "agent-docker" "plain 'up' activates no agent-docker profile"
+out=$(MOCK_DOCKER_INFO_OUT="$SYSBOX" b up --with-watchtower --with-agent-docker ai)
+assert_contains "$out" "COMPOSE_PROFILES=watchtower,agent-docker" "both opt-in flags combine"
+out=$(b down ai); assert_contains "$out" "COMPOSE_PROFILES=watchtower,agent-docker" "down activates every profile, agent-docker included"
+out=$(MOCK_DOCKER_INFO_OUT="$NO_SYSBOX" b up --with-agent-docker ai)
+assert_contains "$out" "./bastion install-sysbox" "the refusal says how to install Sysbox"
+
+echo "== install-sysbox =="
+# Stub installer: logs each call; STUB_CHECK_RC / STUB_INSTALL_RC pick outcomes.
+cat > "$WORK/sysbox-stub.sh" <<EOF
+#!/usr/bin/env bash
+echo "stub \$*" >> "$WORK/stub.log"
+[ "\${1:-}" = --check ] && exit "\${STUB_CHECK_RC:-0}"
+exit "\${STUB_INSTALL_RC:-0}"
+EOF
+si() { : > "$WORK/stub.log"; SYSBOX_INSTALL_UTIL="$WORK/sysbox-stub.sh" b install-sysbox; }
+out=$(MOCK_DOCKER_INFO_OUT="$SYSBOX" si); rc=$?
+assert_contains "$out" "already installed" "no-op when sysbox-runc is registered"
+assert_eq "$(cat "$WORK/stub.log")" "" "installer not run when Sysbox is present"
+out=$(MOCK_DOCKER_INFO_OUT="$NO_SYSBOX" MOCK_PS_NAMES='lightningd tor' si); rc=$?
+assert_eq "$rc" 0 "install succeeds"
+assert_contains "$out" "Stopping: stack-network stack-bitcoin" "running stacks stopped gracefully before Docker restarts"
+assert_eq "$(paste -sd'|' "$WORK/stub.log")" "stub --check|stub " "host checked, then installed"
+assert_contains "$out" "Booting: stack-network stack-bitcoin" "the stacks that were running come back"
+boot_line=$(grep -A3 "Restarting the stacks" <<<"$out" | grep -m1 "compose no-op")
+assert_not_contains "$boot_line" "watchtower" "restart does not inherit stop's all-profiles (no uninvited teosd)"
+out=$(MOCK_DOCKER_INFO_OUT="$NO_SYSBOX" MOCK_PS_NAMES='lightningd tor' STUB_CHECK_RC=1 si); rc=$?
+assert_eq "$rc" 1 "an unsupported host exits 1"
+assert_not_contains "$out" "Stopping:" "nothing is stopped when the host check fails"
+out=$(MOCK_DOCKER_INFO_OUT="$NO_SYSBOX" MOCK_PS_NAMES='lightningd tor' STUB_INSTALL_RC=1 si); rc=$?
+assert_eq "$rc" 1 "a failed install exits 1"
+assert_contains "$out" "./bastion up stack-network stack-bitcoin" "a failed install says how to bring the stacks back"
 
 echo "== teos.toml is seeded only when teosd is about to start =="
 rm -f "$WORK/teos.toml"

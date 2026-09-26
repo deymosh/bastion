@@ -37,7 +37,7 @@ declare -A CONTAINER_STACK=(
     [bitcoind]=stack-bitcoin [lightningd]=stack-bitcoin [rtl]=stack-bitcoin [teosd]=stack-bitcoin
     [portainer]=stack-monitor [grafana]=stack-monitor [prometheus]=stack-monitor [node-exporter]=stack-monitor
     [hub]=stack-web
-    [ccr]=stack-ai [codedeck-bridge]=stack-ai [searxng]=stack-ai [mcp-gateway]=stack-ai
+    [ccr]=stack-ai [codedeck-bridge]=stack-ai [agent-docker]=stack-ai [searxng]=stack-ai [mcp-gateway]=stack-ai
 )
 
 # Test hook: BASTION_EXTRA_CONTAINER_STACK="name=dir[,name2=dir2]" registers extra
@@ -68,6 +68,8 @@ running_stacks() {
 AUDIT_SCRIPT="./stack-bitcoin/scripts/node-audit.py"
 # Path to the TEOS build utility
 TEOS_BUILD_UTIL="./utils/build_teos.sh"
+# Path to the Sysbox installer (runtime required by the agent-docker sidecar)
+SYSBOX_INSTALL_UTIL="${SYSBOX_INSTALL_UTIL:-./utils/install-sysbox.sh}"
 
 # --- STYLING ---
 BOLD='\033[1m'

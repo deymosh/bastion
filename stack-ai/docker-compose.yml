@@ -82,6 +82,14 @@ services:
       CODEDECK_OPENCODE_PORT: ${CODEDECK_OPENCODE_PORT:-}
       # Optional GSD planning workflow (v0.12.0+); off by default (see .env.example).
       CODEDECK_GSD_AUTO_INSTALL: ${CODEDECK_GSD_AUTO_INSTALL:-}
+      # Private Docker daemon from the opt-in agent-docker sidecar, over mutual
+      # TLS. Harmless while the sidecar is off: its CLI volume is then empty,
+      # so `docker` is simply not on PATH. PATH is the image's own plus the
+      # sidecar-published CLI directory.
+      DOCKER_HOST: tcp://agent-docker:2376
+      DOCKER_TLS_VERIFY: "1"
+      DOCKER_CERT_PATH: /certs/agent-docker/client
+      PATH: /usr/local/libexec/docker/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     secrets:
       - source: claude_code_oauth_token
         uid: "1000"
@@ -93,10 +101,77 @@ services:
         mode: 0440
     volumes:
       - ./data/codedeck:/data
+      # Both written by agent-docker (empty while it is off). The certs volume
+      # holds the whole dind CA tree, but only client/ is readable by the
+      # bridge's uid 1000: dind makes the client key 0644 on purpose and keeps
+      # the CA and server keys 0600 root.
+      - agent_docker_certs:/certs/agent-docker:ro
+      - agent_docker_cli:/usr/local/libexec/docker:ro
     networks:
       net:
         ipv4_address: 10.50.0.3
       transit:
+
+  agent-docker:
+    # Opt-in (`./bastion up --with-agent-docker`): a private Docker daemon for
+    # the codedeck-bridge agent, so it can `docker build` / `docker run` a
+    # project's own toolchain container. Its containers, images and networks
+    # live only inside this daemon - invisible to the host's Docker, so they
+    # can never collide with or reach the Bastion containers.
+    #
+    # The isolation boundary is the Sysbox runtime: a user-namespaced "system
+    # container" in which the stock dind image runs WITHOUT `privileged`
+    # (container root maps to an unprivileged host uid). A privileged dind is
+    # root on this host - the node holding the Lightning keys - so ./bastion
+    # refuses to start this service unless sysbox-runc is installed, and there
+    # is deliberately no privileged fallback. See docs/agent-docker.md.
+    profiles: ["agent-docker"]
+    # Pinned by digest (version tag kept for readability). Pinned 2026-09-26.
+    image: docker:29.8.1-dind@sha256:3f3c01aaaebf7cce837356b688b7c059a4749f10bd7660dec7c58fc454a283f0
+    container_name: agent-docker
+    # The dind entrypoint puts the hostname into the TLS server certificate's
+    # SAN; it must equal the name in the bridge's DOCKER_HOST or every client
+    # call fails verification.
+    hostname: agent-docker
+    runtime: sysbox-runc
+    restart: unless-stopped
+    # Publishes the CLI to the bridge, then execs the stock dockerd-entrypoint.sh.
+    entrypoint: ["/bin/sh", "/opt/agent-docker/entrypoint.sh"]
+    environment:
+      # dind generates a CA + server/client certs here and listens on 2376 with
+      # --tlsverify: a client without the CA-signed client cert is rejected.
+      DOCKER_TLS_CERTDIR: /certs
+    # Builds must not starve bitcoind / lightningd. Override in bastion.conf.
+    cpus: ${AGENT_DOCKER_CPUS:-2}
+    mem_limit: ${AGENT_DOCKER_MEMORY:-4g}
+    pids_limit: 4096
+    volumes:
+      - ./agent-docker/entrypoint.sh:/opt/agent-docker/entrypoint.sh:ro
+      - agent_docker_data:/var/lib/docker
+      - agent_docker_certs:/certs
+      - agent_docker_cli:/cli
+      # The bridge's repositories, at the SAME path the bridge sees them, so a
+      # `docker run -v /data/workspaces/<repo>:/src` from the agent resolves on
+      # this daemon. Only workspaces/ is shared: the rest of the bridge's /data
+      # (agent config and auth) stays out of reach of anything a build runs.
+      # create_host_path: false - a missing dir must fail, not be created
+      # root-owned (the bridge's uid 1000 could no longer clone into it);
+      # ./bastion pre-creates it as the operator.
+      - type: bind
+        source: ./data/codedeck/workspaces
+        target: /data/workspaces
+        bind:
+          create_host_path: false
+    healthcheck:
+      # Local unix socket inside the sidecar - no client cert needed.
+      test: ["CMD", "docker", "info"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    networks:
+      net:
+        ipv4_address: 10.50.0.6
 
   searxng:
     # Internal-only infrastructure for the gateway's searxng backend: no host
@@ -192,6 +267,11 @@ secrets:
 
 volumes:
   mcp_memory_data:
+  # agent-docker: its image/container store, the dind TLS tree, and the CLI it
+  # publishes to codedeck-bridge. `./bastion down` keeps them (no -v).
+  agent_docker_data:
+  agent_docker_certs:
+  agent_docker_cli:
 
 networks:
   net:
