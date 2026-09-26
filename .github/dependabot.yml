@@ -1,0 +1,40 @@
+# Proposes pin bumps as PRs; nothing is merged automatically. Bastion pins
+# every pulled image as tag@sha256 - Dependabot rewrites tag and digest
+# together, which is exactly the bump rule. Review each one like any other
+# change to a node that holds funds; CI runs on every PR.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: monthly }
+    commit-message: { prefix: "ci" }
+
+  # Pulled images in the compose files.
+  - package-ecosystem: docker-compose
+    directories:
+      - /stack-network
+      - /stack-bitcoin
+      - /stack-monitor
+      - /stack-web
+      - /stack-ai
+    schedule: { interval: monthly }
+    commit-message: { prefix: "chore(deps)" }
+    groups:
+      compose-images:
+        patterns: ["*"]
+
+  # Base images of the images Bastion builds.
+  - package-ecosystem: docker
+    directories:
+      - /stack-network
+      - /stack-bitcoin
+      - /stack-ai/ccr
+      - /stack-ai/mcp-gateway
+    schedule: { interval: monthly }
+    commit-message: { prefix: "build(deps)" }
+
+  # The MCP gateway's pinned npm children (package-lock.json).
+  - package-ecosystem: npm
+    directory: /stack-ai/mcp-gateway
+    schedule: { interval: monthly }
+    commit-message: { prefix: "build(deps)" }

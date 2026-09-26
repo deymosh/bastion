@@ -20,16 +20,18 @@ jobs:
   static:
     name: static (lint + config invariants)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with: { submodules: false }
       - name: Install linters
         run: |
-          # shellcheck ships on the runner image; fall back to the release
+          # The runner image ships shellcheck; fall back to the release
           # tarball rather than apt (its third-party repos flake on Hash Sum).
           if ! command -v shellcheck >/dev/null; then
-            curl -fsSL https://github.com/koalaman/shellcheck/releases/download/v0.10.0/shellcheck-v0.10.0.linux.x86_64.tar.xz \
-              | tar -xJ && sudo mv shellcheck-v0.10.0/shellcheck /usr/local/bin/
+            curl -fsSLo /tmp/sc.tar.xz https://github.com/koalaman/shellcheck/releases/download/v0.10.0/shellcheck-v0.10.0.linux.x86_64.tar.xz
+            echo "6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87  /tmp/sc.tar.xz" | sha256sum -c -
+            tar -xJf /tmp/sc.tar.xz && sudo mv shellcheck-v0.10.0/shellcheck /usr/local/bin/
           fi
           shellcheck --version
           pipx install yamllint
@@ -38,6 +40,7 @@ jobs:
   unit:
     name: unit
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with: { submodules: false }
@@ -48,6 +51,7 @@ jobs:
   integration:
     name: integration (tor reachability)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with: { submodules: false }
@@ -60,6 +64,7 @@ jobs:
     # forbidden, so a sidecar that is not on sysbox-runc fails the job.
     name: integration (agent-docker on Sysbox)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with: { submodules: false }
