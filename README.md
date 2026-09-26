@@ -135,6 +135,7 @@ dashboard action is also available as a subcommand, for scripts and cron:
 ./bastion config [get|set]        # read / change bastion.conf (validated)
 ./bastion audit                   # routing profitability report
 ./bastion install-sysbox          # runtime for agent-docker (restarts Docker)
+./bastion version                 # release + commit of this checkout
 ```
 
 You can drop the `stack-` prefix (`./bastion up web ai`). Flags:
@@ -183,6 +184,8 @@ CLN P2P, the TEOS API, the CCR gateway, SearXNG and the CodeDeck bridge.
 | [Firewall](docs/firewall.md) | nftables ruleset and a `ufw` recipe |
 | [MCP gateway](docs/mcp.md) | The remote-agent tool endpoint, its namespaces and a ready-made `.mcp.json` |
 | [Agent Docker](docs/agent-docker.md) | A private Docker daemon for the AI agent on Sysbox, and its security model |
+| [Releases and upgrades](docs/releasing.md) | How versions are cut, and how to upgrade a running node |
+| [Changelog](CHANGELOG.md) | What changed in each release |
 | [Tests](tests/README.md) | The static / unit / integration / weekly lanes, and how to run them |
 | Stack READMEs | Per-stack services, addresses and operations (linked above) |
 

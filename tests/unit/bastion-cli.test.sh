@@ -35,6 +35,13 @@ echo "== command dispatch =="
 out=$(b);          rc=$?; assert_contains "$out" "COMMANDS:" "no args (non-TTY) prints usage"; assert_eq "$rc" 1 "usage exits 1"
 out=$(b boguscmd); rc=$?; assert_contains "$out" "COMMANDS:" "unknown command prints usage"
 
+echo "== version =="
+out=$(MOCK_DOCKER_INFO_RC=1 bare version); rc=$?
+assert_contains "$out" "Bastion $(tr -d '[:space:]' < VERSION)" "version prints the VERSION file"
+assert_eq "$rc" 0 "version exits 0"
+assert_not_contains "$out" "Docker daemon is not running" "version needs neither Docker nor config"
+out=$(bare --version); assert_contains "$out" "Bastion " "--version is an alias"
+
 echo "== config is only demanded when it is actually needed =="
 out=$(bare help);   rc=$?; assert_contains "$out" "COMMANDS:" "help works without config"; assert_not_contains "$out" "Required configuration" "help never asks for config"
 out=$(MOCK_DOCKER_INFO_RC=1 bare help); assert_not_contains "$out" "Docker daemon is not running" "help does not even check Docker"

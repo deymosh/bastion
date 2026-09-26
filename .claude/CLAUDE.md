@@ -52,6 +52,7 @@ deployment target is **Linux**. Bash syntax is identical either way.
 ./bastion audit                 # node profitability audit (python)
 ./bastion install-sysbox        # runtime for --with-agent-docker (Linux; restarts Docker)
 ./bastion config [get|set]      # list / read / change bastion.conf settings (validated)
+./bastion version               # release (VERSION) + git commit of this checkout
 ```
 
 A single container name on `stop`/`logs` uses the per-container path; a stack
@@ -97,6 +98,14 @@ blocks the run and explains why.
 - **Multi-part requests: one task at a time.** Implement, verify with the
   narrowest sufficient check, commit that task, then start the next. Do not batch
   unrelated changes into one commit.
+- **Commit subjects are Conventional Commits, and they drive releases.**
+  release-please (`docs/releasing.md`) derives the version bump and the
+  changelog from them: `fix:` → patch, `feat:` → minor, `!` / a
+  `BREAKING CHANGE:` footer → major. Pick the type honestly, and mark as
+  breaking anything an operator must act on when upgrading (new required
+  setting, data migration, renamed container), with the action in the body.
+  PR titles follow the same format. Never hand-edit `VERSION` or
+  `CHANGELOG.md`; the release PR owns them.
 - A change is not finished until it is verified. If you could not run the
   verification (Docker unavailable, needs the Linux target), say so plainly in
   the summary and PR — do not imply it passed.

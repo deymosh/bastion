@@ -58,6 +58,7 @@ usage() {
     echo -e "  ${BOLD}install-sysbox${NC}         -> Install the Sysbox runtime --with-agent-docker needs"
     echo -e "  ${BOLD}config${NC}  [list|get|set]  -> Show or change bastion.conf settings (validated)"
     echo -e "  ${CYAN}tui${NC}                    -> Force the interactive dashboard"
+    echo -e "  ${CYAN}version${NC}                -> Release + git commit of this checkout"
     echo -e ""
     echo -e "${YELLOW}${BOLD}FLAGS:${NC}"
     echo -e "  ${BOLD}--recreate-networks${NC} -> On 'up', drop a stale bastion-network (old subnet) first"
@@ -483,6 +484,20 @@ do_versions() {
     done
 }
 
+# The release this checkout is on (VERSION, bumped by the release workflow)
+# plus, from git when available, the exact commit - so a checkout that is
+# ahead of its last release, or locally modified, says so.
+do_version() {
+    local v g
+    v=$(tr -d '[:space:]' < ./VERSION 2>/dev/null); v=${v:-unknown}
+    g=$(git describe --tags --always --dirty 2>/dev/null || true)
+    if [ -n "$g" ] && [ "$g" != "v$v" ]; then
+        echo "Bastion $v (git $g)"
+    else
+        echo "Bastion $v"
+    fi
+}
+
 # ./bastion config [list] | get KEY | set KEY VALUE
 # Scriptable access to bastion.conf through the settings registry: `set`
 # validates and refreshes the derived secret files exactly like the TUI editor.
@@ -553,8 +568,11 @@ done
 set -- "${ARGS[@]}"
 CMD="${1:-}"
 
-# Help needs neither Docker nor config - answer it before touching either.
-case "$CMD" in -h|--help|help) usage ;; esac
+# Help and version need neither Docker nor config - answer them first.
+case "$CMD" in
+    -h|--help|help) usage ;;
+    -V|--version|version) do_version; exit 0 ;;
+esac
 
 # Load bastion.conf + defaults for every real command. This never prompts;
 # only commands that boot containers (below) call require_essentials.

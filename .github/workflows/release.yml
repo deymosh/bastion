@@ -1,0 +1,39 @@
+name: Release
+
+# Bastion's release = a git tag (vX.Y.Z) on master plus a GitHub Release with
+# the changelog. There is nothing to build or upload: the compose files,
+# configs and scripts in the tagged tree ARE the release.
+#
+# release-please keeps one open "release PR" that bumps VERSION and
+# CHANGELOG.md from the Conventional Commit types merged since the last tag
+# (fix -> patch, feat -> minor, `!`/BREAKING CHANGE -> major). Merging that PR
+# creates the tag and the GitHub Release. Nothing is released until a human
+# merges it. Config: release-please-config.json + .release-please-manifest.json.
+#
+# One-time repo setting: Settings > Actions > General > "Allow GitHub Actions
+# to create and approve pull requests". Note that PRs opened with the default
+# GITHUB_TOKEN do not trigger CI; run it from the PR's Actions tab if wanted.
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: googleapis/release-please-action@v5
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
