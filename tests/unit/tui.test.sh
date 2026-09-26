@@ -83,7 +83,36 @@ unset COMPOSE_PROFILES
 echo "== config view =="
 printf "CCR_TOKEN_REFRESH='1'\nNODE_ALIAS='n'\n" > "$CONFIG_FILE"
 TUI_VIEW=config; CONFIG_CACHE_DIRTY=1; MENU_SEL=0; tui_build_menu
-assert_contains "$MENU_TITLE" "${SETTING_DESC[${MENU_IDS[0]}]}" "the title describes the selected setting"
+assert_eq "${MENU_IDS[0]}" "__hdr:${SETTING_SECTION[${MANAGED_VARS[0]}]}" "the list opens with the first section's header"
+assert_eq "$MENU_SEL" 1 "entering the view lands on the first setting, not the header"
+assert_contains "$MENU_TITLE" "${SETTING_DESC[${MENU_IDS[$MENU_SEL]}]}" "the title describes the selected setting"
+# One header per distinct section, every managed key exactly once, in order.
+_hdrs=0; _keys=(); for _id in "${MENU_IDS[@]}"; do
+  case "$_id" in __hdr:*) _hdrs=$((_hdrs + 1)) ;; *) _keys+=("$_id") ;; esac; done
+assert_eq "$_hdrs" "$(printf '%s\n' "${SETTING_SECTION[@]}" | sort -u | wc -l | tr -d ' ')" "one header per registry section"
+assert_eq "${_keys[*]}" "${MANAGED_VARS[*]}" "every setting listed once, in registry order"
+_all_under=1; _cur=""; for _id in "${MENU_IDS[@]}"; do
+  case "$_id" in __hdr:*) _cur=${_id#__hdr:} ;; *) [ "${SETTING_SECTION[$_id]}" = "$_cur" ] || _all_under=0 ;; esac; done
+assert_eq "$_all_under" 1 "each setting sits under its own section's header"
+
+echo "== grouped navigation skips headers =="
+MENU_SEL=1; tui_menu_nav up
+_tui_is_hdr "$MENU_SEL" && _t_bad "up from the first setting stopped on a header" || _t_ok "up never stops on a header"
+assert_eq "$MENU_SEL" "$(( ${#MENU_IDS[@]} - 1 ))" "up from the first setting wraps to the last"
+tui_menu_nav down; assert_eq "$MENU_SEL" 1 "down from the last wraps past the header to the first setting"
+tui_menu_nav pgdn
+_tui_is_hdr $(( MENU_SEL - 1 )) && _t_ok "pgdn jumps to the first setting of the next section" || _t_bad "pgdn landed mid-section at $MENU_SEL"
+tui_menu_nav pgup; assert_eq "$MENU_SEL" 1 "pgup jumps back to the first section"
+tui_menu_nav end; _tui_is_hdr "$MENU_SEL" && _t_bad "end on a header" || _t_ok "end lands on the last setting"
+tui_menu_nav home; assert_eq "$MENU_SEL" 1 "home lands on the first setting"
+# Scrolling up onto a section's first row brings its header into view.
+CONTENT_BOT=12; MENU_OFF=$(( ${#MENU_IDS[@]} - 3 )); tui_menu_nav home
+MENU_OFF=5; tui_menu_nav pgdn; _sel=$MENU_SEL; MENU_OFF=$_sel; TUI_NEED_MENU=1; tui_render_menu >/dev/null
+assert_eq "$MENU_OFF" "$(( _sel - 1 ))" "the header above a section's first row is scrolled into view"
+CONTENT_BOT=30; MENU_OFF=0
+MENU_SEL=0; tui_dispatch; _t_ok "Enter on a header is a no-op"
+
+MENU_SEL=0; tui_build_menu
 for _i in "${!MENU_IDS[@]}"; do [ "${MENU_IDS[$_i]}" = CCR_TOKEN_REFRESH ] && MENU_SEL=$_i; done
 tui_build_menu
 assert_contains "$MENU_TITLE" "toggle" "a 0/1 setting advertises Enter-to-toggle"

@@ -548,21 +548,73 @@ _tui_stack_containers() {
     REPLY=${TUI_STACK_SERVICES[$1]}
 }
 
+# Section headers: a menu row whose id starts with __hdr: is a non-selectable
+# group label. Navigation steps over it, and the selection is never left on one.
+_tui_is_hdr() { [[ ${MENU_IDS[$1]:-} == __hdr:* ]]; }
+
+# Move MENU_SEL to the nearest selectable row from $1 in direction $2 (+1/-1),
+# wrapping around. Leaves MENU_SEL alone if the menu has no selectable row.
+_tui_sel_from() {
+    local i=$1 dir=$2 n=${#MENU_IDS[@]} tries
+    [ "$n" -gt 0 ] || return 0
+    for (( tries=0; tries<n; tries++ )); do
+        i=$(( (i % n + n) % n ))
+        _tui_is_hdr "$i" || { MENU_SEL=$i; return 0; }
+        i=$(( i + dir ))
+    done
+}
+
+# Arrow/page/home/end handling for the menu pane. In a grouped view (one with
+# header rows) pgup/pgdn jump to the previous/next section instead of by 5.
+tui_menu_nav() {
+    local n=${#MENU_IDS[@]} i
+    [ "$n" -gt 0 ] || return 0
+    local grouped=0; _tui_is_hdr 0 && grouped=1
+    case "$1" in
+        up)   _tui_sel_from $(( MENU_SEL - 1 )) -1 ;;
+        down) _tui_sel_from $(( MENU_SEL + 1 )) 1 ;;
+        home) _tui_sel_from 0 1 ;;
+        end)  _tui_sel_from $(( n - 1 )) -1 ;;
+        pgdn)
+            if [ "$grouped" = 1 ]; then
+                for (( i=MENU_SEL+1; i<n; i++ )); do _tui_is_hdr "$i" && { _tui_sel_from $(( i + 1 )) 1; break; }; done
+            else
+                i=$(( MENU_SEL + 5 )); [ "$i" -ge "$n" ] && i=$(( n - 1 )); _tui_sel_from "$i" -1
+            fi ;;
+        pgup)
+            if [ "$grouped" = 1 ]; then
+                # Header of the current section, then the one before it.
+                for (( i=MENU_SEL; i>=0; i-- )); do _tui_is_hdr "$i" && break; done
+                for (( i=i-1; i>=0; i-- )); do _tui_is_hdr "$i" && { _tui_sel_from $(( i + 1 )) 1; break; }; done
+            else
+                i=$(( MENU_SEL - 5 )); [ "$i" -lt 0 ] && i=0; _tui_sel_from "$i" 1
+            fi ;;
+    esac
+    TUI_NEED_MENU=1
+}
+
 # Config rows are expensive to build (one file read per key), so cache them and
-# only rebuild when the view is (re-)entered or a value is saved.
+# only rebuild when the view is (re-)entered or a value is saved. Rows are
+# grouped under a header per registry section, in registry order.
 CONFIG_IDS=(); CONFIG_LABELS=(); CONFIG_CACHE_DIRTY=1
 tui_build_config_cache() {
     [ "$CONFIG_CACHE_DIRTY" = 1 ] || return 0
     CONFIG_CACHE_DIRTY=0
     CONFIG_IDS=(); CONFIG_LABELS=()
-    local k v shown kw vw
-    # Key column = the longest managed name, capped so values keep room.
+    local k v shown kw vw section=""
+    # Key column = the longest managed name, capped so values keep room. Rows
+    # are indented 2 under their section header.
+    local lw=$(( _LW - 2 ))
     kw=0; for k in "${MANAGED_VARS[@]}"; do [ "${#k}" -gt "$kw" ] && kw=${#k}; done
-    local cap=$(( _LW - 14 )); [ "$cap" -lt 12 ] && cap=12
+    local cap=$(( lw - 14 )); [ "$cap" -lt 12 ] && cap=12
     [ "$kw" -gt "$cap" ] && kw=$cap
-    vw=$(( _LW - kw - 1 )); [ "$vw" -lt 6 ] && vw=6
+    vw=$(( lw - kw - 1 )); [ "$vw" -lt 6 ] && vw=6
     config_parse_file                     # one read for every row
     for k in "${MANAGED_VARS[@]}"; do
+        if [ "${SETTING_SECTION[$k]}" != "$section" ]; then
+            section=${SETTING_SECTION[$k]}
+            CONFIG_IDS+=("__hdr:$section"); CONFIG_LABELS+=("$section")
+        fi
         v=${CONFIG_VALUES[$k]:-}
         if config_var_is_secret "$k"; then
             [ -n "$v" ] && shown="********" || shown="(unset)"
@@ -571,7 +623,7 @@ tui_build_config_cache() {
             [ "${#shown}" -gt "$vw" ] && shown="${shown:0:vw-1}~"
         fi
         CONFIG_IDS+=("$k")
-        CONFIG_LABELS+=("$(printf '%-*.*s %s' "$kw" "$kw" "$k" "$shown")")
+        CONFIG_LABELS+=("$(printf '  %-*.*s %s' "$kw" "$kw" "$k" "$shown")")
     done
 }
 
@@ -617,10 +669,13 @@ tui_build_menu() {
             tui_build_config_cache            # cheap after the first call
             MENU_IDS=("${CONFIG_IDS[@]}")
             MENU_LABELS=("${CONFIG_LABELS[@]}")
-            # The title line describes whichever setting is selected.
+            # Entering the view lands on a header row; step onto the first setting.
+            _tui_is_hdr "$MENU_SEL" && _tui_sel_from "$MENU_SEL" 1
+            # The title line describes whichever setting is selected (the
+            # section is already visible as the header above it).
             local ck="${CONFIG_IDS[$MENU_SEL]:-}"
-            if [ -n "$ck" ]; then
-                MENU_TITLE="${SETTING_SECTION[$ck]}: ${SETTING_DESC[$ck]}"
+            if [ -n "$ck" ] && ! _tui_is_hdr "$MENU_SEL"; then
+                MENU_TITLE="${SETTING_DESC[$ck]}"
                 [ "${SETTING_TYPE[$ck]}" = bool ] && MENU_TITLE="[enter] toggle - $MENU_TITLE"
             else
                 MENU_TITLE="[enter] edit a value"
@@ -667,8 +722,11 @@ tui_render_menu() {
     local top=$(( CONTENT_TOP + 2 ))
     local vis=$(( CONTENT_BOT - top + 1 )); [ "$vis" -lt 1 ] && vis=1
 
-    # Scroll the window so MENU_SEL stays visible; clamp the offset.
-    [ "$MENU_SEL" -lt "$MENU_OFF" ] && MENU_OFF=$MENU_SEL
+    # Scroll the window so MENU_SEL stays visible; clamp the offset. Scrolling
+    # up onto a section's first row also reveals the header above it.
+    local first=$MENU_SEL
+    [ "$MENU_SEL" -gt 0 ] && _tui_is_hdr $(( MENU_SEL - 1 )) && first=$(( MENU_SEL - 1 ))
+    [ "$first" -lt "$MENU_OFF" ] && MENU_OFF=$first
     [ "$MENU_SEL" -ge $(( MENU_OFF + vis )) ] && MENU_OFF=$(( MENU_SEL - vis + 1 ))
     local maxoff=$(( count - vis )); [ "$maxoff" -lt 0 ] && maxoff=0
     [ "$MENU_OFF" -gt "$maxoff" ] && MENU_OFF=$maxoff
@@ -676,14 +734,27 @@ tui_render_menu() {
 
     _at "$CONTENT_TOP" 3; _clr_to
     local title="$MENU_TITLE"
-    [ "$count" -gt "$vis" ] && title="$title  ($(( MENU_SEL + 1 ))/$count)"
+    if [ "$count" -gt "$vis" ]; then
+        # Position among selectable rows only - headers are not counted.
+        local pos=0 items=0 j
+        for (( j=0; j<count; j++ )); do
+            _tui_is_hdr "$j" && continue
+            items=$(( items + 1 )); [ "$j" -le "$MENU_SEL" ] && pos=$items
+        done
+        title="$title  ($pos/$items)"
+    fi
     printf '%b%s%b' "$T_SUB" "${title:0:_LW}" "$T_RESET"
 
     local r=$top i
     for (( i=MENU_OFF; i<count && r<=CONTENT_BOT; i++, r++ )); do
         _at "$r" 3; _clr_to
         local label="${MENU_LABELS[$i]:0:_LW}"
-        if [ "$i" -eq "$MENU_SEL" ]; then
+        if _tui_is_hdr "$i"; then
+            # "-- Section ----------" across the column, in the accent colour.
+            local rule_n=$(( _LW - ${#label} - 5 )) rule=""
+            [ "$rule_n" -gt 0 ] && { printf -v rule '%*s' "$rule_n" ''; rule=${rule// /─}; }
+            _at "$r" 3; printf '%b── %s %b%s%b' "${T_BOLD}${T_ACCENT}" "$label" "$T_LINE" "$rule" "$T_RESET"
+        elif [ "$i" -eq "$MENU_SEL" ]; then
             _at "$r" 3; printf '%b%*s%b' "$T_SEL_BG" "$_LW" "" "$T_RESET"
             _at "$r" 4; printf '%b%b%s%b' "$T_SEL_BG" "${T_BOLD}${T_TITLE}" "$label" "$T_RESET"
         else
@@ -788,6 +859,7 @@ tui_do_config_edit() {
 
 tui_dispatch() {
     local id="${MENU_IDS[$MENU_SEL]}"
+    _tui_is_hdr "$MENU_SEL" && return 0          # a section label is not an action
     case "$TUI_VIEW" in
         main)
             case "$id" in
@@ -911,12 +983,7 @@ tui_main() {
 
         case "$_KEY" in
             _timeout) tui_refresh_status ;;
-            up)   MENU_SEL=$(( MENU_SEL - 1 )); [ "$MENU_SEL" -lt 0 ] && MENU_SEL=$(( ${#MENU_IDS[@]} - 1 )); TUI_NEED_MENU=1 ;;
-            down) MENU_SEL=$(( MENU_SEL + 1 )); [ "$MENU_SEL" -ge "${#MENU_IDS[@]}" ] && MENU_SEL=0; TUI_NEED_MENU=1 ;;
-            pgup) MENU_SEL=$(( MENU_SEL - 5 )); [ "$MENU_SEL" -lt 0 ] && MENU_SEL=0; TUI_NEED_MENU=1 ;;
-            pgdn) MENU_SEL=$(( MENU_SEL + 5 )); [ "$MENU_SEL" -ge "${#MENU_IDS[@]}" ] && MENU_SEL=$(( ${#MENU_IDS[@]} - 1 )); TUI_NEED_MENU=1 ;;
-            home) MENU_SEL=0; TUI_NEED_MENU=1 ;;
-            end)  MENU_SEL=$(( ${#MENU_IDS[@]} - 1 )); TUI_NEED_MENU=1 ;;
+            up|down|pgup|pgdn|home|end) tui_menu_nav "$_KEY" ;;
             enter) tui_dispatch || break ;;
             space)
                 [ "$TUI_VIEW" = stacks ] && tui_pick_toggle "${MENU_IDS[$MENU_SEL]}" ;;
