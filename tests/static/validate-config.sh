@@ -85,8 +85,14 @@ awk '/^  transit:/{t=1} t&&/external:/{bad=1} END{exit bad?1:0}' "$NET" \
 echo "== Tor image / torrc =="
 have '^CookieAuthFile ' "$TORRC" && ok "torrc sets an explicit CookieAuthFile" \
   || bad "torrc missing CookieAuthFile (CookieAuthFileGroupReadable has no effect without it)"
-have 'chmod 0750 /data/.tor' stack-network/Dockerfile.tor && ok "Dockerfile.tor pre-creates /data/.tor 0750" \
-  || bad "Dockerfile.tor does not pre-create /data/.tor with mode 0750"
+# The shared image (github.com/deymosh/tor) guarantees /data/.tor 0750 owned
+# 1000:1000 - its CI asserts that before publishing. Bastion must use it, and
+# point Tor's DataDirectory at that directory (the cookie lives there).
+have '^    image: ghcr\.io/deymosh/tor:[0-9.]+@sha256:[0-9a-f]{64}$' "$NET" \
+  && ok "tor runs the shared ghcr.io/deymosh/tor image, digest-pinned" \
+  || bad "tor is not on a digest-pinned ghcr.io/deymosh/tor image"
+have '^DataDirectory /data/\.tor$' "$TORRC" && ok "torrc sets DataDirectory /data/.tor" \
+  || bad "torrc must set DataDirectory /data/.tor (the volume + the cookie path)"
 
 echo "== Image pinning / no stray Tor publish =="
 # Tor SOCKS/control are bound to 10.254.0.2 in torrc; nothing should publish them.

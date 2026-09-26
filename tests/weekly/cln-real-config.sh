@@ -21,6 +21,11 @@ cd "$(dirname "$0")" || exit 1
 WORK=.work
 export CLN_WEEKLY_DIR="$WORK"
 mkdir -p "$WORK"
+# The Tor image production pins - the test runs exactly that image.
+TOR_IMAGE=$(awk '/^  tor:/{t=1} t && /^    image:/{print $2; exit}' ../../stack-network/docker-compose.yml)
+export TOR_IMAGE
+[ -n "$TOR_IMAGE" ] || { echo "could not read the tor image from stack-network/docker-compose.yml" >&2; exit 1; }
+
 COMPOSE=(docker compose -f cln.compose.yml)
 cleanup() { "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true; rm -rf "$WORK"; }
 trap cleanup EXIT
