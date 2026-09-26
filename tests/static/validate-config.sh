@@ -267,6 +267,25 @@ have '^FROM python:.*@sha256:[0-9a-f]{64}' stack-ai/mcp-gateway/Dockerfile.mcp-g
 have 'pip install.*-c /tmp/constraints.txt' stack-ai/mcp-gateway/Dockerfile.mcp-gateway \
   && ok "mcp-gateway Python layer uses the constraints snapshot" || bad "mcp-gateway Python layer ignores constraints.txt"
 
+echo "== Built images start from digest-pinned bases =="
+# Bastion's own Dockerfiles (the rust-teos submodule is the fork's business).
+# A FROM that names an earlier stage (FROM builder) needs no digest.
+unpinned=$(for f in stack-*/Dockerfile* stack-*/*/Dockerfile*; do
+  [ -f "$f" ] || continue
+  stages=$(grep -ioE '^FROM .* AS [A-Za-z0-9_-]+' "$f" | awk '{print tolower($NF)}')
+  grep -iE '^FROM ' "$f" | awk '{print $2}' | while read -r ref; do
+    case "$ref" in *@sha256:*) continue ;; esac
+    printf '%s\n' "$stages" | grep -qx "$(printf '%s' "$ref" | tr 'A-Z' 'a-z')" && continue
+    echo "$f:$ref"
+  done
+done)
+[ -z "$unpinned" ] && ok "every FROM in Bastion's Dockerfiles is @sha256-pinned" \
+  || bad "unpinned base image: $(printf '%s' "$unpinned" | paste -sd' ' -)"
+grep -q 'sha256sum -c' stack-bitcoin/Dockerfile.lightningd \
+  && ! grep -qE 'curl [^|]*\| *tar' stack-bitcoin/Dockerfile.lightningd \
+  && ok "Dockerfile.lightningd verifies downloaded tarballs (no curl | tar)" \
+  || bad "Dockerfile.lightningd pipes an unverified download into tar"
+
 echo "== Every service has the production defaults =="
 # Prints "<stack> <service> <key>" for each service that lacks the line
 # matching <regex> inside its own block (4-space-indented keys).

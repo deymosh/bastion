@@ -15,7 +15,7 @@
 # Pinned for reproducibility. NOTE: lncm/tor is unmaintained (this tag is from
 # 2023) and Tor 0.4.7 is EOL upstream - moving to a maintained base is a
 # separate, tracked task.
-FROM lncm/tor:0.4.7.13
+FROM lncm/tor:0.4.7.13@sha256:5a3cfb478d978feb1426ce6dca8e10906bbdd72cff94d7c0c589339f717b2503
 
 USER root
 RUN mkdir -p /data/.tor \
