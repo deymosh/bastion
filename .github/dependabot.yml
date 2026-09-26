@@ -22,6 +22,10 @@ updates:
     groups:
       compose-images:
         patterns: ["*"]
+        # Bitcoin Core never rides along in the routine group: it gets a PR of
+        # its own. A major can change pruning/index behaviour or need a
+        # reindex - read the release notes and back up before merging it.
+        exclude-patterns: ["lncm/bitcoind"]
 
   # Base images of the images Bastion builds.
   - package-ecosystem: docker
@@ -31,6 +35,9 @@ updates:
       - /stack-ai/mcp-gateway
     schedule: { interval: monthly }
     commit-message: { prefix: "build(deps)" }
+    # Ungrouped, so the Core Lightning base (Dockerfile.lightningd) always gets
+    # a PR of its own. Its first start migrates the wallet DB one-way, and the
+    # plugins pinned in the Dockerfile must support it: review before merging.
 
   # The MCP gateway's pinned npm children (package-lock.json).
   - package-ecosystem: npm
