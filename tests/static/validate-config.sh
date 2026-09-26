@@ -267,6 +267,27 @@ have '^FROM python:.*@sha256:[0-9a-f]{64}' stack-ai/mcp-gateway/Dockerfile.mcp-g
 have 'pip install.*-c /tmp/constraints.txt' stack-ai/mcp-gateway/Dockerfile.mcp-gateway \
   && ok "mcp-gateway Python layer uses the constraints snapshot" || bad "mcp-gateway Python layer ignores constraints.txt"
 
+echo "== Every service has the production defaults =="
+# Prints "<stack> <service> <key>" for each service that lacks the line
+# matching <regex> inside its own block (4-space-indented keys).
+_missing_in_service() {
+  local regex="$1" f
+  for f in stack-*/docker-compose.yml; do
+    awk -v re="$regex" -v st="${f%%/*}" '
+      /^[a-z]/ { in_s = ($0 ~ /^services:/); next }
+      in_s && /^  [A-Za-z0-9_-]+:[[:space:]]*$/ { if (svc != "" && !hit) print st, svc; svc=$1; sub(/:$/,"",svc); hit=0; next }
+      in_s && $0 ~ re { hit=1 }
+      END { if (svc != "" && !hit) print st, svc }
+    ' "$f"
+  done
+}
+m=$(_missing_in_service '^    logging: [*]logging')
+[ -z "$m" ] && ok "every service rotates its logs (logging: *logging)" \
+  || bad "no log rotation on: $(printf '%s' "$m" | paste -sd, -)"
+m=$(_missing_in_service '^    restart: unless-stopped')
+[ -z "$m" ] && ok "every service restarts unless-stopped (so ./bastion stop sticks)" \
+  || bad "restart policy is not unless-stopped on: $(printf '%s' "$m" | paste -sd, -)"
+
 echo "== Submodule tracking =="
 have 'branch = bastion-integration' .gitmodules && ok ".gitmodules tracks rust-teos bastion-integration" \
   || bad ".gitmodules does not pin rust-teos to bastion-integration"

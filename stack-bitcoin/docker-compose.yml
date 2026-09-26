@@ -1,5 +1,13 @@
 name: stack-bitcoin
 
+# Every service rotates its json-file log (3 x 10 MB): Docker's default is
+# unbounded, which on an always-on node eventually fills the disk.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   lightningd:
     image: lightningd-custom:latest
@@ -7,17 +15,18 @@ services:
       context: .
       dockerfile: Dockerfile.lightningd
     container_name: lightningd
+    logging: *logging
     restart: unless-stopped
+    # Docker's default 10s ends in SIGKILL. CLN writes each transaction to both
+    # its DB and the backup-drive replica (wallet= in cln_config) and has
+    # plugins to stop; give it time to shut down cleanly rather than be killed
+    # mid-write.
+    stop_grace_period: 1m
     # No depends_on bitcoind: the chain backend is trustedcoin (bcli disabled),
     # so CLN never queries bitcoind, and a hard dependency would make
     # `docker compose up lightningd` also start a full bitcoind sync - the one
     # thing the local-testing workflow must avoid. `./bastion up` still starts
     # bitcoind (it is in the stack) and waits for tor to be healthy first.
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"   # Maximum 10 Megabytes per file
-        max-file: "3"     # Only saves the last 3 files
     volumes:
       # BACKUP - the separate drive CLN replicates its wallet DB to (wallet= in
       # config/cln_config). Same setting the daemon mirrors the SCB to, so the
@@ -51,14 +60,10 @@ services:
     # Version tag + digest. Pinned 2026-09-09.
     image: lncm/bitcoind:v26.0@sha256:2a335ea0e77106fc8768cade374808485a43825a6b4a17e85dd36d4acd931b22
     container_name: bitcoind
+    logging: *logging
     restart: unless-stopped
     user: "${USER_ID}:${GROUP_ID}"
     stop_grace_period: 5m  # Gives 5 minutes for graceful shutdown
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"   # Maximum 10 Megabytes per file
-        max-file: "3"     # Only saves the last 3 files
     volumes:
       - ./data/bitcoin:/data/.bitcoin
     networks:
@@ -88,6 +93,7 @@ services:
     # Version tag + digest. Pinned 2026-09-09.
     image: shahanafarooqui/rtl:v0.15.8@sha256:54131152cba02a968d83fcc89c07426bfb979372f743649ba1e2626426a34dc0
     container_name: rtl
+    logging: *logging
     restart: unless-stopped
     depends_on:
       - lightningd
@@ -104,7 +110,8 @@ services:
   teosd:
     image: teosd:latest
     container_name: teosd
-    restart: always
+    logging: *logging
+    restart: unless-stopped
     # Opt-in: running your OWN watchtower for other nodes is not the default.
     # `./bastion up --with-watchtower` (or BASTION_PROFILES=watchtower) starts it.
     # The CLN `watchtower-client` plugin - breach protection FOR this node,

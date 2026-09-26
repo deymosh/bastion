@@ -1,10 +1,19 @@
 name: stack-monitor
 
+# Every service rotates its json-file log (3 x 10 MB): Docker's default is
+# unbounded, which on an always-on node eventually fills the disk.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   portainer:
     # Pinned by digest (tag kept for readability). Pinned 2026-09-09.
     image: portainer/portainer-ce:2.45.0@sha256:511f3f06c96fe3b993ebeaafde311c1959cae73a7ef825dba6397d51b450dffa
     container_name: portainer
+    logging: *logging
     restart: unless-stopped
     volumes:
       # Portainer needs the Docker socket to manage containers - this is
@@ -22,6 +31,7 @@ services:
     # Pinned by digest (tag kept for readability). Pinned 2026-09-09.
     image: grafana/grafana:13.2.1@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283
     container_name: grafana
+    logging: *logging
     restart: unless-stopped
     environment:
       # Grafana sends X-Frame-Options: deny by default, which refuses the Hub's
@@ -42,6 +52,7 @@ services:
     # Pinned by digest (tag kept for readability). Pinned 2026-09-09.
     image: prom/node-exporter:v1.12.1@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0
     container_name: node-exporter
+    logging: *logging
     restart: unless-stopped
     volumes:
       - /proc:/host/proc:ro
@@ -62,6 +73,7 @@ services:
     # Pinned by digest (tag kept for readability). Pinned 2026-09-09.
     image: prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0
     container_name: prometheus
+    logging: *logging
     restart: unless-stopped
     ports:
       - "9090:9090"

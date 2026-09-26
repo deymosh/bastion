@@ -1,10 +1,19 @@
 name: stack-network
 
+# Every service rotates its json-file log (3 x 10 MB): Docker's default is
+# unbounded, which on an always-on node eventually fills the disk.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   pihole:
     depends_on:
       - unbound
     container_name: pihole
+    logging: *logging
     # Pinned to an exact version + digest for reproducibility. To bump: pick a
     # newer tag, resolve its digest with `docker buildx imagetools inspect
     # pihole/pihole:<tag>`, update both. `./bastion versions` shows what is
@@ -32,6 +41,7 @@ services:
     # Pinned by digest (tag kept for readability). Pinned 2026-09-09.
     image: mvance/unbound:1.22.0@sha256:76906da36d1806f3387338f15dcf8b357c51ce6897fb6450d6ce010460927e90
     container_name: unbound
+    logging: *logging
     restart: unless-stopped
     volumes:
       - ./config/unbound.conf:/opt/unbound/etc/unbound/unbound.conf
@@ -43,6 +53,7 @@ services:
     # Pinned by digest (tag kept for readability). Pinned 2026-09-09.
     image: lscr.io/linuxserver/wireguard:1.0.20260223-r0-ls121@sha256:bf03578ef7318ccc7675b4a82beac4d35cd0da2253194f6b6ecf61656b40f0ee
     container_name: wireguard
+    logging: *logging
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
@@ -72,6 +83,7 @@ services:
       dockerfile: Dockerfile.tor
     image: tor-custom:latest
     container_name: tor
+    logging: *logging
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "timeout", "5", "bash", "-c", "cat < /dev/null > /dev/tcp/10.254.0.2/9050"]
