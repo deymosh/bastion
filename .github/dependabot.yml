@@ -22,6 +22,12 @@ updates:
     groups:
       compose-images:
         patterns: ["*"]
+    # The node itself is upgraded deliberately, never by a routine bot PR:
+    # read the release notes, back up (docs/disaster-recovery.md), then bump
+    # tag + digest by hand. Bitcoin Core majors can change pruning/index
+    # behaviour or need a reindex.
+    ignore:
+      - dependency-name: "lncm/bitcoind"
 
   # Base images of the images Bastion builds.
   - package-ecosystem: docker
@@ -32,6 +38,11 @@ updates:
       - /stack-ai/mcp-gateway
     schedule: { interval: monthly }
     commit-message: { prefix: "build(deps)" }
+    # Core Lightning migrates its wallet DB on first start - a one-way step -
+    # and must be checked against the plugins built from pinned commits in
+    # Dockerfile.lightningd. Upgrade it deliberately, not from a bot PR.
+    ignore:
+      - dependency-name: "elementsproject/lightningd"
 
   # The MCP gateway's pinned npm children (package-lock.json).
   - package-ecosystem: npm

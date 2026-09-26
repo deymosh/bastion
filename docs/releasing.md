@@ -45,6 +45,25 @@ The first release is pinned to `1.0.0` (`release-as` in
 `release-please-config.json`). Remove that line once `v1.0.0` exists, or the
 next release PR would propose `1.0.0` again.
 
+## Bumping Bitcoin Core and Core Lightning (maintainers)
+
+Dependabot proposes monthly updates for every other image. It deliberately
+skips these two, because upgrading them changes the node itself:
+
+- **Core Lightning** (`elementsproject/lightningd` in
+  `stack-bitcoin/Dockerfile.lightningd`, both stages). The first start on a
+  new version migrates the wallet DB **one-way**. Check that each plugin
+  commit pinned in the Dockerfile supports the new CLN version, and run the
+  weekly lane (`./tests/run.sh weekly`), which builds the image and boots the
+  real config.
+- **Bitcoin Core** (`lncm/bitcoind` in `stack-bitcoin/docker-compose.yml`).
+  Read the release notes for pruning, index or config changes. A major
+  version can require a reindex.
+
+In both cases, bump the tag and re-resolve its digest together, and mark the
+commit as breaking (`!`) if operators must do anything beyond the usual
+upgrade steps below.
+
 ## Upgrading a node (operators)
 
 Read the changelog entries between your version and the target first, and
