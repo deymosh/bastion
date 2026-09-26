@@ -6,17 +6,16 @@ with a single Bearer token; individual MCP servers are never published and
 cannot be reached from outside the `bastion-ai` network.
 
 ```
-AI agent (LAN / WireGuard)                      bastion-ai (10.50.0.0/24)
-─────────────────────────────                  ─────────────────────────────────────
-                 │  Streamable HTTP + Bearer
-                 ▼
-        http://bastion.node:8811/mcp    ┌──────────────────┐   stdio child   ┌─────────────────────┐
-        (host firewall = the ACL)       │   mcp-gateway    │◄───────────────►│ searxng-mcp  :8811  │
-                 │                      │  (FastMCP 4.x)   │                 │ context7            │
-                 │                      │  10.50.0.5       │◄────► SearXNG ──► searxng   10.50.0.4 │
-                 └─────────────────────►│                  │   stdio child   │ memory  (/data vol) │
-                                        └──────────────────┘                 │ time                │
-                                                                             └─────────────────────┘
+AI agent (LAN / WireGuard)            bastion-ai (10.50.0.0/24)
+──────────────────────────            ──────────────────────────────────────────────────
+        │ Streamable HTTP + Bearer    ┌─ mcp-gateway 10.50.0.5 (FastMCP 4.x) ─┐
+        ▼                             │                                       │
+  bastion.node:8811/mcp ─────────────►│  stdio children:                      │
+  (host firewall = the ACL)           │    mcp-searxng ───── HTTP ────────────┼──► searxng 10.50.0.4
+                                      │    context7-mcp ──── HTTPS ───────────┼──► context7.com
+                                      │    mcp-server-memory (/data volume)   │
+                                      │    mcp-server-time                    │
+                                      └───────────────────────────────────────┘
 ```
 
 ## Endpoint and authentication
@@ -61,6 +60,15 @@ Notes:
   some tools already prefixed (`searxng_web_search`) and others not
   (`web_url_read`); the gateway strips the redundant upstream prefix so the
   served names stay uniform.
+- The gateway also sends MCP server **instructions** on `initialize` (clients
+  such as Claude Code place them in the model's system prompt): a short map of
+  the namespaces, the two-step context7 and search-then-read flows, and the
+  rule that the memory graph is shared by every agent and never holds secrets.
+  They live in `INSTRUCTIONS` in `stack-ai/mcp-gateway/gateway.py`; keep them
+  in sync when a namespace is added.
+- Children are long-lived: each starts once (the first `tools/list` pays a
+  ~1 s cold start), later calls reuse it, and a child that dies is respawned
+  on the next call to its namespace.
 - An optional `CONTEXT7_API_KEY` in `bastion.conf` raises context7's rate
   limits; empty (the default) means keyless service at lower limits. It is
   delivered as a secret file like the token.
@@ -129,7 +137,7 @@ Dockerfile (and regenerating the lock/constraints files), then
 
 ```bash
 # Gateway alive?
-docker logs mcp-gateway            # startup errors (e.g. missing token) land here
+./bastion logs mcp-gateway         # startup errors (e.g. missing token) land here
 curl -s http://localhost:8811/healthz
 
 # Gateway logs "no bearer token"? file-secrets are bind mounts, so the HOST
@@ -138,11 +146,11 @@ curl -s http://localhost:8811/healthz
 # host file fixes it - e.g. after running ./bastion as a non-1000 user).
 
 # 401 from a client: is the token the container sees the one you are sending?
-docker exec mcp-gateway cat /run/secrets/mcp_gateway_token
+./bastion exec mcp-gateway -- cat /run/secrets/mcp_gateway_token
 
 # Search tools return errors: check the internal SearXNG instance
-docker logs searxng
-docker exec mcp-gateway python -c \
+./bastion logs searxng
+./bastion exec mcp-gateway -- python -c \
   "import urllib.request; print(urllib.request.urlopen('http://searxng:8080/search?q=test&format=json').status)"
 # (a 403 here means JSON output is disabled - the settings.yml mount is the
 # fix; note SearXNG matches SHORT format names, so the list needs `- json`,

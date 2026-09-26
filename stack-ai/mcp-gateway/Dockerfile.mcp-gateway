@@ -5,7 +5,7 @@
 # runtime (no npx/uvx on the hot path). Reproducibility: base images are
 # digest-pinned, the npm children install via `npm ci` from a committed
 # package-lock.json, and the Python layer installs under a pip constraints
-# snapshot (mcp-gateway-constraints.txt).
+# snapshot (constraints.txt).
 
 # Same Debian release (bookworm) for both stages, so the node binary copied
 # out of the node stage runs against the same glibc as the python stage.
