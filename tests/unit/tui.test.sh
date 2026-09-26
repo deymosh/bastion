@@ -43,6 +43,56 @@ assert_eq "${MENU_IDS[0]}" "pihole" "first is pihole (stack-network, compose ord
 assert_eq "${MENU_IDS[-1]}" "mcp-gateway" "last is mcp-gateway (stack-ai)"
 case "${MENU_LABELS[3]}" in *"running (healthy)"*) _t_ok "tor row shows its probed state" ;; *) _t_bad "tor row missing state: ${MENU_LABELS[3]}" ;; esac
 
+echo "== compose files are read once, not on every tick =="
+_awk_log=$(mktemp)
+eval "_real_csi() $(declare -f _compose_service_images | tail -n +2)"
+_compose_service_images() { echo x >> "$_awk_log"; _real_csi "$@"; }   # runs in a subshell: count via a file
+TUI_STACK_SERVICES=()
+for _i in 1 2 3; do TUI_VIEW=containers; MENU_IDS=(); MENU_LABELS=(); tui_build_menu; done
+assert_eq "$(wc -l < "$_awk_log" | tr -d " ")" "${#STACKS[@]}" "three rebuilds parse each compose file once"; rm -f "$_awk_log"
+
+echo "== status pane follows compose order =="
+TUI_STATUS_TMP=$(mktemp)
+printf 'mcp-gateway|running|Up\npihole|running|Up (healthy)\ntor|exited|Exited\n' > "$TUI_STATUS_TMP"
+TUI_DOCKER_OK=1; _tui_status_parse
+plain=$(printf '%s\n' "${TUI_STATUS_LINES[@]}" | sed $'s/\033\\[[0-9;]*m//g')
+assert_eq "$(printf '%s\n' "$plain" | grep -m1 -oE 'pihole|unbound|wireguard|tor')" "pihole" "stack-network rows start with pihole, as in the compose file"
+first_ai=$(printf '%s\n' "$plain" | sed -n '/stack-ai/,$p' | grep -m1 -oE '(ccr|codedeck-bridge|agent-docker|searxng|mcp-gateway) ')
+assert_eq "$first_ai" "ccr " "stack-ai rows start with ccr"
+assert_contains "$plain" "pihole          healthy" "a probed state is shown on its row"
+rm -f "$TUI_STATUS_TMP"; TUI_STATUS_TMP=""
+
+echo "== deploy picker: opt-in profiles =="
+COMPOSE_PROFILES=watchtower
+TUI_VIEW=main; MENU_IDS=(deploy); MENU_SEL=0; tui_dispatch
+assert_eq "$TUI_VIEW" "stacks" "Deploy opens the stack picker"
+tui_build_menu
+case " ${MENU_IDS[*]} " in *" profile:watchtower profile:agent-docker "*) _t_ok "picker lists both opt-in profiles" ;; *) _t_bad "profiles missing: ${MENU_IDS[*]}" ;; esac
+assert_eq "$(tui_picked_profiles)" "watchtower" "pre-set from the active profiles (ENABLED_PROFILES / flags)"
+tui_pick_toggle profile:agent-docker; tui_pick_toggle profile:watchtower
+assert_eq "$(tui_picked_profiles)" "agent-docker" "space toggles a profile"
+tui_pick_toggle stack-network
+assert_eq "${STACK_PICK[stack-network]}" 1 "the foundation stack still cannot be unticked when deploying"
+bastion_stack_action() { echo "action=$1 stacks=${*:2} profiles=$COMPOSE_PROFILES"; }
+assert_eq "$(tui_deploy agent-docker stack-ai)" "action=deploy stacks=stack-ai profiles=agent-docker" "deploy runs with exactly the ticked profiles"
+assert_eq "$COMPOSE_PROFILES" "watchtower" "and does not leak them into the TUI's later actions"
+STACK_ACTION=stop; tui_build_menu
+case " ${MENU_IDS[*]} " in *profile:*) _t_bad "stop picker shows profile rows" ;; *) _t_ok "stop/down pickers have no profile rows" ;; esac
+unset COMPOSE_PROFILES
+
+echo "== config view =="
+printf "CCR_TOKEN_REFRESH='1'\nNODE_ALIAS='n'\n" > "$CONFIG_FILE"
+TUI_VIEW=config; CONFIG_CACHE_DIRTY=1; MENU_SEL=0; tui_build_menu
+assert_contains "$MENU_TITLE" "${SETTING_DESC[${MENU_IDS[0]}]}" "the title describes the selected setting"
+for _i in "${!MENU_IDS[@]}"; do [ "${MENU_IDS[$_i]}" = CCR_TOKEN_REFRESH ] && MENU_SEL=$_i; done
+tui_build_menu
+assert_contains "$MENU_TITLE" "toggle" "a 0/1 setting advertises Enter-to-toggle"
+tui_do_config_edit CCR_TOKEN_REFRESH
+assert_eq "$(read_env_var CCR_TOKEN_REFRESH)" "0" "Enter flips a bool setting without a prompt"
+tui_do_config_edit CCR_TOKEN_REFRESH
+assert_eq "$(read_env_var CCR_TOKEN_REFRESH)" "1" "and back"
+assert_eq "$(read_env_var NODE_ALIAS)" "n" "other settings untouched"
+
 echo "== container_actions view =="
 CONTAINER_SEL=tor; TUI_VIEW=container_actions; MENU_IDS=(); MENU_LABELS=(); tui_build_menu
 assert_eq "${MENU_IDS[*]}" "restart stop start logs shell" "the five container actions"

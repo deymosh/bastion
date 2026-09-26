@@ -317,7 +317,7 @@ declare -A TUI_CSTATE=()    # container -> "running(healthy)" / "exited" / "abse
 # Turn the probe output file into TUI_STATUS_LINES. Pure bash - no subshell per
 # container (the old grep/printf-per-row was most of the redraw cost).
 _tui_status_parse() {
-    local n s status pad grp c
+    local n s status pad c
     local -A st=() ss=()
     if [ -s "$TUI_STATUS_TMP" ]; then
         while IFS='|' read -r n s status; do
@@ -346,11 +346,12 @@ _tui_status_parse() {
         return 0
     fi
 
-    for grp in network bitcoin monitor web ai; do
-        TUI_STATUS_LINES+=("" "${T_BOLD}${T_ACCENT}stack-${grp}${T_RESET}")
+    local stack
+    for stack in "${STACKS[@]}"; do
+        TUI_STATUS_LINES+=("" "${T_BOLD}${T_ACCENT}${stack}${T_RESET}")
         local found=0
-        for c in "${!STACK_OF_CONTAINER[@]}"; do
-            [ "${STACK_OF_CONTAINER[$c]}" = "$grp" ] || continue
+        _tui_stack_containers "$stack"      # compose order, so rows never reshuffle
+        for c in $REPLY; do
             found=1
             local cs="${st[$c]:-}" cstat="${ss[$c]:-}" mark col label
             case "$cs" in
@@ -527,13 +528,24 @@ tui_render_right() {
 MENU_IDS=(); MENU_LABELS=(); MENU_SEL=0; MENU_OFF=0; MENU_TITLE=""
 CONTAINER_SEL=""                       # container chosen in the Containers view
 declare -A STACK_PICK=()
+declare -A PROFILE_PICK=()             # opt-in profiles ticked in the deploy picker
+declare -A TUI_PROFILE_DESC=([watchtower]="teosd, your own watchtower" [agent-docker]="agent's Docker daemon, needs Sysbox")
 
-# Container names of a stack, in compose-file order (reuses ./bastion's helper).
+# Container names of a stack, in compose-file order, as a space-separated list
+# in REPLY. Read once per stack and cached: the compose files do not change
+# while the TUI runs, and the menu and status pane ask on every 0.4s tick -
+# re-running awk over every compose file each time was the Containers view's
+# main redraw cost.
+declare -A TUI_STACK_SERVICES=()
 _tui_stack_containers() {
-    local svc _rest
-    while IFS=$'\t' read -r svc _rest; do
-        [ -n "$svc" ] && printf '%s\n' "$svc"
-    done < <(_compose_service_images "./$1/docker-compose.yml")
+    if [ -z "${TUI_STACK_SERVICES[$1]+set}" ]; then
+        local svc _rest list=""
+        while IFS=$'\t' read -r svc _rest; do
+            [ -n "$svc" ] && list+="$svc "
+        done < <(_compose_service_images "./$1/docker-compose.yml")
+        TUI_STACK_SERVICES[$1]=$list
+    fi
+    REPLY=${TUI_STACK_SERVICES[$1]}
 }
 
 # Config rows are expensive to build (one file read per key), so cache them and
@@ -588,14 +600,31 @@ tui_build_menu() {
                 fi
                 MENU_LABELS+=("$box  $s$tag")
             done
+            # Opt-in services only matter when deploying; pre-set from
+            # ENABLED_PROFILES (+ any --with-* flag) and applied to this run.
+            if [ "$STACK_ACTION" = deploy ]; then
+                local p
+                for p in "${KNOWN_PROFILES[@]}"; do
+                    local pbox="[ ]"; [ "${PROFILE_PICK[$p]:-0}" = 1 ] && pbox="[x]"
+                    MENU_IDS+=("profile:$p")
+                    MENU_LABELS+=("$pbox  + $p   (${TUI_PROFILE_DESC[$p]:-optional service})")
+                done
+            fi
             MENU_IDS+=("__run"); MENU_LABELS+=("→ Run ${STACK_ACTION} on selected")
             ;;
         config)
             TUI_STACK_BC="Configuration"
-            MENU_TITLE="[enter] edit a value"
             tui_build_config_cache            # cheap after the first call
             MENU_IDS=("${CONFIG_IDS[@]}")
             MENU_LABELS=("${CONFIG_LABELS[@]}")
+            # The title line describes whichever setting is selected.
+            local ck="${CONFIG_IDS[$MENU_SEL]:-}"
+            if [ -n "$ck" ]; then
+                MENU_TITLE="${SETTING_SECTION[$ck]}: ${SETTING_DESC[$ck]}"
+                [ "${SETTING_TYPE[$ck]}" = bool ] && MENU_TITLE="[enter] toggle - $MENU_TITLE"
+            else
+                MENU_TITLE="[enter] edit a value"
+            fi
             ;;
         logs)
             TUI_STACK_BC="Logs"
@@ -610,7 +639,8 @@ tui_build_menu() {
             local st cpad
             for s in "${STACKS[@]}"; do
                 local c
-                for c in $(_tui_stack_containers "$s"); do
+                _tui_stack_containers "$s"
+                for c in $REPLY; do
                     MENU_IDS+=("$c")
                     st="${TUI_CSTATE[$c]:-?}"
                     printf -v cpad '%-16s' "$c"
@@ -677,6 +707,33 @@ tui_stack_toggle_ok() {
     return 0
 }
 
+# Space/Enter on a picker row: flip a stack or an opt-in profile.
+tui_pick_toggle() {
+    local id="$1"
+    case "$id" in
+        __run) return 0 ;;
+        profile:*) id=${id#profile:}; PROFILE_PICK[$id]=$(( 1 - ${PROFILE_PICK[$id]:-0} )) ;;
+        *) tui_stack_toggle_ok "$id" && STACK_PICK[$id]=$(( 1 - ${STACK_PICK[$id]:-0} )) ;;
+    esac
+    TUI_NEED_MENU=1
+}
+
+# The deploy picker's ticked profiles as a comma list (for COMPOSE_PROFILES).
+tui_picked_profiles() {
+    local p out=""
+    for p in "${KNOWN_PROFILES[@]}"; do
+        [ "${PROFILE_PICK[$p]:-0}" = 1 ] && out+="${out:+,}$p"
+    done
+    printf '%s' "$out"
+}
+
+# Deploy with exactly the ticked profiles. A subshell, so the choice applies to
+# this run only and never leaks into later stop/down actions from the TUI.
+tui_deploy() {
+    local profiles="$1"; shift
+    ( export COMPOSE_PROFILES="$profiles"; bastion_stack_action deploy "$@" )
+}
+
 # Echo the running stacks that would be orphaned if `picked` (which is assumed to
 # include stack-network) were stopped/removed - i.e. running stacks not in the
 # selection. Empty output means the teardown is safe.
@@ -694,14 +751,19 @@ tui_do_config_edit() {
     local key="$1"
     local cur; cur=$(read_env_var "$key")
     local newval prompt_default start_buf
-    if config_var_is_secret "$key"; then
-        prompt_default=""           # empty entry -> keep current secret
-        start_buf=""
+    if [ "${SETTING_TYPE[$key]}" = bool ]; then
+        # A 0/1 setting needs no typing: Enter flips it (empty counts as off).
+        [ "$cur" = 1 ] && newval=0 || newval=1
     else
-        prompt_default="$cur"
-        start_buf="$cur"
+        if config_var_is_secret "$key"; then
+            prompt_default=""           # empty entry -> keep current secret
+            start_buf=""
+        else
+            prompt_default="$cur"
+            start_buf="$cur"
+        fi
+        newval=$(tui_prompt "Set $key - ${SETTING_DESC[$key]}" "$prompt_default" "$start_buf")
     fi
-    newval=$(tui_prompt "Set $key" "$prompt_default" "$start_buf")
 
     if config_var_is_secret "$key" && [ -z "$newval" ]; then
         TUI_NEED_MENU=1; return 0     # unchanged
@@ -715,7 +777,9 @@ tui_do_config_edit() {
     fi
     if err=$(config_set "$key" "$newval"); then
         CONFIG_CACHE_DIRTY=1
-        tui_message "Saved" "$key updated. bastion.conf and the derived files are refreshed (previous file kept as bastion.conf.bak)."
+        # A toggle shows its new value in the row itself; no dialog needed.
+        [ "${SETTING_TYPE[$key]}" = bool ] || \
+            tui_message "Saved" "$key updated. bastion.conf and the derived files are refreshed (previous file kept as bastion.conf.bak)."
     else
         tui_message "Save failed" "Could not write bastion.conf: $err"
     fi
@@ -729,7 +793,10 @@ tui_dispatch() {
             case "$id" in
                 deploy|stop|down|build)
                     STACK_ACTION="$id"
-                    local s; for s in "${STACKS[@]}"; do STACK_PICK[$s]=1; done
+                    local s p; for s in "${STACKS[@]}"; do STACK_PICK[$s]=1; done
+                    for p in "${KNOWN_PROFILES[@]}"; do
+                        case ",${COMPOSE_PROFILES:-}," in *",$p,"*) PROFILE_PICK[$p]=1 ;; *) PROFILE_PICK[$p]=0 ;; esac
+                    done
                     _tui_goto stacks ;;
                 containers) _tui_goto containers ;;
                 logs)   _tui_goto logs ;;
@@ -740,7 +807,8 @@ tui_dispatch() {
                 versions)
                     tui_message "Image versions" "$(do_versions 2>&1)" ;;
                 audit)
-                    tui_suspend bash -c 'python3 ./stack-bitcoin/scripts/node-audit.py 2>&1 | less -R || python3 ./stack-bitcoin/scripts/node-audit.py' ;;
+                    # shellcheck disable=SC2016  # $1 expands in the child bash
+                    tui_suspend bash -c 'python3 "$1" 2>&1 | less -R || python3 "$1"' _ "$AUDIT_SCRIPT" ;;
                 quit) return 1 ;;
             esac ;;
         stacks)
@@ -761,12 +829,21 @@ Bring those down first, or clear ${NETWORK_STACK} from the selection. (The CLI h
                             return 0
                         fi
                     fi
-                    if tui_confirm "${STACK_ACTION} ${#picked[@]} stack(s): ${picked[*]} ?" y; then
-                        tui_suspend bastion_stack_action "$STACK_ACTION" "${picked[@]}"
-                        tui_message "Done" "'${STACK_ACTION}' finished for: ${picked[*]}"
+                    local extra="" profiles=""
+                    if [ "$STACK_ACTION" = deploy ]; then
+                        profiles=$(tui_picked_profiles)
+                        [ -n "$profiles" ] && extra=" + ${profiles//,/, }"
+                    fi
+                    if tui_confirm "${STACK_ACTION} ${#picked[@]} stack(s): ${picked[*]}${extra} ?" y; then
+                        if [ "$STACK_ACTION" = deploy ]; then
+                            tui_suspend tui_deploy "$profiles" "${picked[@]}"
+                        else
+                            tui_suspend bastion_stack_action "$STACK_ACTION" "${picked[@]}"
+                        fi
+                        tui_message "Done" "'${STACK_ACTION}' finished for: ${picked[*]}${extra}"
                     fi
                     TUI_STATUS_AT=0 ;;
-                *) tui_stack_toggle_ok "$id" && { STACK_PICK[$id]=$(( 1 - ${STACK_PICK[$id]:-0} )); TUI_NEED_MENU=1; } ;;
+                *) tui_pick_toggle "$id" ;;
             esac ;;
         config)
             tui_do_config_edit "$id" ;;
@@ -842,7 +919,7 @@ tui_main() {
             end)  MENU_SEL=$(( ${#MENU_IDS[@]} - 1 )); TUI_NEED_MENU=1 ;;
             enter) tui_dispatch || break ;;
             space)
-                [ "$TUI_VIEW" = stacks ] && { local id="${MENU_IDS[$MENU_SEL]}"; [ "$id" != "__run" ] && tui_stack_toggle_ok "$id" && STACK_PICK[$id]=$(( 1 - ${STACK_PICK[$id]:-0} )); TUI_NEED_MENU=1; } ;;
+                [ "$TUI_VIEW" = stacks ] && tui_pick_toggle "${MENU_IDS[$MENU_SEL]}" ;;
             char:a)
                 [ "$TUI_VIEW" = stacks ] && { local s; for s in "${STACKS[@]}"; do STACK_PICK[$s]=1; done; TUI_NEED_MENU=1; } ;;
             char:s|tab) tui_toggle_focus ;;
