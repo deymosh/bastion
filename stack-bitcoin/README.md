@@ -38,7 +38,7 @@ and trustedcoin is a prebuilt binary verified by its release checksum.
 | Plugin | Role |
 |---|---|
 | `trustedcoin` | **Chain backend** (`important-plugin`) in place of the disabled built-in `bcli`. It uses `bitcoind` through the `bitcoin-rpc*` lines when that node is reachable and has the block, and otherwise falls back to public block explorers over Tor. |
-| `watchtower-client` | Breach protection for *this* node against an external tower (`important-plugin`) |
+| `watchtower-client` | Breach protection for *this* node against an external tower (`important-plugin`). Keys, registered towers and appointments persist in `data/cln/watchtower/` (`TOWERS_DATA_DIR` in the compose file) |
 | `clboss` | Channel autopilot (v0.17.x, requires CLN ≥ v25.09). **It opens channels and moves funds.** Tuned via `command:` in the compose file (min channel 1M sat, no auto-close). Since v0.17 rebalancing runs through `xrebalance` |
 | `xrebalance` | clboss's rebalancing executor, a separate plugin since clboss v0.17 (without it clboss runs but never rebalances) |
 | `peerswap` | Submarine-swap rebalancing, **Bitcoin swaps only** (`config/peerswap.conf`, mounted read-only; state in `data/cln/peerswap/`). Protocol v7: swaps only work between peers running the same protocol version |

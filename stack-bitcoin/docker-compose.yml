@@ -42,6 +42,12 @@ services:
       - ./config/peerswap.conf:/root/.lightning/bitcoin/peerswap/peerswap.conf:ro
       - ./data/cln:/root/.lightning/bitcoin
       - tor-data:/data/.tor:ro
+    environment:
+      # watchtower-client keeps its keys, registered towers and pending
+      # appointments in ~/.watchtower by default - the container's writable
+      # layer, wiped on every recreate (each image upgrade), which silently
+      # dropped breach protection. Keep them in the persisted node data dir.
+      TOWERS_DATA_DIR: /root/.lightning/bitcoin/watchtower
     ports:
       - "3001:3001"
     # RPC answers - the same call ./bastion and the daemon rely on.
