@@ -41,9 +41,10 @@ Actions to create and approve pull requests*. PRs opened with the default
 `GITHUB_TOKEN` do not trigger CI. The changes inside them were already tested
 when they merged; run CI from the Actions tab if you want a fresh run.
 
-The first release is pinned to `1.0.0` (`release-as` in
-`release-please-config.json`). Remove that line once `v1.0.0` exists, or the
-next release PR would propose `1.0.0` again.
+The first release, `v1.0.0`, was forced with `release-as` in
+`release-please-config.json`; the line was removed afterwards. Adding it back
+pins every later release PR to that exact version, so only use it for a
+one-off forced version and remove it once that release exists.
 
 ## Bumping Bitcoin Core and Core Lightning (maintainers)
 
