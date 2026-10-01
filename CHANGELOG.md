@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.1.0](https://github.com/deymosh/bastion/compare/v1.0.0...v1.1.0) (2026-10-01)
+
+
+### Features
+
+* **ccr:** strip tool-schema regexes some providers reject ([1ffa84b](https://github.com/deymosh/bastion/commit/1ffa84b4e729f9c54d64f1d61a1d714898ffefa4))
+
+
+### Bug Fixes
+
+* **bitcoin:** bump clboss to v0.17.1-rc2 ([5bfad62](https://github.com/deymosh/bastion/commit/5bfad62050f43ac393a86dd47c25a364eaa7f553))
+* **ccr:** find CCR's config under CCR_DATA_DIR in the startup step ([fd94d04](https://github.com/deymosh/bastion/commit/fd94d043cf855b4301ddea695c6ff4f0612876a4))
+* **ccr:** sanitize tool schemas for tag-routed subagents ([b0a2790](https://github.com/deymosh/bastion/commit/b0a27907f1aa3b8a29b3803fe84144bace5ea111))
+* **ccr:** sanitize tool schemas in a gateway request transform ([dcfd59b](https://github.com/deymosh/bastion/commit/dcfd59b5d22f637a9d0c863e9a6273b73940a2f5))
+* **ccr:** strip lookaround patterns and 2020-12 keywords from tool schemas ([687e967](https://github.com/deymosh/bastion/commit/687e967268a6ce8e79223d7a6c386cec0883c60d))
+
 ## 1.0.0 (2026-09-26)
 
 
