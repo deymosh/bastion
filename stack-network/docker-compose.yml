@@ -82,7 +82,7 @@ services:
     # Debian repo, CI-built for amd64/arm64. Contract: toruser 1000:1000, home
     # /data, /data/.tor 0750 (group-readable cookie for CLN/TEOS). Bump tag
     # and digest together (Dependabot proposes it).
-    image: ghcr.io/deymosh/tor:0.4.9.13@sha256:5b1b124e80ecf721e7308f3fdb06fec6d7332aaa81866f2cb465cc68d911ccd1
+    image: ghcr.io/deymosh/tor:0.4.9.13@sha256:5feae6cabf1c873bd3ff651520be267b2a05214db14cc4cbc67140c835c4b14c
     container_name: tor
     logging: *logging
     restart: unless-stopped
