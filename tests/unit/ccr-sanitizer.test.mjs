@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -225,6 +225,25 @@ test("the startup step leaves an operator's own router alone", { skip: !Database
     assert.match(out, /leaving it/);
     assert.equal(config.CUSTOM_ROUTER_PATH, "/data/my-router.js");
   });
+});
+
+test("the startup step finds the config under CCR_DATA_DIR, whatever HOME is", { skip: !DatabaseSync }, () => {
+  const dataDir = mkdtempSync(join(tmpdir(), "ccr-data-"));
+  try {
+    const configDir = join(dataDir, ".claude-code-router");
+    mkdirSync(configDir);
+    const db = new DatabaseSync(join(configDir, "config.sqlite"));
+    db.exec("CREATE TABLE app_config (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at TEXT NOT NULL)");
+    db.prepare("INSERT INTO app_config VALUES ('default', '{}', 'then')").run();
+    db.close();
+    const env = { ...process.env, CCR_DATA_DIR: dataDir, HOME: join(tmpdir(), "not-the-data-dir") };
+    delete env.CCR_CONFIG_DB;
+    const out = execFileSync(process.execPath, [join(CCR, "ccr-enable-sanitizer.mjs")], { env, encoding: "utf8" });
+    assert.match(out, /enabled: CUSTOM_ROUTER_PATH/);
+    assert.match(out, /enabled request-transform plugin/);
+  } finally {
+    rmSync(dataDir, { recursive: true, force: true });
+  }
 });
 
 test("the startup step waits for CCR's first start, and never fails", () => {

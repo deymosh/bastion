@@ -30,7 +30,12 @@ const TAG = "[ccr-enable-sanitizer]";
 const SANITIZER = process.env.CCR_SANITIZER_PATH ?? "/usr/local/lib/ccr/ccr-tool-schema-sanitizer.cjs";
 const PLUGIN = process.env.CCR_SANITIZER_PLUGIN_PATH ?? "/usr/local/lib/ccr/ccr-tool-schema-plugin.cjs";
 const PLUGIN_ID = "bastion-tool-schema-sanitizer";
-const DB_FILE = process.env.CCR_CONFIG_DB ?? join(process.env.HOME ?? "/data", ".claude-code-router", "config.sqlite");
+// Resolved like CCR's own entrypoint does (HOME=$CCR_DATA_DIR, default /data),
+// not from this process's HOME: the wrapper runs this step through gosu, which
+// resets HOME to the run user's passwd home, so HOME pointed at a directory
+// with no CCR configuration and the step never enabled anything.
+const DB_FILE = process.env.CCR_CONFIG_DB
+  ?? join(process.env.CCR_DATA_DIR || "/data", ".claude-code-router", "config.sqlite");
 
 function main() {
   if (!existsSync(DB_FILE)) {
