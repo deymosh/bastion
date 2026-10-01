@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,13 +37,38 @@ function request(model, tools, extra = {}) {
   return { body: { model, tools }, log: { info() {} }, ...extra };
 }
 
-test("a digit escape is unportable; ordinary syntax is not", () => {
-  for (const p of ["^[^\\0]*$", "^(a)\\1$", "\\0"]) {
+test("backtracking-only syntax is unportable; ordinary syntax is not", () => {
+  const unportable = [
+    "^[^\\0]*$", "^(a)\\1$", "\\0",
+    "^(?!\\.)[a-z]+$", "^(?=a)a$", "(?<=a)b", "(?<!a)b", "(?>a+)b", "(?<n>a)\\k<n>",
+    // ArtifactData's collection id, verbatim.
+    "^(?!\\.\\.?(?:\\/|$))[A-Za-z0-9_\\-.~:@+]{1,200}$",
+  ];
+  for (const p of unportable) {
     assert.ok(sanitizer.isUnportablePattern(p), p);
   }
-  for (const p of ["^[0-9a-f]{32}$", "^[^\\n\\r]*$", "^[\\s\\S]{0,300}$", "^\\d+$", "^(?!\\.)[a-z]+$", "^a\\\\0$"]) {
+  const portable = [
+    "^[0-9a-f]{32}$", "^[^\\n\\r]*$", "^[\\s\\S]{0,300}$", "^\\d+$", "^a\\\\0$",
+    "^(?:a|b)$", "^(?<n>a)$", "^a\\(?!b$", "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$",
+  ];
+  for (const p of portable) {
     assert.ok(!sanitizer.isUnportablePattern(p), p);
   }
+});
+
+test("prefixItems and propertyNames go; properties with those names stay", () => {
+  const schema = {
+    type: "object",
+    properties: {
+      where: { type: "array", items: { type: "array", prefixItems: [{ type: "string" }, { enum: ["eq"] }, {}] } },
+      files: { type: "object", propertyNames: { maxLength: 512 }, additionalProperties: { type: "string" } },
+      prefixItems: { type: "string", description: "a field called prefixItems" },
+    },
+  };
+  assert.equal(sanitizer.sanitizeSchema(schema), 2);
+  assert.deepEqual(schema.properties.where.items, { type: "array" });
+  assert.deepEqual(schema.properties.files, { type: "object", additionalProperties: { type: "string" } });
+  assert.deepEqual(schema.properties.prefixItems, { type: "string", description: "a field called prefixItems" });
 });
 
 test("only the unportable pattern goes; the tool and the rest of its schema stay", async () => {
@@ -99,6 +124,24 @@ test("CCR_DROP_TOOLS drops tools by target model, hex-encoded client ids include
   assert.equal(untouched.body.tools.length, 4, "off when unset");
 });
 
+test("the plugin registers a request transform that cleans the routed body", async () => {
+  const plugin = require(join(CCR, "ccr-tool-schema-plugin.cjs"));
+  const registered = [];
+  await plugin.setup({ registerGatewayRequestTransform: (t) => registered.push(t), logger: { info() {} } });
+  assert.equal(registered.length, 1);
+  assert.equal(registered[0].id, "tool-schema-sanitizer");
+
+  const body = { model: "deepseek-v4.1-flash", tools: [artifactTool()] };
+  const result = await registered[0].transform({ body, routedModel: "deepseek-v4.1-flash" }, { logger: { info() {} } });
+  assert.equal(result.body.tools[0].input_schema.properties.file_paths.items.pattern, undefined);
+  assert.equal(result.body.tools[0].input_schema.properties.asset_ids.items.pattern, "^[0-9a-f]{32}$");
+
+  const clean = { tools: [{ name: "Read", input_schema: { type: "object" } }] };
+  assert.equal(plugin.transform({ body: clean }, {}), null, "unchanged bodies are not replaced");
+  assert.equal(plugin.transform({ body: { model: "x" } }, {}), null);
+  assert.equal(plugin.transform({}, {}), null);
+});
+
 test("a request without tools, or a malformed one, is left alone", async () => {
   assert.equal(await sanitizer({ body: { model: "x" } }), undefined);
   assert.equal(await sanitizer({ body: { tools: [null, 3, { name: "x" }] } }), undefined);
@@ -114,6 +157,7 @@ try {
   DatabaseSync = undefined;
 }
 const SANITIZER_PATH = "/usr/local/lib/ccr/ccr-tool-schema-sanitizer.cjs";
+const PLUGIN_PATH = "/usr/local/lib/ccr/ccr-tool-schema-plugin.cjs";
 
 function withDb(row, run) {
   const dir = mkdtempSync(join(tmpdir(), "ccr-enable-"));
@@ -148,11 +192,58 @@ test("the startup step sets the path and keeps everything else", { skip: !Databa
   withDb({ CUSTOM_ROUTER_PATH: SANITIZER_PATH }, (out) => assert.match(out, /already enabled/));
 });
 
+test("the startup step registers the request-transform plugin once", { skip: !DatabaseSync }, () => {
+  const other = { id: "someone-else", enabled: true, module: "/data/x.cjs" };
+  withDb({ CUSTOM_ROUTER_PATH: SANITIZER_PATH, plugins: [other] }, (out, config) => {
+    assert.match(out, /enabled request-transform plugin/);
+    assert.deepEqual(config.plugins[0], other);
+    assert.deepEqual(config.plugins[1], {
+      id: "bastion-tool-schema-sanitizer",
+      enabled: true,
+      module: PLUGIN_PATH,
+      surfaces: { apps: false, gateway: true, provider: false },
+      permissions: ["trusted-code", "gateway-request-transforms"],
+    });
+  });
+  const ours = { id: "bastion-tool-schema-sanitizer", enabled: true, module: PLUGIN_PATH };
+  withDb({ CUSTOM_ROUTER_PATH: SANITIZER_PATH, plugins: [ours] }, (out, config) => {
+    assert.match(out, /request-transform plugin already enabled/);
+    assert.deepEqual(config.plugins, [ours]);
+  });
+});
+
+test("the startup step leaves an operator's disabled or moved plugin alone", { skip: !DatabaseSync }, () => {
+  const disabled = { id: "bastion-tool-schema-sanitizer", enabled: false, module: PLUGIN_PATH };
+  withDb({ CUSTOM_ROUTER_PATH: SANITIZER_PATH, plugins: [disabled] }, (out, config) => {
+    assert.match(out, /changed by the operator/);
+    assert.deepEqual(config.plugins, [disabled]);
+  });
+});
+
 test("the startup step leaves an operator's own router alone", { skip: !DatabaseSync }, () => {
   withDb({ CUSTOM_ROUTER_PATH: "/data/my-router.js" }, (out, config) => {
     assert.match(out, /leaving it/);
     assert.equal(config.CUSTOM_ROUTER_PATH, "/data/my-router.js");
   });
+});
+
+test("the startup step finds the config under CCR_DATA_DIR, whatever HOME is", { skip: !DatabaseSync }, () => {
+  const dataDir = mkdtempSync(join(tmpdir(), "ccr-data-"));
+  try {
+    const configDir = join(dataDir, ".claude-code-router");
+    mkdirSync(configDir);
+    const db = new DatabaseSync(join(configDir, "config.sqlite"));
+    db.exec("CREATE TABLE app_config (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at TEXT NOT NULL)");
+    db.prepare("INSERT INTO app_config VALUES ('default', '{}', 'then')").run();
+    db.close();
+    const env = { ...process.env, CCR_DATA_DIR: dataDir, HOME: join(tmpdir(), "not-the-data-dir") };
+    delete env.CCR_CONFIG_DB;
+    const out = execFileSync(process.execPath, [join(CCR, "ccr-enable-sanitizer.mjs")], { env, encoding: "utf8" });
+    assert.match(out, /enabled: CUSTOM_ROUTER_PATH/);
+    assert.match(out, /enabled request-transform plugin/);
+  } finally {
+    rmSync(dataDir, { recursive: true, force: true });
+  }
 });
 
 test("the startup step waits for CCR's first start, and never fails", () => {
