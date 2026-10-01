@@ -46,6 +46,7 @@ CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY|Claude Code Router|1|bool||1 lets Cla
 CCR_TOKEN_REFRESH|Claude Code Router|1|bool||1 keeps the CCR OAuth credentials refreshed in-container.
 CCR_REFRESH_INTERVAL|Claude Code Router|300|posint||Seconds between refresher checks.
 CCR_REFRESH_SKEW_MS|Claude Code Router|1800000|posint||Refresh the access token this many milliseconds before it expires.
+CCR_DROP_TOOLS|Claude Code Router||text||Tools to drop for some models, e.g. deepseek=Artifact,ArtifactData;gemini=Monitor (empty = none). See stack-ai/README.md.
 MCP_GATEWAY_TOKEN|MCP gateway|@token|text|secret|Bearer token remote MCP clients send to the gateway (:8811).
 CONTEXT7_API_KEY|MCP gateway||text|secret|Optional Context7 API key for higher rate limits (empty = keyless).
 ENABLED_PROFILES|Optional services||profiles||Opt-in services every `up` starts, comma-separated: watchtower, agent-docker. The --with-* flags add to it for one run.

@@ -52,6 +52,8 @@ services:
       CCR_TOKEN_REFRESH: ${CCR_TOKEN_REFRESH:-1}
       CCR_REFRESH_INTERVAL: ${CCR_REFRESH_INTERVAL:-300}
       CCR_REFRESH_SKEW_MS: ${CCR_REFRESH_SKEW_MS:-1800000}
+      # Tools the bundled schema sanitizer drops per target model (empty = none).
+      CCR_DROP_TOOLS: ${CCR_DROP_TOOLS:-}
     volumes:
       - ./data/ccr:/data
     secrets:

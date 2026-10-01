@@ -2,7 +2,8 @@
 ###############################################################################
 # stack-ai/ccr/ccr-entrypoint-wrapper.sh must ALWAYS hand off to the upstream
 # entrypoint (CCR runs with an OAuth login, a plain API key, or nothing);
-# CCR_TOKEN_REFRESH only gates the background refresher.
+# CCR_TOKEN_REFRESH only gates the background refresher; the tool-schema
+# sanitizer step runs either way and never blocks the start.
 ###############################################################################
 set -u
 cd "$(dirname "$0")/../.." || exit 1
@@ -13,7 +14,8 @@ BIN=$(mktemp -d); trap 'rm -rf "$BIN"' EXIT
 printf '#!/bin/sh\necho "CCR-STARTED args=[$*]"\n'          > "$BIN/ccr-entrypoint"; chmod +x "$BIN/ccr-entrypoint"
 # The stub exits at once - a long-lived background child would hold the
 # command-substitution pipe open and hang the assertions.
-printf '#!/bin/sh\necho "refresher-ran"\n'                 > "$BIN/node";           chmod +x "$BIN/node"
+# It names the script it was given, so each helper is told apart.
+printf '#!/bin/sh\necho "node-ran $(basename "$1")"\n'    > "$BIN/node";           chmod +x "$BIN/node"
 export PATH="$BIN:$PATH"
 cp stack-ai/ccr/ccr-token-refresher.mjs "$BIN/ccr-token-refresher.mjs" 2>/dev/null || true
 
@@ -21,12 +23,21 @@ echo "== default: refresher on, no credentials file =="
 out=$(timeout 5 sh "$WRAP" --some-flag 2>&1)
 assert_contains "$out" "CCR-STARTED args=[--some-flag]" "CCR starts and args pass through with no token"
 assert_contains "$out" "starting OAuth token refresher"  "the refresher is started"
+assert_contains "$out" "node-ran ccr-enable-sanitizer.mjs" "the sanitizer step runs before CCR starts"
 
 echo "== CCR_TOKEN_REFRESH=0 =="
 out=$(timeout 5 env CCR_TOKEN_REFRESH=0 sh "$WRAP" 2>&1)
 assert_contains "$out" "CCR-STARTED"                 "CCR still starts with the refresher disabled"
 assert_contains "$out" "refresher disabled"          "the wrapper reports the refresher is off"
-case "$out" in *"refresher-ran"*) _t_bad "refresher must NOT run when disabled" ;; *) _t_ok "refresher did not run" ;; esac
+case "$out" in *"node-ran ccr-token-refresher.mjs"*) _t_bad "refresher must NOT run when disabled" ;; *) _t_ok "refresher did not run" ;; esac
+assert_contains "$out" "node-ran ccr-enable-sanitizer.mjs" "the sanitizer step does not depend on the refresher"
+
+echo "== a failing sanitizer step never blocks CCR =="
+printf '#!/bin/sh\necho "node-failed $(basename "$1")"; exit 1\n' > "$BIN/node"; chmod +x "$BIN/node"
+out=$(timeout 5 env CCR_TOKEN_REFRESH=0 sh "$WRAP" 2>&1)
+assert_contains "$out" "node-failed ccr-enable-sanitizer.mjs" "the sanitizer step ran and failed"
+assert_contains "$out" "CCR-STARTED"                          "CCR still starts"
+printf '#!/bin/sh\necho "node-ran $(basename "$1")"\n' > "$BIN/node"; chmod +x "$BIN/node"
 
 echo "== CCR_WEB_AUTH_TOKEN comes from the mounted secret =="
 # ccr-entrypoint prints its env so we can inspect what the wrapper exported.

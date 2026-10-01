@@ -137,6 +137,7 @@ The tables below are generated from the registry.
 | `CCR_TOKEN_REFRESH` | `1` | bool | 1 keeps the CCR OAuth credentials refreshed in-container. |
 | `CCR_REFRESH_INTERVAL` | `300` | posint | Seconds between refresher checks. |
 | `CCR_REFRESH_SKEW_MS` | `1800000` | posint | Refresh the access token this many milliseconds before it expires. |
+| `CCR_DROP_TOOLS` | - | text | Tools to drop for some models, e.g. deepseek=Artifact,ArtifactData;gemini=Monitor (empty = none). See stack-ai/README.md. |
 
 ### MCP gateway
 

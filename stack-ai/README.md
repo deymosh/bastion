@@ -56,6 +56,35 @@ The refresher's settings are `CCR_TOKEN_REFRESH`, `CCR_REFRESH_INTERVAL` and
 `CCR_REFRESH_SKEW_MS`. To debug it:
 `./bastion logs ccr | grep ccr-token-refresher`.
 
+### Tool schemas other providers reject
+
+Claude Code describes its tools with JSON Schema, and some providers compile
+those schemas and refuse the whole request when one uses regex syntax their
+engine lacks. DeepSeek, for one, answers every Claude Code request with HTTP
+400 because the `Artifact` tool's `file_paths` items carry the pattern
+`^[^\0]*$`: `\0` (NUL) is valid JavaScript and PCRE, but not portable.
+
+The image bundles a CCR custom router, `ccr/ccr-tool-schema-sanitizer.cjs`,
+that removes such patterns (any digit escape: `\0`, `\1`...) from every
+request's tools and keeps the tools themselves. A pattern only steers the
+model; Claude Code still validates every tool call against its own schema.
+The router never picks a model, so CCR's routing decides as before. CCR calls
+a custom router for every request, before its routing policies, so it also
+covers subagents routed by a model tag. A routing-rule script would not: the
+tag routes those requests before any rule runs.
+
+At start, the wrapper sets CCR's `CUSTOM_ROUTER_PATH` to the sanitizer
+(`ccr/ccr-enable-sanitizer.mjs`). CCR keeps that setting through edits in its
+UI. A fresh install gets it on its second start, since CCR writes its config
+on the first. If `CUSTOM_ROUTER_PATH` already names another router, the
+wrapper leaves it and logs so. To check: `./bastion logs ccr | grep sanitizer`.
+
+As a last resort, a tool a provider cannot take at all can be dropped for it.
+With `CCR_DROP_TOOLS` set to `deepseek=Artifact,ArtifactData;gemini=Monitor`,
+the listed tools are dropped whenever the target model's name contains the
+text before `=` (`./bastion config set CCR_DROP_TOOLS '...'`, then restart
+`ccr`).
+
 ## CodeDeck+ bridge
 
 The bridge is the published image `ghcr.io/deymosh/codedeck-plus-bridge`,

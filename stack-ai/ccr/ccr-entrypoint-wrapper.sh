@@ -5,12 +5,16 @@
 #   1. aligns ownership of the writable paths + the data volume to uid/gid 1000,
 #   2. reads the mounted CCR_WEB_AUTH_TOKEN secret,
 #   3. optionally starts the OAuth token refresher (as uid 1000),
-#   4. drops to the unprivileged "node" user (gosu) and exec's the real
-#      entrypoint. CCR always starts - the refresher is a helper, never a gate.
+#   4. points CCR's custom router at the bundled tool-schema sanitizer (as
+#      uid 1000; see ccr-enable-sanitizer.mjs),
+#   5. drops to the unprivileged "node" user (gosu) and exec's the real
+#      entrypoint. CCR always starts - the refresher and the sanitizer step
+#      are helpers, never a gate.
 # Set CCR_TOKEN_REFRESH=0 to skip the refresher.
 set -eu
 
 REFRESHER="$(dirname "$0")/ccr-token-refresher.mjs"
+ENABLE_SANITIZER="$(dirname "$0")/ccr-enable-sanitizer.mjs"
 # Run as the host user (Bastion's USER_ID/GROUP_ID, passed as PUID/PGID by the
 # compose file) so the ./data/ccr bind mount ownership lines up. Falls back to
 # the image's uid/gid 1000 "node" user.
@@ -54,5 +58,14 @@ else
     echo "[ccr-entrypoint-wrapper] OAuth token refresher disabled (CCR_TOKEN_REFRESH=${CCR_TOKEN_REFRESH:-1})"
 fi
 
-# 4. hand off to the upstream entrypoint, unprivileged
+# 4. tool-schema sanitizer (as the run user, so the config DB keeps its owner)
+if [ -f "$ENABLE_SANITIZER" ]; then
+    if [ "$(id -u)" = "0" ] && command -v gosu >/dev/null 2>&1; then
+        gosu "${RUN_UID}:${RUN_GID}" node "$ENABLE_SANITIZER" || true
+    else
+        node "$ENABLE_SANITIZER" || true
+    fi
+fi
+
+# 5. hand off to the upstream entrypoint, unprivileged
 as_run_user ccr-entrypoint "$@"

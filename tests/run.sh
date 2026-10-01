@@ -79,6 +79,7 @@ run_unit() {
   pstep "sysbox installer checks" bash tests/unit/install-sysbox.test.sh
   pstep "daemon SCB backup"       bash tests/unit/bastion-daemon.test.sh
   pstep "ccr token refresher"     node_test tests/unit/ccr-refresher.test.mjs
+  pstep "ccr schema sanitizer"    node_test tests/unit/ccr-sanitizer.test.mjs
 }
 
 run_integration() {
