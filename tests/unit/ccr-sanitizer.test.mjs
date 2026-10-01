@@ -37,13 +37,38 @@ function request(model, tools, extra = {}) {
   return { body: { model, tools }, log: { info() {} }, ...extra };
 }
 
-test("a digit escape is unportable; ordinary syntax is not", () => {
-  for (const p of ["^[^\\0]*$", "^(a)\\1$", "\\0"]) {
+test("backtracking-only syntax is unportable; ordinary syntax is not", () => {
+  const unportable = [
+    "^[^\\0]*$", "^(a)\\1$", "\\0",
+    "^(?!\\.)[a-z]+$", "^(?=a)a$", "(?<=a)b", "(?<!a)b", "(?>a+)b", "(?<n>a)\\k<n>",
+    // ArtifactData's collection id, verbatim.
+    "^(?!\\.\\.?(?:\\/|$))[A-Za-z0-9_\\-.~:@+]{1,200}$",
+  ];
+  for (const p of unportable) {
     assert.ok(sanitizer.isUnportablePattern(p), p);
   }
-  for (const p of ["^[0-9a-f]{32}$", "^[^\\n\\r]*$", "^[\\s\\S]{0,300}$", "^\\d+$", "^(?!\\.)[a-z]+$", "^a\\\\0$"]) {
+  const portable = [
+    "^[0-9a-f]{32}$", "^[^\\n\\r]*$", "^[\\s\\S]{0,300}$", "^\\d+$", "^a\\\\0$",
+    "^(?:a|b)$", "^(?<n>a)$", "^a\\(?!b$", "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$",
+  ];
+  for (const p of portable) {
     assert.ok(!sanitizer.isUnportablePattern(p), p);
   }
+});
+
+test("prefixItems and propertyNames go; properties with those names stay", () => {
+  const schema = {
+    type: "object",
+    properties: {
+      where: { type: "array", items: { type: "array", prefixItems: [{ type: "string" }, { enum: ["eq"] }, {}] } },
+      files: { type: "object", propertyNames: { maxLength: 512 }, additionalProperties: { type: "string" } },
+      prefixItems: { type: "string", description: "a field called prefixItems" },
+    },
+  };
+  assert.equal(sanitizer.sanitizeSchema(schema), 2);
+  assert.deepEqual(schema.properties.where.items, { type: "array" });
+  assert.deepEqual(schema.properties.files, { type: "object", additionalProperties: { type: "string" } });
+  assert.deepEqual(schema.properties.prefixItems, { type: "string", description: "a field called prefixItems" });
 });
 
 test("only the unportable pattern goes; the tool and the rest of its schema stay", async () => {

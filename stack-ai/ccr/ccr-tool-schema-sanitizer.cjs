@@ -12,13 +12,19 @@
  * the rules after it.
  *
  * What it fixes:
- *  - A `pattern` with a digit escape (`\0`, `\1`...). JavaScript and PCRE
- *    read `\0` as NUL and `\1` as a backreference, but other regex engines
- *    reject both, and a provider that compiles tool schemas then refuses the
- *    whole request: DeepSeek answers HTTP 400 to Claude Code's `Artifact`
- *    tool, whose `file_paths` items carry "^[^\\0]*$". Dropping the keyword
- *    loses nothing: it only steers the model, and Claude Code validates each
- *    tool call against its own schema anyway.
+ *  - A `pattern` only a backtracking engine understands: a digit escape
+ *    (`\0`, `\1`...), a lookaround (`(?=`, `(?!`, `(?<=`, `(?<!`), an atomic
+ *    group (`(?>`) or a named backreference (`\k<`). JavaScript and PCRE
+ *    accept them, but linear-time engines (RE2, Rust's regex) reject them,
+ *    and a provider that compiles tool schemas then refuses the whole
+ *    request: DeepSeek answers HTTP 400 to Claude Code's `Artifact` tool
+ *    ("^[^\\0]*$") and `ArtifactData` tool (`collection`/`doc_id` start with
+ *    "(?!\\.\\.?...)").
+ *  - The JSON Schema 2020-12 keywords `prefixItems` and `propertyNames`,
+ *    which strict schema compilers also reject (`ArtifactData`'s `where`
+ *    tuples, `Artifact`'s `files` map).
+ *    Dropping either loses nothing: they only steer the model, and Claude
+ *    Code validates each tool call against its own schema anyway.
  *  - Optionally, tools a provider cannot take at all, by model:
  *    CCR_DROP_TOOLS="deepseek=Artifact,ArtifactData;gemini=Monitor" drops
  *    those tools when the target model's name contains the text before `=`
@@ -27,16 +33,25 @@
  * Fail-open: CCR catches and logs anything thrown here and routes as usual.
  */
 
-/** A backslash escape of a digit that is not itself escaped. */
-const DIGIT_ESCAPE = /(?:^|[^\\])(?:\\\\)*\\[0-9]/;
+/**
+ * Not itself escaped, and then: a backslash before a digit or `k<`, or an
+ * opening group of the lookaround or atomic kind.
+ */
+const BACKTRACKING_ONLY = /(?:^|[^\\])(?:\\\\)*(?:\\(?:[0-9]|k<)|\((?:\?[=!>]|\?<[=!]))/;
+
+/** Schema keywords some upstream schema compiler rejects. */
+const UNPORTABLE_KEYWORDS = ["prefixItems", "propertyNames"];
+
+/** Keywords whose value maps names to schemas, not keywords to values. */
+const SCHEMA_MAPS = new Set(["properties", "patternProperties", "$defs", "definitions", "dependentSchemas"]);
 
 /** Patterns some upstream regex engine rejects. */
 function isUnportablePattern(pattern) {
-  return DIGIT_ESCAPE.test(pattern);
+  return BACKTRACKING_ONLY.test(pattern);
 }
 
 /**
- * Remove every unportable `pattern` keyword under `schema`, in place.
+ * Remove every unportable `pattern` and keyword under `schema`, in place.
  * Returns how many were removed.
  */
 function sanitizeSchema(schema) {
@@ -53,10 +68,18 @@ function sanitizeSchema(schema) {
       delete node.pattern;
       removed += 1;
     }
+    for (const keyword of UNPORTABLE_KEYWORDS) {
+      if (keyword in node) {
+        delete node[keyword];
+        removed += 1;
+      }
+    }
     for (const [key, value] of Object.entries(node)) {
-      // `properties` and `patternProperties` map names to schemas; a
-      // property named "pattern" is a schema, never a regex string.
-      if (key !== "pattern") {
+      if (SCHEMA_MAPS.has(key) && value && typeof value === "object" && !Array.isArray(value)) {
+        // A property named "pattern" or "prefixItems" is a schema to clean,
+        // never a keyword to drop.
+        Object.values(value).forEach(walk);
+      } else if (key !== "pattern") {
         walk(value);
       }
     }
@@ -143,7 +166,7 @@ function sanitizeRequest(request, env = process.env) {
   for (const tool of request.body.tools) {
     const removed = sanitizeSchema(schemaOf(tool));
     if (removed > 0) {
-      reportOnce(log, `pattern:${tool.name}`, `removed ${removed} unportable pattern(s) from ${tool.name}`);
+      reportOnce(log, `pattern:${tool.name}`, `removed ${removed} unportable pattern(s)/keyword(s) from ${tool.name}`);
     }
   }
 }
