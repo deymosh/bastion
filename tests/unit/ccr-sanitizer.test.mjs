@@ -124,6 +124,24 @@ test("CCR_DROP_TOOLS drops tools by target model, hex-encoded client ids include
   assert.equal(untouched.body.tools.length, 4, "off when unset");
 });
 
+test("the plugin registers a request transform that cleans the routed body", async () => {
+  const plugin = require(join(CCR, "ccr-tool-schema-plugin.cjs"));
+  const registered = [];
+  await plugin.setup({ registerGatewayRequestTransform: (t) => registered.push(t), logger: { info() {} } });
+  assert.equal(registered.length, 1);
+  assert.equal(registered[0].id, "tool-schema-sanitizer");
+
+  const body = { model: "deepseek-v4.1-flash", tools: [artifactTool()] };
+  const result = await registered[0].transform({ body, routedModel: "deepseek-v4.1-flash" }, { logger: { info() {} } });
+  assert.equal(result.body.tools[0].input_schema.properties.file_paths.items.pattern, undefined);
+  assert.equal(result.body.tools[0].input_schema.properties.asset_ids.items.pattern, "^[0-9a-f]{32}$");
+
+  const clean = { tools: [{ name: "Read", input_schema: { type: "object" } }] };
+  assert.equal(plugin.transform({ body: clean }, {}), null, "unchanged bodies are not replaced");
+  assert.equal(plugin.transform({ body: { model: "x" } }, {}), null);
+  assert.equal(plugin.transform({}, {}), null);
+});
+
 test("a request without tools, or a malformed one, is left alone", async () => {
   assert.equal(await sanitizer({ body: { model: "x" } }), undefined);
   assert.equal(await sanitizer({ body: { tools: [null, 3, { name: "x" }] } }), undefined);
@@ -139,6 +157,7 @@ try {
   DatabaseSync = undefined;
 }
 const SANITIZER_PATH = "/usr/local/lib/ccr/ccr-tool-schema-sanitizer.cjs";
+const PLUGIN_PATH = "/usr/local/lib/ccr/ccr-tool-schema-plugin.cjs";
 
 function withDb(row, run) {
   const dir = mkdtempSync(join(tmpdir(), "ccr-enable-"));
@@ -171,6 +190,34 @@ test("the startup step sets the path and keeps everything else", { skip: !Databa
     assert.deepEqual(config.Providers, [{ name: "p" }]);
   });
   withDb({ CUSTOM_ROUTER_PATH: SANITIZER_PATH }, (out) => assert.match(out, /already enabled/));
+});
+
+test("the startup step registers the request-transform plugin once", { skip: !DatabaseSync }, () => {
+  const other = { id: "someone-else", enabled: true, module: "/data/x.cjs" };
+  withDb({ CUSTOM_ROUTER_PATH: SANITIZER_PATH, plugins: [other] }, (out, config) => {
+    assert.match(out, /enabled request-transform plugin/);
+    assert.deepEqual(config.plugins[0], other);
+    assert.deepEqual(config.plugins[1], {
+      id: "bastion-tool-schema-sanitizer",
+      enabled: true,
+      module: PLUGIN_PATH,
+      surfaces: { apps: false, gateway: true, provider: false },
+      permissions: ["trusted-code", "gateway-request-transforms"],
+    });
+  });
+  const ours = { id: "bastion-tool-schema-sanitizer", enabled: true, module: PLUGIN_PATH };
+  withDb({ CUSTOM_ROUTER_PATH: SANITIZER_PATH, plugins: [ours] }, (out, config) => {
+    assert.match(out, /request-transform plugin already enabled/);
+    assert.deepEqual(config.plugins, [ours]);
+  });
+});
+
+test("the startup step leaves an operator's disabled or moved plugin alone", { skip: !DatabaseSync }, () => {
+  const disabled = { id: "bastion-tool-schema-sanitizer", enabled: false, module: PLUGIN_PATH };
+  withDb({ CUSTOM_ROUTER_PATH: SANITIZER_PATH, plugins: [disabled] }, (out, config) => {
+    assert.match(out, /changed by the operator/);
+    assert.deepEqual(config.plugins, [disabled]);
+  });
 });
 
 test("the startup step leaves an operator's own router alone", { skip: !DatabaseSync }, () => {
