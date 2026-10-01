@@ -86,7 +86,7 @@ services:
 
   bitcoind:
     # Version tag + digest. Pinned 2026-09-09.
-    image: lncm/bitcoind:v26.0@sha256:2a335ea0e77106fc8768cade374808485a43825a6b4a17e85dd36d4acd931b22
+    image: lncm/bitcoind:v28.0@sha256:1d335a5adbfac6d66cee20b62b339385819dc75f8cb60c6c5773922cec4c25ef
     container_name: bitcoind
     logging: *logging
     restart: unless-stopped
