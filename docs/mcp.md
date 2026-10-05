@@ -116,7 +116,10 @@ docker run --rm \
 ```
 
 Re-run it whenever the code changes enough to be worth re-indexing (for
-example on a schedule or from CI). The graph is then queryable as
+example on a schedule or from CI). A `.graphifyignore` in the repo root
+(gitignore syntax) shapes what gets indexed — Bastion uses one to keep the
+`rust-teos` submodule out of the superproject graph, where its ~1.8k
+test-fixture nodes drowned the actual node tooling. The graph is then queryable as
 `project_path=/data/graphify/<project>` — the default project name is `main`
 (`/data/graphify/main/graph.json`). All gateway state lives in that one
 `stack-ai/data/mcp/` directory (memory projects, SQLite index, graphs), so

@@ -1,0 +1,3 @@
+# rust-teos is its own repository (git submodule): its ~1.8k test-fixture
+# nodes drown the superproject graph. Index it separately if ever needed.
+rust-teos/
