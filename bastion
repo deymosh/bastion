@@ -214,6 +214,10 @@ do_install_sysbox() {
 # compose entry sets create_host_path: false, because a dir Docker creates is
 # root-owned and the bridge's uid 1000 could no longer clone into it.
 AGENT_WORKSPACES_DIR="${AGENT_WORKSPACES_DIR:-./stack-ai/data/codedeck/workspaces}"
+# mcp-gateway state (memory knowledge base + graphify graphs) is a bind mount
+# so it can be inspected or moved between machines like every other data/
+# dir. Pre-created here for the same reason as the workspaces dir above.
+MCP_DATA_DIR="${MCP_DATA_DIR:-./stack-ai/data/mcp}"
 preflight_agent_docker() {
     if ! _has_sysbox; then
         echo -e "${RED}${BOLD}[✘] --with-agent-docker needs the Sysbox runtime (sysbox-runc), which this Docker daemon does not have.${NC}" >&2
@@ -327,6 +331,12 @@ do_up() {
     fi
     if _contains stack-ai "${stacks[@]}" && _profile_active agent-docker; then
         preflight_agent_docker || return 1
+    fi
+    if _contains stack-ai "${stacks[@]}"; then
+        # Bind source for the MCP gateway's state. create_host_path: false in
+        # compose, because a dir Docker creates is root-owned and the
+        # gateway's uid 1000 could not write its memory/graphify state.
+        mkdir -p "$MCP_DATA_DIR"
     fi
     echo -e "${GREEN}${BOLD}[+] Booting: ${stacks[*]}${NC}"
     local stack

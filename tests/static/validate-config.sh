@@ -161,6 +161,9 @@ have 'file: \.\./secrets/github_token'            stack-ai/docker-compose.yml &&
 have 'file: \.\./secrets/mcp_gateway_token'       stack-ai/docker-compose.yml && ok "mcp_gateway_token declared from ../secrets/" || bad "mcp_gateway_token not a file: secret"
 have 'run/secrets/mcp_gateway_token'             stack-ai/mcp-gateway/gateway.py && ok "mcp-gateway reads the mounted bearer token" || bad "mcp-gateway does not read the mounted token"
 have 'file: \.\./secrets/context7_api_key'        stack-ai/docker-compose.yml && ok "context7_api_key declared from ../secrets/" || bad "context7_api_key not a file: secret"
+have 'MCP_GITHUB_TOKEN_FILE: /run/secrets/github_token' stack-ai/docker-compose.yml \
+  && have 'MCP_GITHUB_TOKEN_FILE' stack-ai/mcp-gateway/gateway.py \
+  && ok "mcp-gateway reads the optional github token from its secret file" || bad "mcp-gateway github token not wired as a file secret"
 
 echo "== docs/configuration.md matches the settings registry =="
 bash utils/gen-config-docs.sh --check >/dev/null 2>&1 \

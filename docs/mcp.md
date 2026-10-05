@@ -13,10 +13,18 @@ AI agent (LAN / WireGuard)            bastion-ai (10.50.0.0/24)
   bastion.node:8811/mcp ─────────────►│  stdio children:                      │
   (host firewall = the ACL)           │    mcp-searxng ───── HTTP ────────────┼──► searxng 10.50.0.4
                                       │    context7-mcp ──── HTTPS ───────────┼──► context7.com
-                                      │    mcp-server-memory (/data volume)   │
+                                      │    basic-memory (/data/memory)        │
+                                      │    graphify serve (/data/graphify)    │
                                       │    mcp-server-time                    │
                                       └───────────────────────────────────────┘
 ```
+
+Every tool is namespaced `<namespace>_<tool>` (children can never collide) and
+mounted through a **tool transform** that keeps the served surface lean: tools
+that never earn their context slot are not served, needlessly verbose upstream
+descriptions are rewritten, and rarely-used arguments are hidden from the
+schema. Upstream can grow its tool set without silently growing what every
+connected model pays for on `tools/list`.
 
 ## Endpoint and authentication
 
@@ -40,38 +48,79 @@ the token is read at startup.
 
 ## Namespaces and tools
 
-Every tool is namespaced `<namespace>_<tool>` so children can never collide.
-The four namespaces:
-
 | Namespace | MCP server (pinned) | Tools |
 |---|---|---|
-| `searxng` | `mcp-searxng` 2.3.0 | `searxng_web_search`, `searxng_web_url_read`, `searxng_search_suggestions`, `searxng_instance_info` |
+| `searxng` | `mcp-searxng` 2.5.0 | `searxng_web_search`, `searxng_web_url_read` |
 | `context7` | `@upstash/context7-mcp` 4.1.1 | `context7_resolve-library-id`, `context7_query-docs` |
-| `memory` | `@modelcontextprotocol/server-memory` 2026.8.31 | `memory_create_entities`, `memory_create_relations`, `memory_add_observations`, `memory_delete_entities`, `memory_delete_relations`, `memory_delete_observations`, `memory_read_graph`, `memory_search_nodes`, `memory_open_nodes` |
+| `memory` | `basic-memory` 0.23.2 | `memory_search_notes`, `memory_read_note`, `memory_write_note`, `memory_edit_note`, `memory_move_note`, `memory_delete_note`, `memory_read_content`, `memory_list_directory`, `memory_recent_activity`, `memory_build_context`, `memory_list_memory_projects`, `memory_create_memory_project` |
+| `graphify` | `graphifyy[mcp]` 0.9.76 | `graphify_query_graph`, `graphify_get_node`, `graphify_get_neighbors`, `graphify_get_community`, `graphify_god_nodes`, `graphify_graph_stats`, `graphify_shortest_path` (+ `graphify_list_prs`, `graphify_get_pr_impact`, `graphify_triage_prs` when a GitHub token is configured) |
 | `time` | `mcp-server-time` 2026.8.18 | `time_get_current_time`, `time_convert_time` |
 
 Notes:
 
-- `searxng_*` queries the stack-internal SearXNG instance (see below), so
-  search behavior follows its configured engines. The memory namespace edits
-  the agent knowledge graph persisted in the `mcp_memory_data` volume.
-- `time_*` uses the host timezone from `bastion.conf` (`TIMEZONE`).
-- Upstream tool names are respected inside each namespace: mcp-searxng ships
-  some tools already prefixed (`searxng_web_search`) and others not
-  (`web_url_read`); the gateway strips the redundant upstream prefix so the
-  served names stay uniform.
-- The gateway also sends MCP server **instructions** on `initialize` (clients
-  such as Claude Code place them in the model's system prompt): a short map of
-  the namespaces, the two-step context7 and search-then-read flows, and the
-  rule that the memory graph is shared by every agent and never holds secrets.
-  They live in `INSTRUCTIONS` in `stack-ai/mcp-gateway/gateway.py`; keep them
-  in sync when a namespace is added.
-- Children are long-lived: each starts once (the first `tools/list` pays a
-  ~1 s cold start), later calls reuse it, and a child that dies is respawned
-  on the next call to its namespace.
-- An optional `CONTEXT7_API_KEY` in `bastion.conf` raises context7's rate
-  limits; empty (the default) means keyless service at lower limits. It is
-  delivered as a secret file like the token.
+- **`searxng_*`** queries the stack-internal SearXNG instance, so search
+  behavior follows its configured engines. The gateway does not serve the
+  upstream `search_suggestions` / `instance_info` tools, and the `web_search`
+  schema is trimmed to the arguments a model actually uses
+  (`query`, `pageno`, `time_range`, `language`, `num_results`).
+- **`context7_*`** is current library/framework documentation; prefer it over
+  web search for API questions. The gateway overrides the upstream
+  `resolve-library-id` description (≈500 tokens upstream, ≈55 served).
+- **`memory_*`** is [basic-memory](https://github.com/basicmachines-co/basic-memory):
+  a per-project knowledge base of markdown notes with a SQLite index and local
+  semantic search (fastembed, model baked into the image). Reads are targeted
+  and paginated — `search_notes` takes `page`/`page_size` and returns matches
+  with snippets, never the whole base. Each project is its own directory under
+  `/data/memory/projects/<name>`; create one with `memory_create_memory_project`
+  and pass `project` on every call. Durable facts only, never secrets.
+  basic-memory is AGPL-3.0; Bastion ships only a pinned build recipe (users
+  install the unmodified package from PyPI), which keeps the license
+  obligation-free for this repository.
+- **`time_*`** reports the current time and converts between timezones,
+  defaulting to the host timezone from `bastion.conf` (`TIMEZONE`).
+- **`graphify_*`** serves per-project **code knowledge graphs** (one
+  `graph.json` per repo, built offline from tree-sitter parsing — no LLM
+  needed). Every tool takes `project_path=/data/graphify/<project>`, and the
+  read tools take a `token_budget` that caps how much they return. Until a
+  project's graph exists the tools answer with a clear not-found error.
+  `graphify_list_prs` / `graphify_get_pr_impact` / `graphify_triage_prs` need
+  the GitHub CLI, so they are only served when `GITHUB_TOKEN` (the node's
+  existing secret, shared with the bridge) is set; their GitHub access is
+  read-only (list/get/triage).
+
+The gateway also sends MCP server **instructions** on `initialize` (clients
+such as Claude Code place them in the model's system prompt): a short map of
+the namespaces and the two-step context7 and search-then-read flows. They live
+in `INSTRUCTIONS` in `stack-ai/mcp-gateway/gateway.py`; keep them in sync when
+a namespace is added or trimmed.
+
+Children are long-lived: each starts once (the first `tools/list` pays a cold
+start), later calls reuse it, and a child that dies is respawned on the next
+call to its namespace.
+
+An optional `CONTEXT7_API_KEY` in `bastion.conf` raises context7's rate
+limits; empty (the default) means keyless service at lower limits. It is
+delivered as a secret file like the token.
+
+## Building a graphify graph
+
+Graphs are built from a checkout with the same image (offline for code):
+
+```bash
+docker run --rm \
+  -v /path/to/repo:/src:ro \
+  -v $PWD/stack-ai/data/mcp:/data \
+  -e GRAPHIFY_OUT=/data/graphify/<project> \
+  --entrypoint /opt/graphify-venv/bin/python \
+  bastion-mcp-gateway:2.0.0 -m graphify update /src
+```
+
+Re-run it whenever the code changes enough to be worth re-indexing (for
+example on a schedule or from CI). The graph is then queryable as
+`project_path=/data/graphify/<project>` — the default project name is `main`
+(`/data/graphify/main/graph.json`). All gateway state lives in that one
+`stack-ai/data/mcp/` directory (memory projects, SQLite index, graphs), so
+moving a node means copying it along with the other `data/` dirs.
 
 ## Example: remote agent configuration
 
@@ -115,23 +164,28 @@ Both containers run `cap_drop: ALL` + `no-new-privileges:true` with a
 **read-only root filesystem** (`/tmp` is the only writable path, a tmpfs):
 
 - `mcp-gateway` runs as uid/gid `1000` (no capabilities, no root wrapper —
-  unlike CCR it needs no ownership juggling: the memory volume is a named
-  volume owned from the image, and secrets arrive as uid-1000 files).
+  unlike CCR it needs no ownership juggling: `./bastion` pre-creates
+  `stack-ai/data/mcp` as the operator, and secrets arrive as uid-1000
+  files).
 - `searxng` runs as the image's unprivileged `searxng` user (977) with its
   settings mounted read-only.
 
 The MCP server packages are **pinned at build time**
-(`stack-ai/mcp-gateway/Dockerfile.mcp-gateway`): the three npm children install via
-`npm ci` from a committed `mcp-gateway/package-lock.json`
-(`mcp-searxng@2.3.0`, `@upstash/context7-mcp@4.1.1`,
-`@modelcontextprotocol/server-memory@2026.8.31`), the Python layer installs
-`fastmcp==4.0.5` under the `mcp-gateway/constraints.txt` transitive-pin
-snapshot, and `mcp-server-time==2026.8.18` lives in its own virtualenv (it
-tracks the `mcp` 1.x line, which conflicts with fastmcp's 2.x). Both base
-images are digest-pinned. Children never execute `npx`/`uvx` at runtime, so a
-running gateway makes no package fetches; bump a version by editing the
-Dockerfile (and regenerating the lock/constraints files), then
-`./bastion build stack-ai`.
+(`stack-ai/mcp-gateway/Dockerfile.mcp-gateway`): the npm children install via
+`npm ci` from a committed `mcp-gateway/package-lock.json` (`mcp-searxng@2.5.0`,
+`@upstash/context7-mcp@4.1.1`), the Python children (`basic-memory@0.23.2`,
+`graphifyy[mcp]@0.9.76`, `mcp-server-time@2026.8.18`) each live in their
+own pinned virtualenv, the gateway
+itself installs `fastmcp==4.0.5` under the `mcp-gateway/constraints.txt`
+transitive-pin snapshot, and the `gh` CLI `.deb` is checksum-pinned. Both base
+images are digest-pinned. basic-memory's embedding model is baked in at build
+and seeded onto the volume on first start — a running gateway makes no package
+or model fetches; bump a version by editing the Dockerfile (and regenerating
+the lock/constraints files), then `./bastion build stack-ai`.
+
+`mcp-gateway` also mounts the node's `github_token` secret (shared with
+`codedeck-bridge`) for graphify's PR tools. Treat the MCP token as granting
+read access to whatever that GitHub token can read.
 
 ## Troubleshooting
 
@@ -155,6 +209,13 @@ curl -s http://localhost:8811/healthz
 # (a 403 here means JSON output is disabled - the settings.yml mount is the
 # fix; note SearXNG matches SHORT format names, so the list needs `- json`,
 # not `- application/json`)
+
+# graphify tools answer "graph.json not found": no graph for that project yet
+# - build one (see "Building a graphify graph" above), then pass
+# project_path=/data/graphify/<project>.
+
+# PR tools missing: they are only served when GITHUB_TOKEN is set in
+# bastion.conf (they need an authenticated gh CLI).
 ```
 
 `tests/` covers the wiring without Docker (`./tests/run.sh` static + unit);

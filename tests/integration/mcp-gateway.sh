@@ -5,8 +5,9 @@
 # Drives the stack-ai MCP gateway exactly the way a remote agent would: an
 # official MCP SDK client (independent of fastmcp) connects to the
 # Streamable HTTP endpoint and exercises auth (missing / wrong / query-param
-# / correct token), healthz, tool namespacing, and a real call on every
-# namespace (SearXNG, Context7, memory, time).
+# / correct token), healthz, tool namespacing, the trim/gating transforms,
+# and a real call on every namespace (SearXNG, Context7, memory, graphify,
+# time).
 #
 # Isolated throwaway project (bastion-mcptest): distinct container names, its
 # own network + volume, NO published host ports, `down -v` cleanup. Builds
@@ -67,7 +68,7 @@ fi
 
 echo "== run the e2e suite =="
 if dex "$CL" python /e2e.py "$(cat test_mcp_gateway_token)"; then
-  ok "official SDK client: auth, healthz, namespacing, and all four namespaces"
+  ok "official SDK client: auth, healthz, namespacing, trims, and all five namespaces"
 else
   bad "official SDK client e2e (see output above)"
 fi

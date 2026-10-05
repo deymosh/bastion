@@ -1,11 +1,13 @@
-# Bastion MCP gateway image: FastMCP aggregator + the four stdio MCP servers.
+# Bastion MCP gateway image: FastMCP aggregator + the stdio MCP servers
+# (npm: mcp-searxng, context7; venv: basic-memory, graphify).
 #
 # Everything the children need is installed at build time from pinned
 # versions, so neither the gateway nor its children touch the network at
-# runtime (no npx/uvx on the hot path). Reproducibility: base images are
-# digest-pinned, the npm children install via `npm ci` from a committed
-# package-lock.json, and the Python layer installs under a pip constraints
-# snapshot (constraints.txt).
+# runtime (no npx/uvx on the hot path, and the basic-memory embedding model
+# is baked in rather than fetched from HuggingFace on first use).
+# Reproducibility: base images are digest-pinned, the npm children install
+# via `npm ci` from a committed package-lock.json, the gh CLI .deb is
+# checksum-pinned, and the Python venvs install exact versions.
 
 # Same Debian release (bookworm) for both stages, so the node binary copied
 # out of the node stage runs against the same glibc as the python stage.
@@ -27,32 +29,60 @@ FROM python:3.14.7-slim-bookworm@sha256:82bc3c539b8813ada9d68c63b40158fa002f7f33
 # python-slim base does not ship it - without it every npm MCP child dies at
 # startup with "libatomic.so.1: cannot open shared object file".
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libatomic1 \
+    && apt-get install -y --no-install-recommends ca-certificates libatomic1 git \
     && rm -rf /var/lib/apt/lists/*
+
+# gh CLI for graphify's PR tools (they shell out to gh, which refuses to run
+# unauthenticated; the gateway passes the node's GitHub token as GH_TOKEN).
+# Pinned by version + sha256; bump both together.
+ADD --checksum=sha256:7e54a307f90afdc59796c325ec0c49fb09e6c18537727207a8ac7513584ea5b0 \
+    https://github.com/cli/cli/releases/download/v2.102.0/gh_2.102.0_linux_amd64.deb /tmp/gh.deb
+RUN dpkg -i /tmp/gh.deb && rm /tmp/gh.deb
 
 # Node runtime (self-contained binary) + the lockfile-installed MCP servers.
 COPY --from=mcp-servers /usr/local/bin/node /usr/local/bin/node
 COPY --from=mcp-servers /opt/mcp /opt/mcp
 ENV PATH="/opt/mcp/node_modules/.bin:${PATH}"
 
-# Gateway framework. mcp-server-time is NOT installed here on purpose: it
-# pins mcp>=1.29,<2 while fastmcp 4 needs mcp>=2 - a hard conflict. The time
-# server gets its own virtualenv below, which is the same isolation
-# `uvx mcp-server-time` would have provided, just baked in.
+# Gateway framework. The heavier MCP children are NOT installed here: they
+# pin dependency sets of their own (basic-memory tracks a fastmcp beta,
+# mcp-server-time pins mcp 1.x while fastmcp needs 2.x), so each lives in an
+# isolated virtualenv - the same isolation `uvx` would have provided, just
+# baked in.
 COPY constraints.txt /tmp/
 RUN pip install --no-cache-dir -c /tmp/constraints.txt fastmcp==4.0.5 \
     && rm -f /tmp/constraints.txt
 
-# Time server in an isolated venv (runs via /opt/time-venv/bin/python).
+# memory namespace: basic-memory (per-project markdown knowledge base).
+RUN python -m venv /opt/basic-memory-venv \
+    && /opt/basic-memory-venv/bin/pip install --no-cache-dir basic-memory==0.23.2
+
+# Bake basic-memory's embedding model (fastembed, BAAI/bge-small-en-v1.5) so
+# a first search never fetches ~35 MB from HuggingFace at runtime. The
+# gateway copies this cache into the data volume on first start. The chmod is
+# load-bearing: huggingface_hub writes parts of its cache mode 600 for the
+# root that runs this layer, and the gateway's uid 1000 must be able to read
+# (and therefore copy) every file.
+RUN /opt/basic-memory-venv/bin/python -c \
+    "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5', cache_dir='/opt/fastembed-seed')" \
+    && chmod -R a+rX /opt/fastembed-seed
+
+# time namespace: current time and timezone conversion, pinned to the host's
+# bastion.conf TZ (its mcp 1.x pin is why it gets a venv of its own).
 RUN python -m venv /opt/time-venv \
     && /opt/time-venv/bin/pip install --no-cache-dir mcp-server-time==2026.8.18
+
+# graphify namespace: per-project code knowledge graphs. Its tree-sitter
+# grammars ship as wheels, so code-graph builds stay fully offline.
+RUN python -m venv /opt/graphify-venv \
+    && /opt/graphify-venv/bin/pip install --no-cache-dir "graphifyy[mcp]==0.9.76"
 
 COPY gateway.py /app/mcp-gateway.py
 
 # Unprivileged uid/gid 1000 (same convention as the ccr image). The compose
-# file mounts the gateway token + optional Context7 key as uid/gid 1000 files
-# under /run/secrets, and the memory named volume inherits /data's ownership
-# from here on first use.
+# file mounts the gateway token + Context7 key + GitHub token as uid/gid 1000
+# files under /run/secrets, and the memory named volume inherits /data's
+# ownership from here on first use.
 RUN groupadd -g 1000 bastion \
     && useradd -u 1000 -g 1000 -m -s /usr/sbin/nologin bastion \
     && mkdir -p /data \

@@ -15,7 +15,21 @@ from mcp.client.streamable_http import create_mcp_http_client, streamable_http_c
 
 URL = "http://mcp-gateway:8811"
 MCP_URL = URL + "/mcp"
-NAMESPACES = ("searxng", "context7", "memory", "time")
+NAMESPACES = ("searxng", "context7", "memory", "graphify", "time")
+
+# Tools the gateway must NOT serve: searxng/memory tools dropped by the trim
+# transforms, and graphify's PR tools, which need a GitHub token this
+# throwaway project deliberately does not mount.
+FORBIDDEN = (
+    "searxng_instance_info",
+    "searxng_search_suggestions",
+    "memory_view_note",
+    "memory_delete_project",
+    "memory_list_workspaces",
+    "graphify_list_prs",
+    "graphify_get_pr_impact",
+    "graphify_triage_prs",
+)
 
 checks = 0
 
@@ -69,7 +83,10 @@ async def mcp_session(token):
             empty = [ns for ns, v in per_ns.items() if not v]
             if empty:
                 die("every namespace exposes tools", str(empty))
-            ok(f"tools/list: {len(names)} unique namespaced tools across {len(NAMESPACES)} namespaces")
+            served = [n for n in FORBIDDEN if n in names]
+            if served:
+                die("trimmed/unconfigured tools are not served", str(served))
+            ok(f"tools/list: {len(names)} unique namespaced tools across {len(NAMESPACES)} namespaces, trims hold")
 
             r = await session.call_tool("time_get_current_time", {"timezone": "Europe/Madrid"})
             if r.is_error or "Europe/Madrid" not in r.content[0].text:
@@ -81,12 +98,35 @@ async def mcp_session(token):
                 die("searxng_web_search", r.content[0].text[:120])
             ok("searxng namespace searches the internal SearXNG instance")
 
-            entity = {"name": "E2ECheck", "entityType": "test", "observations": ["integration run"]}
-            await session.call_tool("memory_create_entities", {"entities": [entity]})
-            r = await session.call_tool("memory_read_graph", {})
-            if r.is_error or "E2ECheck" not in r.content[0].text:
-                die("memory create+read round-trip", r.content[0].text[:120])
-            ok("memory namespace round-trips and persists")
+            # memory: per-project knowledge base. Create a project, write a
+            # note into it, find it again with a paginated search.
+            await session.call_tool(
+                "memory_create_memory_project",
+                {"project_name": "e2e", "project_path": "/data/memory/projects/e2e"},
+            )
+            await session.call_tool(
+                "memory_write_note",
+                {
+                    "title": "E2E check note",
+                    "directory": "",
+                    "content": "integration run marker",
+                    "project": "e2e",
+                },
+            )
+            r = await session.call_tool(
+                "memory_search_notes",
+                {"query": "marker", "project": "e2e", "page": 1, "page_size": 5},
+            )
+            if r.is_error or "E2E check note" not in r.content[0].text:
+                die("memory project+write+search round-trip", r.content[0].text[:120])
+            ok("memory namespace round-trips per-project with paginated search")
+
+            # graphify: no graph was built in this throwaway volume, so the
+            # tools must answer with the clear not-found error (not a crash).
+            r = await session.call_tool("graphify_graph_stats", {"project_path": "/data/graphify/e2e"})
+            if r.is_error or "not found" not in r.content[0].text:
+                die("graphify not-found path", r.content[0].text[:120])
+            ok("graphify namespace serves graph tools with a clear not-found error")
 
             r = await session.call_tool(
                 "context7_resolve-library-id", {"libraryName": "react", "query": "hooks"}

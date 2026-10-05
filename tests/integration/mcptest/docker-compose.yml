@@ -11,7 +11,7 @@
 services:
   searxng:
     # Keep in sync with stack-ai/docker-compose.yml.
-    image: searxng/searxng:2026.9.21-df67eb6c2@sha256:1ef964f6dcc811a60e01049717b6e526b25a1c52935350143f04e0ae291b3dbd
+    image: searxng/searxng:2026.9.25-d8ae3abd5@sha256:38ed750807fb00c26047e51896b50f83e7843d120d9e65f950770305f62c7111
     container_name: bastion-mcptest-searxng
     user: "977:977"
     cap_drop:
@@ -39,10 +39,13 @@ services:
       - /tmp
     environment:
       MCP_TOKEN_FILE: /run/secrets/mcp_gateway_token
-      # context7_api_key is deliberately NOT mounted: the gateway must work
-      # keyless when the optional secret is absent.
+      # context7_api_key and github_token are deliberately NOT mounted: the
+      # gateway must work keyless/tokenless when the optional secrets are
+      # absent (context7 serves keyless; graphify's PR tools are filtered
+      # out entirely, which e2e.py asserts).
       MCP_SEARXNG_URL: http://searxng:8080
-      MCP_MEMORY_FILE_PATH: /data/memory.json
+      MCP_BM_CONFIG_DIR: /data/memory
+      MCP_GRAPHIFY_DIR: /data/graphify
       MCP_HOST: 0.0.0.0
       MCP_PORT: "8811"
       TIMEZONE: Europe/Madrid
