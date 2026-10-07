@@ -1,136 +1,146 @@
 ---
 name: ccr-oauth
-description: Use when working on CCR (Claude Code Router) auth in stack-ai — the Claude OAuth credentials file, why the token expires in the headless container, the in-container refresher (ccr-token-refresher.mjs), the OAuth refresh request shape, and debugging 401s from CCR. Read before touching Dockerfile.ccr, the entrypoint wrapper, or the refresher.
+description: Use when working on CCR (Claude Code Router) auth in stack-ai — the Claude OAuth credentials file, why the token expires in the headless container, the on-demand refresh plugin (ccr-oauth-refresh-plugin.cjs) that has the official claude CLI refresh the login on an upstream 401, how CCR's core gateway retries a 401 through provider hooks, and debugging 401s from CCR. Read before touching Dockerfile.ccr, the entrypoint wrapper, ccr-enable-plugins.mjs, or the refresh plugin.
 ---
 
 # CCR Claude OAuth model
 
 ## Core principle
 
-CCR authenticates to `api.anthropic.com` with the Claude Code OAuth
-**access token**, read from a credentials file on disk. That token is
-short-lived (~a day). CCR (>= commit `561c2d8`, which the pinned `CCR_REF`
-commit in `stack-ai/ccr/Dockerfile.ccr` includes) **re-reads the file on every
-upstream request**, so a rotated token is picked up with **no gateway restart** — but CCR
-itself never refreshes it for the Claude-Code provider path (unlike its Grok /
-Kimi paths). In a headless container nothing rotates the file, so it 401s daily.
-Bastion fixes this with a tiny refresher process started alongside CCR.
+CCR authenticates its "Claude Code API" provider to `api.anthropic.com` with
+the Claude Code OAuth **access token** from
+`$CLAUDE_CONFIG_DIR/.credentials.json` (`/data/.claude`, set in the compose
+file). The token is short-lived (hours). CCR never refreshes it for this
+provider. Bastion refreshes it **on demand**: when Anthropic answers `401`, a
+bundled CCR plugin has the **official `claude` CLI** refresh the login, and the
+request is retried with the new token. No background process, no polling, no
+hand-rolled OAuth request.
 
 ## When to use this skill
 
-- Editing `stack-ai/ccr/Dockerfile.ccr`, `stack-ai/ccr/ccr-entrypoint-wrapper.sh`, or
-  `stack-ai/ccr/ccr-token-refresher.mjs`.
-- CCR returns 401 / "please run /login" after working for a while.
-- Changing `CLAUDE_CONFIG_DIR` or the CCR data volume.
+- Editing `stack-ai/ccr/ccr-oauth-refresh-plugin.cjs`,
+  `stack-ai/ccr/ccr-enable-plugins.mjs`, `stack-ai/ccr/ccr-entrypoint-wrapper.sh`
+  or `stack-ai/ccr/Dockerfile.ccr`.
+- CCR returns 401 / "please run /login".
+- Bumping `CCR_REF` or the bundled `claude` CLI (both can move the internals
+  below; `tests/integration/ccr-oauth-refresh.sh` is the check).
 
 ## 1. The credentials file
-
-`CLAUDE_CONFIG_DIR=/data/.claude` (set in `Dockerfile.ccr`), so the file is
-`/data/.claude/.credentials.json`, persisted via `./data/ccr:/data`. Shape:
 
 ```json
 {
   "claudeAiOauth": {
     "accessToken":  "sk-ant-oat01-...",
     "refreshToken": "sk-ant-ort01-...",
-    "expiresAt":    1788998262097,          // access token, epoch MILLISECONDS (~a day out)
-    "refreshTokenExpiresAt": 1791253716097, // refresh token, epoch ms (~weeks out); may be absent
-    "scopes":       ["user:file_upload", "user:inference", "user:mcp_servers",
-                     "user:profile", "user:sessions:claude_code"],
+    "expiresAt":    1788998262097,          // epoch MILLISECONDS
+    "refreshTokenExpiresAt": 1791253716097, // may be absent
+    "scopes": ["user:inference", "..."],
     "subscriptionType": "pro",
     "rateLimitTier": "default_claude_ai"
   },
-  "organizationUuid": "11111111-1111-1111-1111-111111111111"   // sibling of claudeAiOauth (example)
+  "organizationUuid": "..."                 // sibling of claudeAiOauth
 }
 ```
 
-It is written initially by an interactive `claude` login (the `claude` CLI is
-baked into the image). It holds **live secrets** — never commit it, never log its
-contents. The exact key set varies by `claude` version; the refresher only reads
-`accessToken` / `refreshToken` / `expiresAt` / `refreshTokenExpiresAt`, rewrites
-those, and **passes every other key through untouched** (`scopes`,
-`subscriptionType`, `rateLimitTier`, `organizationUuid`, …).
+Written by an interactive `./bastion exec ccr -- claude` login. Live secret:
+never commit it, never log its contents. The plugin rewrites only
+`claudeAiOauth.expiresAt` (atomically, tmp + rename, mode 600); the CLI then
+rewrites the token pair itself and keeps every other key.
 
-## 2. The refresh request
+## 2. Where the 401 is caught
 
-Standard OAuth2 refresh, no auth header:
+CCR runs its data plane in a separate supervised process, the **core gateway**
+(npm `@the-next-ai/ai-gateway`), configured from JSON that CCR compiles at
+gateway start. A CCR plugin reaches it with
+`ctx.registerCoreGatewayPlugin({ key, enabled, modulePath })` (needs the
+`core-gateway-plugins` permission and the `gateway` surface); the gateway then
+`import()`s that module and calls its `createGatewayPlugin()`.
 
-```
-POST https://platform.claude.com/v1/oauth/token
-Content-Type: application/x-www-form-urlencoded
+- On **any** upstream `401`, the gateway rebuilds the request once through
+  every provider hook's `authenticate` with `forceCodexOauthRefreshOnce: true`
+  and retries it. That flag is the plugin's trigger. (Upstream non-OK
+  responses never reach `responseHooks` / `streamHooks`.)
+- Provider hooks run in registration order; the plugin's hook runs **before**
+  CCR's own auth entries. Those entries are the gateway config's
+  `providerPlugins` with keys `ccr-local-agent-<slug>-claude-code-oauth[-internal]`
+  and an `auth.headers.authorization` that CCR **compiled from the file at
+  gateway start**. Their `providerName`s (public and `…::anthropic_messages`)
+  identify the Claude Code provider, which is how the hook ignores every other
+  provider.
+- Because that compiled header is applied after the plugin, a refreshed file
+  alone would leave requests on the stale token until CCR recompiles. The
+  plugin therefore also rewrites `authorization` on those live config objects
+  (the gateway reads them per request). A restart recompiles from the file, so
+  they converge.
 
-grant_type=refresh_token
-client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e
-refresh_token=<current refreshToken>
-```
+## 3. How the CLI is made to refresh (verified against CLI 2.1.x)
 
-Both constants were read out of the bundled `@anthropic-ai/claude-code` binary
-(`CLIENT_ID:"9d1c250a-…"` next to `https://platform.claude.com/…`). The
-refresher lets you override them (`CCR_OAUTH_TOKEN_URL`, `CCR_OAUTH_CLIENT_ID`)
-if a future CLI moves them — re-check with:
-`grep -aoE 'CLIENT_ID:"[0-9a-f-]{36}"|https://[a-z.]+/v1/oauth/token' /usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe`
+1. Mark the stored access token expired (`expiresAt` in the past). The CLI only
+   refreshes a token it believes has expired, and a 401 is authoritative.
+2. Run `claude -p ok --model bastion-oauth-refresh-only --max-turns 1
+   --no-session-persistence`, with `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+   `ANTHROPIC_BASE_URL` and `CLAUDE_CODE_OAUTH_TOKEN` stripped from its env. The
+   CLI refreshes (`POST platform.claude.com/v1/oauth/token`), validates the
+   profile, persists the rotated pair, releases its lock, then calls
+   `/v1/messages` for the nonexistent model and gets `404 not_found_error`. No
+   inference is spent. The exit status is non-zero by design; success = the
+   stored access token changed.
 
-Response (200): `{ "access_token", "refresh_token", "expires_in", ... }` — the
-refresh token **rotates**, so the new one must be written back. `expires_in` is
-seconds (~36000); compute `expiresAt = Date.now() + expires_in*1000`. If the
-body carries `refresh_token_expires_in`, use it for `refreshTokenExpiresAt` the
-same way; if it doesn't and the refresh token rotated, drop the stale
-`refreshTokenExpiresAt` rather than keep a wrong one.
+Do **not** use:
+- `claude auth status`: it starts a refresh in the background and exits
+  before it completes, leaving `$CLAUDE_CONFIG_DIR/.oauth_refresh.lock` held.
+  The next CLI then fails with "another Claude Code process is refreshing it
+  or exited mid-refresh" until the lock goes stale.
+- `--bare`: it ignores the OAuth login ("Not logged in").
 
-Error handling:
-- Stored `refreshTokenExpiresAt` already in the past → don't even send the
-  request; it can only be `invalid_grant`. Log once, wait for a re-login.
-- `4xx` with `invalid_grant` → the refresh token is dead; an operator must
-  `claude` login again. Log loudly, keep looping (don't crash).
-- `429` / `5xx` / network → transient; back off and retry.
+Concurrency and backoff (module state in the gateway process): concurrent 401s
+share one CLI run; a 401 within 30 s of a successful refresh reuses the fresh
+token; after a failed refresh the CLI is not rerun for 60 s. The hook is
+`failureMode: "fail_open"` with a 70 s timeout (the CLI is killed at 60 s): a
+failed refresh lets the original 401 reach the client, never a worse error.
+`CCR_TOKEN_REFRESH=0` (read at runtime) disables it.
 
-## 3. How the refresher runs
+## 4. Registration
 
-`stack-ai/ccr/ccr-entrypoint-wrapper.sh` is the image `ENTRYPOINT`. It starts as
-root, and in order: `chown`s the writable paths (nginx state, `/data`, the
-`ccr_web_auth_token` secret) to `PUID:PGID`; exports `CCR_WEB_AUTH_TOKEN` from
-`/run/secrets/ccr_web_auth_token` if that file is present (else the env var
-stands); if `CCR_TOKEN_REFRESH` is not `0`, backgrounds
-`ccr-token-refresher.mjs` as the run user; then `gosu`-drops to `PUID:PGID` and
-`exec`s the upstream `ccr-entrypoint`. **CCR always starts** - no credentials
-check, no gate. If there is no `.credentials.json`, or the file carries no
-`claudeAiOauth` block (CCR on a plain API key, say), the refresher logs `idle`
-once and keeps re-checking quietly; credentials can be added or fixed at any time.
+`ccr-entrypoint-wrapper.sh` runs `ccr-enable-plugins.mjs` (as the run user)
+before CCR starts. It edits CCR's config (SQLite `config.sqlite`, table
+`app_config`, row `default`) to set `CUSTOM_ROUTER_PATH` to the schema
+sanitizer and to add two `plugins[]` entries: `bastion-tool-schema-sanitizer`
+and `bastion-claude-oauth-refresh`. An entry an operator changed or disabled is
+left alone. A fresh install gets them on its second start (CCR writes the
+config on the first). Also note: on a fresh install with **no provider**, CCR
+does not start its gateway ("No available models"), so `/health` (proxied by
+nginx) fails until a provider exists. That is upstream behaviour, not a
+Bastion fault.
 
-When an OAuth token is present the refresher loops every `CCR_REFRESH_INTERVAL`
-(default 300s): read the file, and
-if `Date.now() >= expiresAt - CCR_REFRESH_SKEW_MS` (default 30 min) do the POST
-and write the file back **atomically** (`.credentials.json.tmp` + `rename`, mode
-`600`), preserving any keys it doesn't manage. No restart, no signal to CCR — the
-per-request re-read picks it up.
+## 5. Debugging a CCR 401
 
-Zero dependencies: the runtime image has Node 22 with global `fetch`.
+1. `./bastion logs ccr | grep bastion-claude-oauth-refresh`:
+   - `upstream 401: refreshing …` then `refreshed; the new access token expires at …`: working.
+   - `refresh failed (<last CLI line>)`: the CLI could not refresh. If it
+     persists, the refresh token was revoked/expired: log in again with
+     `./bastion exec ccr -- claude`.
+   - `… holds no OAuth login`: no `claudeAiOauth` in the file.
+   - no line at all: the plugin is not registered (check
+     `./bastion logs ccr | grep ccr-enable-plugins`) or `CCR_TOKEN_REFRESH=0`.
+2. `./bastion exec ccr -- ls -la /data/.claude`: a long-lived
+   `.oauth_refresh.lock` means a CLI died mid-refresh; it clears when stale.
+3. Is the token actually expired?
+   `./bastion exec ccr -- node -e "const c=require('/data/.claude/.credentials.json').claudeAiOauth; console.log(new Date(c.expiresAt))"`
 
-## 4. Debugging a CCR 401
+## Tests
 
-1. `docker exec ccr node -e "const c=require('/data/.claude/.credentials.json').claudeAiOauth; console.log(new Date(c.expiresAt), Date.now()<c.expiresAt)"`
-   — is the token actually expired?
-2. `docker logs ccr | grep -i refresh` — did the refresher run / fail?
-3. If `invalid_grant` in the logs → refresh token revoked; re-login:
-   `docker exec -it ccr claude` (interactive) or re-run the login flow, then
-   restart is unnecessary but harmless.
-4. Confirm `CCR_TOKEN_REFRESH=1` is set (`docker exec ccr env | grep CCR_`).
-
-## Quick reference
-
-| Symptom | Cause | Fix |
-|---|---|---|
-| 401 after ~1 day, was fine before | refresher not running / disabled | set `CCR_TOKEN_REFRESH=1`, check `docker logs` |
-| refresher logs `invalid_grant` | refresh token revoked/expired | operator re-login with `claude` |
-| token refreshes but CCR still 401 | CCR older than `561c2d8` (no per-request re-read) | bump `CCR_REF` to a commit that includes it, rebuild |
-| refresher logs 429 repeatedly | rate-limited on the token endpoint | increase `CCR_REFRESH_INTERVAL`; it backs off already |
+- `tests/unit/ccr-oauth-refresh.test.mjs`: hook logic with a stub CLI.
+- `tests/integration/ccr-oauth-refresh.sh`: the real image + official CLI
+  against a fake Anthropic (both hostnames, throwaway CA): stale token → 401 →
+  refresh → 200, then reuse, streaming, restart, and revoked-login fail-open.
+  Run it after any `CCR_REF` or CLI bump.
 
 ## When NOT to apply
 
-- The CodeDeck+ bridge's own Claude auth — that uses the
+- The CodeDeck+ bridge's own Claude auth: that uses the
   `CLAUDE_CODE_OAUTH_TOKEN` compose secret, a different mechanism.
 
 ## Related
 
 - [../stack-compose/SKILL.md](../stack-compose/SKILL.md)
-- Issue context: `musistudio/claude-code-router` #1628, PR #1705, commit `561c2d8`.

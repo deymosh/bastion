@@ -2,8 +2,7 @@
 ###############################################################################
 # stack-ai/ccr/ccr-entrypoint-wrapper.sh must ALWAYS hand off to the upstream
 # entrypoint (CCR runs with an OAuth login, a plain API key, or nothing);
-# CCR_TOKEN_REFRESH only gates the background refresher; the tool-schema
-# sanitizer step runs either way and never blocks the start.
+# the bundled-plugins step runs before it and never blocks the start.
 ###############################################################################
 set -u
 cd "$(dirname "$0")/../.." || exit 1
@@ -17,25 +16,17 @@ printf '#!/bin/sh\necho "CCR-STARTED args=[$*]"\n'          > "$BIN/ccr-entrypoi
 # It names the script it was given, so each helper is told apart.
 printf '#!/bin/sh\necho "node-ran $(basename "$1")"\n'    > "$BIN/node";           chmod +x "$BIN/node"
 export PATH="$BIN:$PATH"
-cp stack-ai/ccr/ccr-token-refresher.mjs "$BIN/ccr-token-refresher.mjs" 2>/dev/null || true
 
-echo "== default: refresher on, no credentials file =="
+echo "== default: no credentials file =="
 out=$(timeout 5 sh "$WRAP" --some-flag 2>&1)
 assert_contains "$out" "CCR-STARTED args=[--some-flag]" "CCR starts and args pass through with no token"
-assert_contains "$out" "starting OAuth token refresher"  "the refresher is started"
-assert_contains "$out" "node-ran ccr-enable-sanitizer.mjs" "the sanitizer step runs before CCR starts"
+assert_contains "$out" "node-ran ccr-enable-plugins.mjs" "the bundled-plugins step runs before CCR starts"
+case "$out" in *refresher*) _t_bad "no background refresher is started any more" ;; *) _t_ok "no background refresher" ;; esac
 
-echo "== CCR_TOKEN_REFRESH=0 =="
-out=$(timeout 5 env CCR_TOKEN_REFRESH=0 sh "$WRAP" 2>&1)
-assert_contains "$out" "CCR-STARTED"                 "CCR still starts with the refresher disabled"
-assert_contains "$out" "refresher disabled"          "the wrapper reports the refresher is off"
-case "$out" in *"node-ran ccr-token-refresher.mjs"*) _t_bad "refresher must NOT run when disabled" ;; *) _t_ok "refresher did not run" ;; esac
-assert_contains "$out" "node-ran ccr-enable-sanitizer.mjs" "the sanitizer step does not depend on the refresher"
-
-echo "== a failing sanitizer step never blocks CCR =="
+echo "== a failing plugins step never blocks CCR =="
 printf '#!/bin/sh\necho "node-failed $(basename "$1")"; exit 1\n' > "$BIN/node"; chmod +x "$BIN/node"
-out=$(timeout 5 env CCR_TOKEN_REFRESH=0 sh "$WRAP" 2>&1)
-assert_contains "$out" "node-failed ccr-enable-sanitizer.mjs" "the sanitizer step ran and failed"
+out=$(timeout 5 sh "$WRAP" 2>&1)
+assert_contains "$out" "node-failed ccr-enable-plugins.mjs" "the plugins step ran and failed"
 assert_contains "$out" "CCR-STARTED"                          "CCR still starts"
 printf '#!/bin/sh\necho "node-ran $(basename "$1")"\n' > "$BIN/node"; chmod +x "$BIN/node"
 
@@ -50,11 +41,11 @@ printf 'from-the-file' > "$SECRET_ROOT/run/secrets/ccr_web_auth_token"
 if command -v fakechroot >/dev/null 2>&1; then :; fi
 # simplest portable check: copy the wrapper, point the path at the fixture
 sed "s#/run/secrets/ccr_web_auth_token#$SECRET_ROOT/run/secrets/ccr_web_auth_token#g" "$WRAP" > "$BIN/wrap2"
-out=$(timeout 5 env CCR_TOKEN_REFRESH=0 CCR_WEB_AUTH_TOKEN=from-the-env sh "$BIN/wrap2" 2>&1)
+out=$(timeout 5 env CCR_WEB_AUTH_TOKEN=from-the-env sh "$BIN/wrap2" 2>&1)
 assert_contains "$out" "token=[from-the-file]" "the mounted secret file wins over the env var"
 case "$out" in *from-the-env*) _t_bad "the env-var value leaked into the log" ;; *) _t_ok "the secret value is not echoed" ;; esac
 rm -f "$SECRET_ROOT/run/secrets/ccr_web_auth_token"
-out=$(timeout 5 env CCR_TOKEN_REFRESH=0 CCR_WEB_AUTH_TOKEN=from-the-env sh "$BIN/wrap2" 2>&1)
+out=$(timeout 5 env CCR_WEB_AUTH_TOKEN=from-the-env sh "$BIN/wrap2" 2>&1)
 assert_contains "$out" "token=[from-the-env]" "falls back to the env var when the secret file is absent"
 
 echo "== as root: chowns then gosu-drops to PUID/PGID =="
@@ -68,7 +59,7 @@ printf '#!/bin/sh\necho "gosu $1" >> "%s"; shift; exec "$@"\n'       "$BIN/calls
 : > "$BIN/calls"
 # point one chown target at our fixture dir so we can prove the loop runs
 sed "s#/data /app#$CHOWNABLE /app#" "$WRAP" > "$BIN/wrap3"
-out=$(timeout 5 env PATH="$BIN:$PATH" PUID=1234 PGID=5678 CCR_TOKEN_REFRESH=0 sh "$BIN/wrap3" 2>&1)
+out=$(timeout 5 env PATH="$BIN:$PATH" PUID=1234 PGID=5678 sh "$BIN/wrap3" 2>&1)
 calls=$(cat "$BIN/calls")
 assert_contains "$calls" "chown -R 1234:5678 $CHOWNABLE" "chowns an existing writable path to PUID:PGID"
 assert_contains "$calls" "gosu 1234:5678"                "drops to PUID:PGID via gosu"

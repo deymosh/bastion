@@ -48,10 +48,9 @@ services:
       # CCR_WEB_AUTH_TOKEN is NOT an env var - ccr-entrypoint-wrapper.sh exports
       # it from /run/secrets/ccr_web_auth_token (falls back to the env if set).
       CLAUDE_CONFIG_DIR: /data/.claude
-      # OAuth token refresher (keeps .credentials.json fresh; no restart needed).
+      # 1 = the bundled plugin refreshes the Claude Code OAuth login with the
+      # claude CLI whenever Anthropic answers 401 (ccr-oauth-refresh-plugin.cjs).
       CCR_TOKEN_REFRESH: ${CCR_TOKEN_REFRESH:-1}
-      CCR_REFRESH_INTERVAL: ${CCR_REFRESH_INTERVAL:-300}
-      CCR_REFRESH_SKEW_MS: ${CCR_REFRESH_SKEW_MS:-1800000}
       # Tools the bundled schema sanitizer drops per target model (empty = none).
       CCR_DROP_TOOLS: ${CCR_DROP_TOOLS:-}
     volumes:

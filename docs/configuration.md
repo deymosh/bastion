@@ -134,9 +134,7 @@ The tables below are generated from the registry.
 |---|---|---|---|
 | `CCR_WEB_AUTH_TOKEN` | random (43 chars) | text, secret | Token for the CCR web UI. |
 | `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY` | `1` | bool | 1 lets Claude Code list models from the gateway (/v1/models). |
-| `CCR_TOKEN_REFRESH` | `1` | bool | 1 keeps the CCR OAuth credentials refreshed in-container. |
-| `CCR_REFRESH_INTERVAL` | `300` | posint | Seconds between refresher checks. |
-| `CCR_REFRESH_SKEW_MS` | `1800000` | posint | Refresh the access token this many milliseconds before it expires. |
+| `CCR_TOKEN_REFRESH` | `1` | bool | 1 refreshes the CCR Claude OAuth login with the claude CLI when Anthropic answers 401. |
 | `CCR_DROP_TOOLS` | - | text | Tools to drop for some models, e.g. deepseek=Artifact,ArtifactData;gemini=Monitor (empty = none). See stack-ai/README.md. |
 
 ### MCP gateway

@@ -59,11 +59,10 @@ assert_ok   validate_env_value CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY 1
 assert_fail validate_env_value CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY 2
 assert_ok   validate_env_value CCR_TOKEN_REFRESH 0
 assert_fail validate_env_value CCR_TOKEN_REFRESH 2
-assert_ok   validate_env_value CCR_REFRESH_INTERVAL 300
-assert_fail validate_env_value CCR_REFRESH_INTERVAL 0
-assert_fail validate_env_value CCR_REFRESH_INTERVAL abc
-assert_ok   validate_env_value CCR_REFRESH_SKEW_MS 1800000
-assert_fail validate_env_value CCR_REFRESH_SKEW_MS -5
+assert_ok   validate_env_value SCB_CHECK_INTERVAL 300
+assert_fail validate_env_value SCB_CHECK_INTERVAL 0
+assert_fail validate_env_value SCB_CHECK_INTERVAL abc
+assert_fail validate_env_value SCB_CHECK_INTERVAL -5
 assert_ok   validate_env_value CODEDECK_TOR_PROXY_URL socks5h://tor:9050
 assert_ok   validate_env_value CODEDECK_TOR_PROXY_URL ""
 assert_fail validate_env_value CODEDECK_TOR_PROXY_URL http://tor:9050
@@ -184,7 +183,8 @@ legacy_expect=(
   "CODEDECK_TOR_PROXY_URL=socks5h://tor:9050" "GIT_USER=Some Name"
   "CCR_WEB_AUTH_TOKEN=ccr-token-0123456789" "MCP_GATEWAY_TOKEN=mcp-token-abcdefghij"
   "CONTEXT7_API_KEY=" "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat-fake"
-  "CCR_REFRESH_INTERVAL=900"          # set twice: the later line wins
+  "CCR_REFRESH_INTERVAL=900"          # retired, and set twice: kept, the later line wins
+  "CCR_REFRESH_SKEW_MS=1800000"       # retired: kept
   "AGENT_DOCKER_CPUS=3"               # was a custom var, now a managed setting
   "LXMF_ALLOWED_IDENTITY=deadbeef" "MY_TOOL_FLAG=on"   # retired / unknown: kept
 )
@@ -202,7 +202,7 @@ echo "== load_config: defaults only fill empty keys; file untouched when unchang
   load_config >/dev/null 2>&1 )
 tok1=$(read_env_var MCP_GATEWAY_TOKEN)
 assert_eq "${#tok1}" 43 "a missing token is generated (43 URL-safe chars)"
-assert_eq "$(read_env_var CCR_REFRESH_INTERVAL)" "300" "a literal default is written"
+assert_eq "$(read_env_var SCB_CHECK_INTERVAL)" "3600" "a literal default is written"
 m1=$(file_mtime "$CONFIG_FILE")
 ( unset "${MANAGED_VARS[@]}"; load_config >/dev/null 2>&1 )
 m2=$(file_mtime "$CONFIG_FILE")

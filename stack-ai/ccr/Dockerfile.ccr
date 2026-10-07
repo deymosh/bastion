@@ -52,16 +52,17 @@ COPY --from=source /src/packages/ui/dist/renderer /usr/share/nginx/html
 COPY --from=source /src/docker/entrypoint.sh /usr/local/bin/ccr-entrypoint
 COPY --from=source /src/docker/pm2.config.cjs ./docker/pm2.config.cjs
 
-# Bastion: keep the Claude Code OAuth token fresh in this headless container.
-COPY ccr-token-refresher.mjs /usr/local/bin/ccr-token-refresher.mjs
 COPY ccr-entrypoint-wrapper.sh /usr/local/bin/ccr-entrypoint-wrapper
 
 # Bastion: a custom router and a gateway request-transform plugin that only
 # rewrite tool schemas some providers reject (see ccr-tool-schema-sanitizer.cjs
-# and ccr-tool-schema-plugin.cjs), and the startup step that points CCR at both.
+# and ccr-tool-schema-plugin.cjs); a plugin that refreshes the Claude Code
+# OAuth login with the claude CLI above when Anthropic answers 401 (see
+# ccr-oauth-refresh-plugin.cjs); and the startup step that registers them.
 COPY ccr-tool-schema-sanitizer.cjs /usr/local/lib/ccr/ccr-tool-schema-sanitizer.cjs
 COPY ccr-tool-schema-plugin.cjs /usr/local/lib/ccr/ccr-tool-schema-plugin.cjs
-COPY ccr-enable-sanitizer.mjs /usr/local/bin/ccr-enable-sanitizer.mjs
+COPY ccr-oauth-refresh-plugin.cjs /usr/local/lib/ccr/ccr-oauth-refresh-plugin.cjs
+COPY ccr-enable-plugins.mjs /usr/local/bin/ccr-enable-plugins.mjs
 
 # The container starts as root only long enough for the wrapper to align
 # ownership of the writable paths and then drops to the unprivileged uid/gid
@@ -69,10 +70,10 @@ COPY ccr-enable-sanitizer.mjs /usr/local/bin/ccr-enable-sanitizer.mjs
 # path outside root-only /run, so move it into node-writable /var/lib/nginx.
 RUN chmod 0755 /usr/local/bin/ccr-entrypoint \
                 /usr/local/bin/ccr-entrypoint-wrapper \
-                /usr/local/bin/ccr-token-refresher.mjs \
-                /usr/local/bin/ccr-enable-sanitizer.mjs \
+                /usr/local/bin/ccr-enable-plugins.mjs \
     && chmod 0644 /usr/local/lib/ccr/ccr-tool-schema-sanitizer.cjs \
                   /usr/local/lib/ccr/ccr-tool-schema-plugin.cjs \
+                  /usr/local/lib/ccr/ccr-oauth-refresh-plugin.cjs \
     && mkdir -p /data /run/nginx /var/lib/nginx /var/log/nginx \
     && sed -i 's#pid /run/nginx.pid;#pid /var/lib/nginx/nginx.pid;#' /etc/nginx/nginx.conf
 

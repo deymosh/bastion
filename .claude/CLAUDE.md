@@ -222,4 +222,5 @@ read-only by `lightningd` and `teosd` for the Tor control cookie.
 - `local-testing` — validating changes without `bitcoind`, which stack subset a
   given change needs, and the CLN `gossip_store` named-volume workaround.
 - `ccr-oauth` — how CCR consumes the Claude OAuth credentials file and how the
-  in-container token refresher keeps it fresh.
+  bundled plugin has the `claude` CLI refresh it on demand when Anthropic
+  answers 401.

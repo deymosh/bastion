@@ -1,0 +1,73 @@
+# Throwaway Compose project for the CCR OAuth refresh integration test
+# (tests/integration/ccr-oauth-refresh.sh). Completely separate from the real
+# stack-ai project: distinct container names, its own network and volume, and
+# NO published host ports. The ccr image is built from the real stack-ai
+# Dockerfile, so the shipped plugin, wrapper and claude CLI are what is tested.
+#
+# api.anthropic.com and platform.claude.com resolve to the fake server, whose
+# certificate comes from a throwaway CA the test script generates into ./certs
+# (removed again by its cleanup trap); NODE_EXTRA_CA_CERTS makes both CCR and
+# the claude CLI trust it.
+name: bastion-ccrtest
+
+services:
+  fake-anthropic:
+    image: node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2
+    container_name: bastion-ccrtest-fake-anthropic
+    command: ["node", "/test/fake-anthropic.js"]
+    volumes:
+      - ./fake-anthropic.js:/test/fake-anthropic.js:ro
+      - ./certs:/certs:ro
+    networks:
+      net:
+        ipv4_address: 10.199.0.10
+
+  ccr:
+    build:
+      context: ../../../stack-ai/ccr
+      dockerfile: Dockerfile.ccr
+    image: bastion-ccrtest
+    container_name: bastion-ccrtest-ccr
+    # Same privilege shape as the real service: root only for the wrapper's
+    # chown + gosu drop.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      CCR_GATEWAY_HOST: 0.0.0.0
+      CCR_WEB_HOST: 127.0.0.1
+      CCR_PUBLIC_HOST: 127.0.0.1
+      CCR_PUBLIC_PORT: 3458
+      CCR_WEB_AUTH_TOKEN: ccrtest-web-token
+      CLAUDE_CONFIG_DIR: /data/.claude
+      CCR_TOKEN_REFRESH: "1"
+      NODE_EXTRA_CA_CERTS: /certs/ca.pem
+    extra_hosts:
+      - "api.anthropic.com:10.199.0.10"
+      - "platform.claude.com:10.199.0.10"
+    volumes:
+      - ccr_data:/data
+      - ./certs:/certs:ro
+      - ./seed.mjs:/test/seed.mjs:ro
+      - ./request.mjs:/test/request.mjs:ro
+    networks:
+      net:
+        ipv4_address: 10.199.0.2
+
+networks:
+  net:
+    ipam:
+      config:
+        - subnet: 10.199.0.0/24
+
+volumes:
+  ccr_data:

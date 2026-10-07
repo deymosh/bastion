@@ -13,7 +13,7 @@
  * on the tag-routed request was enough to fix it, so the sanitizing has to
  * happen at a stage every route passes.
  *
- * Registered by ccr-enable-sanitizer.mjs as a `plugins[]` entry with the
+ * Registered by ccr-enable-plugins.mjs as a `plugins[]` entry with the
  * `trusted-code` and `gateway-request-transforms` permissions. It never
  * picks a model and never fails a request: a transform that throws is
  * logged by CCR and skipped.
