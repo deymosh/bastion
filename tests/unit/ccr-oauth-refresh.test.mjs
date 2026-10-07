@@ -25,6 +25,7 @@ const dir = process.env.CLAUDE_CONFIG_DIR;
 const file = dir + "/.credentials.json";
 fs.appendFileSync(dir + "/calls.log", JSON.stringify({
   argv: process.argv.slice(2),
+  cwdEntries: fs.readdirSync(process.cwd()).length,
   leaked: ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN"]
     .filter((name) => name in process.env),
 }) + "\\n");
@@ -37,12 +38,18 @@ setTimeout(() => {
     creds.claudeAiOauth.expiresAt = Date.now() + 8 * 3600 * 1000;
     fs.writeFileSync(file, JSON.stringify(creds));
   }
-  console.error("There's an issue with the selected model");
+  console.error(mode === "rotate"
+    ? "There's an issue with the selected model"
+    : "Failed to authenticate: OAuth session expired and could not be refreshed");
   process.exit(1);
 }, Number(process.env.FAKE_CLAUDE_DELAY_MS || 0));
 `;
 
 let dir;
+let logs = [];
+const originalLog = console.log;
+console.log = (...args) => { logs.push(args.join(" ")); };
+const logged = (pattern) => logs.some((line) => pattern.test(line));
 
 function credentials(overrides = {}) {
   return {
@@ -95,6 +102,7 @@ beforeEach(() => {
   delete process.env.FAKE_CLAUDE_MODE;
   delete process.env.FAKE_CLAUDE_DELAY_MS;
   Object.assign(plugin._state, { inflight: null, lastSuccessAt: 0, lastFailureAt: 0 });
+  logs = [];
 });
 
 test("a 401 retry for the Claude Code provider refreshes through the CLI", async () => {
@@ -111,12 +119,23 @@ test("a 401 retry for the Claude Code provider refreshes through the CLI", async
   assert.equal(call.argv[call.argv.indexOf("--model") + 1], "bastion-oauth-refresh-only",
     "a model that does not exist, so no inference is spent");
   assert.ok(call.argv.includes("--no-session-persistence"));
+  assert.equal(call.argv[call.argv.indexOf("--setting-sources") + 1], "project",
+    "CCR's user settings (base URL pointing at CCR, apiKeyHelper) are ignored");
+  assert.equal(call.cwdEntries, 0, "run from an empty directory: no project settings either");
   assert.deepEqual(call.leaked, [], "the CLI sees no env credentials or base URL");
 
   const after = stored();
   assert.equal(after.claudeAiOauth.refreshToken, "sk-ant-ort01-new");
   assert.equal(after.claudeAiOauth.subscriptionType, "pro", "unmanaged keys survive");
   assert.equal(after.organizationUuid, "11111111-1111-1111-1111-111111111111");
+  assert.ok(logged(/refreshed; access token valid until \S+Z/));
+});
+
+test("a refresh token close to expiry is reported after a refresh", async () => {
+  writeFileSync(join(dir, ".credentials.json"),
+    JSON.stringify(credentials({ refreshTokenExpiresAt: Date.now() + 24 * 3600 * 1000 })));
+  await plugin.authenticate(retryInput());
+  assert.ok(logged(/refresh token until \S+Z - it expires soon; LOGIN NEEDED/));
 });
 
 test("the token CCR compiled into its gateway config is switched in place", async () => {
@@ -165,12 +184,14 @@ test("concurrent 401s share one CLI run, and a refresh is reused for a while", a
   const late = await plugin.authenticate(retryInput());
   assert.equal(late.value.headers.authorization, "Bearer sk-ant-oat01-new");
   assert.equal(calls().length, 1);
+  assert.ok(logged(/401 right after a refresh; retrying with the refreshed token/), "the reuse is logged, not silent");
 });
 
-test("a failed refresh leaves the request as it was, and backs off", async () => {
+test("a failed refresh leaves the request as it was, says a login is needed, and backs off", async () => {
   process.env.FAKE_CLAUDE_MODE = "fail";
   const input = retryInput();
   assert.equal((await plugin.authenticate(input)).value, input.upstreamRequest);
+  assert.ok(logged(/refresh token was rejected \(claude CLI: Failed to authenticate: OAuth session expired and could not be refreshed\)\. LOGIN NEEDED/));
   await plugin.authenticate(retryInput());
   assert.equal(calls().length, 1, "no second CLI run inside the backoff window");
   assert.equal(stored().claudeAiOauth.refreshToken, "sk-ant-ort01-old");
@@ -180,9 +201,11 @@ test("no OAuth login, or a dead refresh token, never runs the CLI", async () => 
   writeFileSync(join(dir, ".credentials.json"), JSON.stringify({ primaryApiKey: "sk-ant-api-x" }));
   const input = retryInput();
   assert.equal((await plugin.authenticate(input)).value, input.upstreamRequest);
+  assert.ok(logged(/holds no OAuth login\. LOGIN NEEDED/));
   writeFileSync(join(dir, ".credentials.json"),
     JSON.stringify(credentials({ refreshTokenExpiresAt: Date.now() - 1000 })));
   assert.equal((await plugin.authenticate(input)).value, input.upstreamRequest);
+  assert.ok(logged(/refresh token expired at \S+Z\. LOGIN NEEDED/));
   assert.equal(calls().length, 0);
 });
 
@@ -190,6 +213,7 @@ test("a missing CLI is a failed refresh, not a failed request", async () => {
   process.env.CCR_CLAUDE_CLI = join(dir, "no-such-claude");
   const input = retryInput();
   assert.equal((await plugin.authenticate(input)).value, input.upstreamRequest);
+  assert.ok(logged(/refresh failed \(claude CLI: could not start the claude CLI: .*\); retrying on the next 401/));
 });
 
 test("setup hands this file to the core gateway; the hook is fail-open", async () => {
@@ -205,3 +229,5 @@ test("setup hands this file to the core gateway; the hook is fail-open", async (
   assert.equal(hook.execution.failureMode, "fail_open");
   assert.ok(hook.execution.timeoutMs > 60_000, "the hook outlives the CLI's own timeout");
 });
+
+test.after?.(() => { console.log = originalLog; });

@@ -28,6 +28,8 @@ const state = {
   messages401: 0,
   // Fake bearer tokens seen on /v1/messages, in order (prefix stripped).
   bearers: [],
+  // Calls the claude CLI made for the refresh plugin's nonexistent model.
+  cliProbes: 0,
 };
 
 function json(res, status, body) {
@@ -95,6 +97,8 @@ function handle(req, res, body) {
     let request = {};
     try { request = JSON.parse(body); } catch { /* empty body */ }
     if (request.model === "bastion-oauth-refresh-only") {
+      // The refresh plugin's CLI must reach Anthropic directly, never via CCR.
+      state.cliProbes += 1;
       return json(res, 404, { type: "error", error: { type: "not_found_error", message: `model: ${request.model}` } });
     }
     state.bearers.push(bearer.replace(/^sk-ant-oat01-/, ""));

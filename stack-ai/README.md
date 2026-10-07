@@ -56,10 +56,15 @@ so no restart is needed. The CLI run spends no inference: it asks for a model
 that does not exist, after refreshing.
 
 A refresh that fails leaves the original `401` to reach the client, and is not
-retried for a minute. If it keeps failing (the refresh token was revoked or
-expired), log in again. `CCR_TOKEN_REFRESH=0` turns the plugin off. Like the
-schema sanitizer below, a fresh install gets the plugin from its second start.
-To debug it: `./bastion logs ccr | grep bastion-claude-oauth-refresh`.
+retried for a minute. The refresh token itself expires too (about 9-10 days
+after it was issued, in the logins observed so far), and only an interactive
+login replaces it. Every successful refresh logs both expiries and warns
+when the refresh token has under two days left; every case that needs you to
+log in again (refresh token rejected or expired, no login at all) logs a line
+containing `LOGIN NEEDED`. Check with
+`./bastion logs ccr | grep bastion-claude-oauth-refresh`, or alert on
+`LOGIN NEEDED`. `CCR_TOKEN_REFRESH=0` turns the plugin off. Like the schema
+sanitizer below, a fresh install gets the plugin from its second start.
 
 ### Tool schemas other providers reject
 

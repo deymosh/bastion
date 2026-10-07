@@ -10,7 +10,8 @@
 # 401 -> core-gateway retry -> plugin -> official claude CLI refresh -> retry
 # carries the new token. Then: the next request reuses the new token without
 # another refresh, streaming works, the token survives a CCR restart, and a
-# revoked login fails open (the client gets the original 401).
+# revoked login fails open (the client gets the original 401) and logs
+# LOGIN NEEDED.
 #
 # Isolated throwaway project (bastion-ccrtest): distinct container names, its
 # own network + volume, NO published host ports, `down -v` cleanup. Needs
@@ -92,6 +93,7 @@ echo "== a request with the stale token is refreshed and succeeds =="
 out=$(request)
 case "$out" in "200 "*bastion-refresh-ok*) ok "client gets 200 after the upstream 401" ;; *) bad "first request: $out" ;; esac
 [ "$(stat_of oauthPosts)" = 1 ] && ok "exactly one refresh, done by the claude CLI" || bad "refresh count: $(stat_of oauthPosts)"
+[ "$(stat_of cliProbes)" -ge 1 ] 2>/dev/null   && ok "the CLI talked to Anthropic directly, ignoring CCR's settings.json routing"   || bad "the CLI's call never reached Anthropic (cliProbes=$(stat_of cliProbes))"
 [ "$(stat_of bearers)" = '["fake-0","fake-1"]' ] \
   && ok "the retry carried the refreshed token" || bad "bearers seen: $(stat_of bearers)"
 stored=$(dex "$CCR" node -e 'const c=require("/data/.claude/.credentials.json");console.log(c.claudeAiOauth.accessToken, c.claudeAiOauth.refreshToken, c.claudeAiOauth.rateLimitTier, c.organizationUuid)')
@@ -116,8 +118,10 @@ echo "== a revoked login fails open =="
 dex "$FAKE" node -e "fetch('http://127.0.0.1:8080/control/revoke')" >/dev/null
 out=$(request)
 case "$out" in "401 "*) ok "the client gets the original 401" ;; *) bad "revoked: $out" ;; esac
-case "$(docker logs "$CCR" 2>&1)" in *"[bastion-claude-oauth-refresh] refresh failed"*) ok "the failed refresh is logged" ;;
-  *) bad "no failure log line" ;; esac
+line=$(docker logs "$CCR" 2>&1 | grep "bastion-claude-oauth-refresh\] refresh failed" | tail -1)
+case "$line" in *"refresh token was rejected"*"LOGIN NEEDED"*) ok "the log says a login is needed" ;;
+  *) bad "failure log line: ${line:-none}" ;; esac
+echo "    $line"
 
 echo
 if [ "$fail" -eq 0 ]; then printf '\033[32mall %d checks passed\033[0m\n' "$pass"; exit 0

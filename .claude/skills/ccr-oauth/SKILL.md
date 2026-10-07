@@ -78,8 +78,13 @@ gateway start. A CCR plugin reaches it with
 1. Mark the stored access token expired (`expiresAt` in the past). The CLI only
    refreshes a token it believes has expired, and a 401 is authoritative.
 2. Run `claude -p ok --model bastion-oauth-refresh-only --max-turns 1
-   --no-session-persistence`, with `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
-   `ANTHROPIC_BASE_URL` and `CLAUDE_CODE_OAUTH_TOKEN` stripped from its env. The
+   --no-session-persistence --setting-sources project` from an empty temp
+   dir, with `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`
+   and `CLAUDE_CODE_OAUTH_TOKEN` stripped from its env. `--setting-sources
+   project` is load-bearing: CCR writes `/data/.claude/settings.json` with
+   `env.ANTHROPIC_BASE_URL=http://127.0.0.1:3456` and an `apiKeyHelper`, so
+   without it the CLI's call goes into CCR itself (a catch-all route could
+   spend inference or loop back into the hook). The
    CLI refreshes (`POST platform.claude.com/v1/oauth/token`), validates the
    profile, persists the rotated pair, releases its lock, then calls
    `/v1/messages` for the nonexistent model and gets `404 not_found_error`. No
@@ -113,14 +118,25 @@ does not start its gateway ("No available models"), so `/health` (proxied by
 nginx) fails until a provider exists. That is upstream behaviour, not a
 Bastion fault.
 
-## 5. Debugging a CCR 401
+## 5. Lifetimes and logging
+
+Observed: access token ~8 h. Refresh token ~9-10 days after the write that
+issued it (`refreshTokenExpiresAt`; two real logins measured 8.9 and 10.0
+days). Whether a refresh extends it is not established. So a node whose CCR
+sees no 401 for longer than that may need an interactive login. Every line
+needing an operator contains `LOGIN NEEDED`.
+
+## 6. Debugging a CCR 401
 
 1. `./bastion logs ccr | grep bastion-claude-oauth-refresh`:
-   - `upstream 401: refreshing …` then `refreshed; the new access token expires at …`: working.
-   - `refresh failed (<last CLI line>)`: the CLI could not refresh. If it
-     persists, the refresh token was revoked/expired: log in again with
-     `./bastion exec ccr -- claude`.
-   - `… holds no OAuth login`: no `claudeAiOauth` in the file.
+   - `upstream 401: refreshing …` then `refreshed; access token valid until …, refresh token until …`: working
+     (`- it expires soon; LOGIN NEEDED …` appended when under two days remain).
+   - `refresh failed: the refresh token was rejected (claude CLI: Failed to authenticate: OAuth session expired and could not be refreshed). LOGIN NEEDED …`:
+     revoked/expired login; log in again with `./bastion exec ccr -- claude`.
+   - `upstream 401 and the refresh token expired at … LOGIN NEEDED`: same, caught without running the CLI.
+   - `refresh failed (claude CLI: …); retrying on the next 401 after a minute`: transient or unknown; read the CLI line.
+   - `… holds no OAuth login. LOGIN NEEDED`: no `claudeAiOauth` in the file.
+   - `401 right after a refresh; retrying with the refreshed token`: a request raced the refresh; harmless unless it repeats.
    - no line at all: the plugin is not registered (check
      `./bastion logs ccr | grep ccr-enable-plugins`) or `CCR_TOKEN_REFRESH=0`.
 2. `./bastion exec ccr -- ls -la /data/.claude`: a long-lived
