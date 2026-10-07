@@ -27,6 +27,13 @@
  *    (`claude auth status` is NOT used: it starts a refresh and exits before
  *    it completes, leaving the CLI's refresh lock held, which then blocks the
  *    next refresh.)
+ *  - the CLI must talk to Anthropic directly. CCR writes the config dir's
+ *    settings.json so that Claude Code in this container routes through CCR
+ *    (ANTHROPIC_BASE_URL, an apiKeyHelper); obeyed here, the CLI's model call
+ *    would land on CCR, where a catch-all route could spend inference or
+ *    route back into this very hook. `--setting-sources project`, run from an
+ *    empty directory, drops those user settings; the login itself lives in
+ *    .credentials.json and is still used.
  * Success is judged by the stored access token having changed, not by the
  * CLI's exit status (non-zero by design here).
  *
@@ -42,7 +49,7 @@
  */
 
 const { spawn } = require("node:child_process");
-const { readFileSync, renameSync, writeFileSync } = require("node:fs");
+const { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } = require("node:fs");
 const { homedir, tmpdir } = require("node:os");
 const { join } = require("node:path");
 
@@ -57,6 +64,14 @@ const FRESH_WINDOW_MS = 30_000;
 // After a failed refresh (revoked login, network), do not rerun the CLI on
 // every request; one attempt per window is enough until an operator logs in.
 const FAILURE_BACKOFF_MS = 60_000;
+// Warn ahead of time when the refresh token itself is about to run out: past
+// that point only an interactive login brings the provider back.
+const REFRESH_TOKEN_WARN_MS = 2 * 24 * 3600 * 1000;
+// What the CLI prints when the refresh token is rejected (revoked/expired).
+const LOGIN_NEEDED_OUTPUT = /could not be refreshed|invalid_grant|not logged in|please run \/login|session expired/i;
+// Every log line that needs an operator carries this marker, so it is easy
+// to grep for or alert on.
+const LOGIN_NEEDED = `LOGIN NEEDED: run \`./bastion exec ccr -- claude\` and log in again`;
 // Anything that would make the CLI use other credentials than the login file.
 const STRIPPED_ENV = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN"];
 
@@ -140,14 +155,20 @@ function isClaudeCodeOauthTarget(input) {
 function runClaudeCli() {
   const env = { ...process.env, DISABLE_AUTOUPDATER: "1" };
   for (const name of STRIPPED_ENV) delete env[name];
+  // An empty working directory, so `--setting-sources project` finds no
+  // project settings either.
+  const cwd = mkdtempSync(join(tmpdir(), "bastion-oauth-refresh-"));
+  const cleanup = () => rmSync(cwd, { recursive: true, force: true });
   return new Promise((resolve) => {
     let output = "";
     let child;
     try {
       child = spawn(process.env.CCR_CLAUDE_CLI || "claude",
-        ["-p", "ok", "--model", REFRESH_MODEL, "--max-turns", "1", "--no-session-persistence"],
-        { cwd: tmpdir(), env, stdio: ["ignore", "pipe", "pipe"] });
+        ["-p", "ok", "--model", REFRESH_MODEL, "--max-turns", "1", "--no-session-persistence",
+          "--setting-sources", "project"],
+        { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
     } catch (error) {
+      cleanup();
       resolve(`could not start the claude CLI: ${error?.message ?? error}`);
       return;
     }
@@ -155,13 +176,28 @@ function runClaudeCli() {
     child.stdout.on("data", collect);
     child.stderr.on("data", collect);
     const timer = setTimeout(() => child.kill("SIGKILL"), REFRESH_TIMEOUT_MS);
-    child.on("error", (error) => { clearTimeout(timer); resolve(`could not start the claude CLI: ${error.message}`); });
+    child.on("error", (error) => { clearTimeout(timer); cleanup(); resolve(`could not start the claude CLI: ${error.message}`); });
     child.on("close", () => {
       clearTimeout(timer);
+      cleanup();
       const lines = output.trim().split("\n").filter(Boolean);
       resolve((lines[lines.length - 1] ?? "").slice(0, 300));
     });
   });
+}
+
+const iso = (ms) => (typeof ms === "number" ? new Date(ms).toISOString() : "unknown");
+
+/** One line after a successful refresh: both expiries, plus a warning when due. */
+function logRefreshed(oauth) {
+  let line = `${TAG} refreshed; access token valid until ${iso(oauth.expiresAt)}`;
+  if (typeof oauth.refreshTokenExpiresAt === "number") {
+    line += `, refresh token until ${iso(oauth.refreshTokenExpiresAt)}`;
+    if (oauth.refreshTokenExpiresAt - Date.now() < REFRESH_TOKEN_WARN_MS) {
+      line += ` - it expires soon; ${LOGIN_NEEDED} before then`;
+    }
+  }
+  console.log(line);
 }
 
 /**
@@ -176,14 +212,20 @@ function refreshOnDemand() {
     const credentials = readCredentials();
     const before = oauthOf(credentials);
     if (!before?.refreshToken) {
-      console.log(`${TAG} upstream 401, but ${credentialsFile()} holds no OAuth login; log in with \`claude\``);
+      console.log(`${TAG} upstream 401, but ${credentialsFile()} holds no OAuth login. ${LOGIN_NEEDED}`);
       return undefined;
     }
-    if (now - state.lastSuccessAt < FRESH_WINDOW_MS) return before.accessToken;
+    if (now - state.lastSuccessAt < FRESH_WINDOW_MS) {
+      // Usually a request that raced the refresh with the old token. If the
+      // new token is itself rejected, the next 401 after the window runs the
+      // CLI again and reports why.
+      console.log(`${TAG} upstream 401 right after a refresh; retrying with the refreshed token`);
+      return before.accessToken;
+    }
     if (now - state.lastFailureAt < FAILURE_BACKOFF_MS) return undefined;
     if (typeof before.refreshTokenExpiresAt === "number" && before.refreshTokenExpiresAt <= now) {
       state.lastFailureAt = now;
-      console.log(`${TAG} upstream 401 and the refresh token has expired; log in again with \`claude\``);
+      console.log(`${TAG} upstream 401 and the refresh token expired at ${iso(before.refreshTokenExpiresAt)}. ${LOGIN_NEEDED}`);
       return undefined;
     }
 
@@ -194,12 +236,13 @@ function refreshOnDemand() {
     const after = oauthOf(readCredentials());
     if (after?.accessToken && after.accessToken !== before.accessToken) {
       state.lastSuccessAt = Date.now();
-      const expires = typeof after.expiresAt === "number" ? new Date(after.expiresAt).toISOString() : "unknown";
-      console.log(`${TAG} refreshed; the new access token expires at ${expires}`);
+      logRefreshed(after);
       return after.accessToken;
     }
     state.lastFailureAt = Date.now();
-    console.log(`${TAG} refresh failed (${lastLine || "no output"}); if this persists, log in again with \`claude\``);
+    console.log(LOGIN_NEEDED_OUTPUT.test(lastLine)
+      ? `${TAG} refresh failed: the refresh token was rejected (claude CLI: ${lastLine}). ${LOGIN_NEEDED}`
+      : `${TAG} refresh failed (claude CLI: ${lastLine || "no output"}); retrying on the next 401 after a minute. If it persists, ${LOGIN_NEEDED}`);
     return undefined;
   })().finally(() => { state.inflight = null; });
   return state.inflight;
