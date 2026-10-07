@@ -78,7 +78,7 @@ run_unit() {
   pstep "ccr entrypoint wrapper"  bash tests/unit/ccr-wrapper.test.sh
   pstep "sysbox installer checks" bash tests/unit/install-sysbox.test.sh
   pstep "daemon SCB backup"       bash tests/unit/bastion-daemon.test.sh
-  pstep "ccr token refresher"     node_test tests/unit/ccr-refresher.test.mjs
+  pstep "ccr oauth refresh plugin" node_test tests/unit/ccr-oauth-refresh.test.mjs
   pstep "ccr schema sanitizer"    node_test tests/unit/ccr-sanitizer.test.mjs
 }
 
@@ -87,6 +87,7 @@ run_integration() {
   step "per-container operations"    bash tests/integration/container-ops.sh
   step "secrets are mounted files"   bash tests/integration/secrets.sh
   step "MCP gateway end-to-end"      bash tests/integration/mcp-gateway.sh
+  step "CCR OAuth refresh end-to-end" bash tests/integration/ccr-oauth-refresh.sh
   step "agent-docker end-to-end"     bash tests/integration/agent-docker.sh
 }
 

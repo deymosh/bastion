@@ -46,15 +46,20 @@ Log in once, interactively:
 ```
 
 A plain API key set in the CCR UI also works. The OAuth access token expires
-about once a day. A refresher bundled in the image (`ccr/ccr-token-refresher.mjs`)
-swaps the refresh token for a new pair shortly before expiry and rewrites the
-credentials file atomically. CCR re-reads the file on every request, so no
-restart is needed. If there is no credentials file, or it is not an OAuth file,
-the refresher just logs `idle`. On `invalid_grant`, log in again.
+within a day, and CCR never refreshes it itself. A CCR plugin bundled in the
+image (`ccr/ccr-oauth-refresh-plugin.cjs`) does, on demand: when Anthropic
+answers a request with `401`, CCR retries it once, and on that retry the
+plugin has the official `claude` CLI refresh the login (rotating both tokens in
+the credentials file), then sends the retry with the new token. Nothing runs in
+the background and nothing is polled; CCR re-reads the file on every request,
+so no restart is needed. The CLI run spends no inference: it asks for a model
+that does not exist, after refreshing.
 
-The refresher's settings are `CCR_TOKEN_REFRESH`, `CCR_REFRESH_INTERVAL` and
-`CCR_REFRESH_SKEW_MS`. To debug it:
-`./bastion logs ccr | grep ccr-token-refresher`.
+A refresh that fails leaves the original `401` to reach the client, and is not
+retried for a minute. If it keeps failing (the refresh token was revoked or
+expired), log in again. `CCR_TOKEN_REFRESH=0` turns the plugin off. Like the
+schema sanitizer below, a fresh install gets the plugin from its second start.
+To debug it: `./bastion logs ccr | grep bastion-claude-oauth-refresh`.
 
 ### Tool schemas other providers reject
 
@@ -73,11 +78,13 @@ a custom router for every request, before its routing policies, so it also
 covers subagents routed by a model tag. A routing-rule script would not: the
 tag routes those requests before any rule runs.
 
-At start, the wrapper sets CCR's `CUSTOM_ROUTER_PATH` to the sanitizer
-(`ccr/ccr-enable-sanitizer.mjs`). CCR keeps that setting through edits in its
-UI. A fresh install gets it on its second start, since CCR writes its config
-on the first. If `CUSTOM_ROUTER_PATH` already names another router, the
-wrapper leaves it and logs so. To check: `./bastion logs ccr | grep sanitizer`.
+At start, the wrapper sets CCR's `CUSTOM_ROUTER_PATH` to the sanitizer and
+registers the bundled plugins (`ccr/ccr-enable-plugins.mjs`). CCR keeps those
+settings through edits in its UI. A fresh install gets them on its second
+start, since CCR writes its config on the first. If `CUSTOM_ROUTER_PATH`
+already names another router, or an operator changed or disabled one of the
+plugins, the wrapper leaves it and logs so. To check:
+`./bastion logs ccr | grep ccr-enable-plugins`.
 
 As a last resort, a tool a provider cannot take at all can be dropped for it.
 With `CCR_DROP_TOOLS` set to `deepseek=Artifact,ArtifactData;gemini=Monitor`,

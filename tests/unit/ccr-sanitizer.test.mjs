@@ -1,7 +1,8 @@
 /**
  * Tests for stack-ai/ccr/ccr-tool-schema-sanitizer.cjs (the custom router
- * that rewrites tool schemas) and stack-ai/ccr/ccr-enable-sanitizer.mjs (the
- * startup step that points CCR's CUSTOM_ROUTER_PATH at it).
+ * that rewrites tool schemas) and stack-ai/ccr/ccr-enable-plugins.mjs (the
+ * startup step that points CCR's CUSTOM_ROUTER_PATH at it and registers the
+ * bundled plugins).
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -158,6 +159,13 @@ try {
 }
 const SANITIZER_PATH = "/usr/local/lib/ccr/ccr-tool-schema-sanitizer.cjs";
 const PLUGIN_PATH = "/usr/local/lib/ccr/ccr-tool-schema-plugin.cjs";
+const OAUTH_PLUGIN = {
+  id: "bastion-claude-oauth-refresh",
+  enabled: true,
+  module: "/usr/local/lib/ccr/ccr-oauth-refresh-plugin.cjs",
+  surfaces: { apps: false, gateway: true, provider: false },
+  permissions: ["trusted-code", "core-gateway-plugins"],
+};
 
 function withDb(row, run) {
   const dir = mkdtempSync(join(tmpdir(), "ccr-enable-"));
@@ -169,7 +177,7 @@ function withDb(row, run) {
       db.prepare("INSERT INTO app_config VALUES ('default', ?, 'then')").run(JSON.stringify(row));
     }
     db.close();
-    const out = execFileSync(process.execPath, [join(CCR, "ccr-enable-sanitizer.mjs")], {
+    const out = execFileSync(process.execPath, [join(CCR, "ccr-enable-plugins.mjs")], {
       env: { ...process.env, CCR_CONFIG_DB: file },
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
@@ -208,7 +216,18 @@ test("the startup step registers the request-transform plugin once", { skip: !Da
   const ours = { id: "bastion-tool-schema-sanitizer", enabled: true, module: PLUGIN_PATH };
   withDb({ CUSTOM_ROUTER_PATH: SANITIZER_PATH, plugins: [ours] }, (out, config) => {
     assert.match(out, /request-transform plugin already enabled/);
-    assert.deepEqual(config.plugins, [ours]);
+    assert.deepEqual(config.plugins, [ours, OAUTH_PLUGIN]);
+  });
+});
+
+test("the startup step registers the OAuth refresh plugin once", { skip: !DatabaseSync }, () => {
+  withDb({ CUSTOM_ROUTER_PATH: SANITIZER_PATH }, (out, config) => {
+    assert.match(out, /enabled OAuth refresh plugin/);
+    assert.deepEqual(config.plugins.find((plugin) => plugin.id === OAUTH_PLUGIN.id), OAUTH_PLUGIN);
+  });
+  withDb({ CUSTOM_ROUTER_PATH: SANITIZER_PATH, plugins: [OAUTH_PLUGIN] }, (out, config) => {
+    assert.match(out, /OAuth refresh plugin already enabled/);
+    assert.equal(config.plugins.filter((plugin) => plugin.id === OAUTH_PLUGIN.id).length, 1);
   });
 });
 
@@ -216,7 +235,12 @@ test("the startup step leaves an operator's disabled or moved plugin alone", { s
   const disabled = { id: "bastion-tool-schema-sanitizer", enabled: false, module: PLUGIN_PATH };
   withDb({ CUSTOM_ROUTER_PATH: SANITIZER_PATH, plugins: [disabled] }, (out, config) => {
     assert.match(out, /changed by the operator/);
-    assert.deepEqual(config.plugins, [disabled]);
+    assert.deepEqual(config.plugins, [disabled, OAUTH_PLUGIN]);
+  });
+  const offRefresh = { ...OAUTH_PLUGIN, enabled: false };
+  withDb({ CUSTOM_ROUTER_PATH: SANITIZER_PATH, plugins: [offRefresh] }, (out, config) => {
+    assert.match(out, /plugin bastion-claude-oauth-refresh was changed by the operator/);
+    assert.deepEqual(config.plugins.find((plugin) => plugin.id === OAUTH_PLUGIN.id), offRefresh);
   });
 });
 
@@ -238,9 +262,10 @@ test("the startup step finds the config under CCR_DATA_DIR, whatever HOME is", {
     db.close();
     const env = { ...process.env, CCR_DATA_DIR: dataDir, HOME: join(tmpdir(), "not-the-data-dir") };
     delete env.CCR_CONFIG_DB;
-    const out = execFileSync(process.execPath, [join(CCR, "ccr-enable-sanitizer.mjs")], { env, encoding: "utf8" });
+    const out = execFileSync(process.execPath, [join(CCR, "ccr-enable-plugins.mjs")], { env, encoding: "utf8" });
     assert.match(out, /enabled: CUSTOM_ROUTER_PATH/);
     assert.match(out, /enabled request-transform plugin/);
+    assert.match(out, /enabled OAuth refresh plugin/);
   } finally {
     rmSync(dataDir, { recursive: true, force: true });
   }
@@ -253,7 +278,7 @@ test("the startup step waits for CCR's first start, and never fails", () => {
       assert.equal(config, undefined);
     });
   }
-  const out = execFileSync(process.execPath, [join(CCR, "ccr-enable-sanitizer.mjs")], {
+  const out = execFileSync(process.execPath, [join(CCR, "ccr-enable-plugins.mjs")], {
     env: { ...process.env, CCR_CONFIG_DB: join(tmpdir(), "no-such-dir", "config.sqlite") },
     encoding: "utf8",
   });
