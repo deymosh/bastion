@@ -223,11 +223,11 @@ services:
         ipv4_address: 10.50.0.4
 
   mcp-gateway:
-    # Single MCP entry point for remote agents: the five stdio MCP servers
-    # (searxng, context7, memory, graphify, time) run as children of this one
-    # container and their tools are merged, namespaced
-    # (<namespace>_<tool>), trimmed to a lean context budget, and served over
-    # Streamable HTTP at /mcp behind one Bearer token. See docs/mcp.md.
+    # Single MCP entry point for remote agents: the four stdio MCP servers
+    # (searxng, context7, memory, time) run as children of this one container
+    # and their tools are merged, namespaced (<namespace>_<tool>), trimmed to
+    # a lean context budget, and served over Streamable HTTP at /mcp behind
+    # one Bearer token. See docs/mcp.md.
     # Built from a pinned package set (Dockerfile.mcp-gateway); no depends_on:
     # children are lazy and reconnect, so startup order never matters.
     build:
@@ -249,13 +249,8 @@ services:
       # the gateway reads at startup, plus plain non-secret settings.
       MCP_TOKEN_FILE: /run/secrets/mcp_gateway_token
       MCP_CONTEXT7_API_KEY_FILE: /run/secrets/context7_api_key
-      # github_token is shared with codedeck-bridge: graphify's PR tools drive
-      # the gh CLI with it (read-only: list/get/triage). Without a token the
-      # three PR tools are not served.
-      MCP_GITHUB_TOKEN_FILE: /run/secrets/github_token
       MCP_SEARXNG_URL: http://searxng:8080
       MCP_BM_CONFIG_DIR: /data/memory
-      MCP_GRAPHIFY_DIR: /data/graphify
       MCP_HOST: 0.0.0.0
       MCP_PORT: "8811"
       TIMEZONE: ${TIMEZONE:-UTC}
@@ -268,12 +263,8 @@ services:
         uid: "1000"
         gid: "1000"
         mode: 0440
-      - source: github_token
-        uid: "1000"
-        gid: "1000"
-        mode: 0440
     volumes:
-      # Memory knowledge base + graphify graphs, as a plain host dir so the
+      # Memory knowledge base (basic-memory), as a plain host dir so the
       # state can be inspected or moved between machines like every other
       # data/ dir. Pre-created by ./bastion (create_host_path: false): a dir
       # Docker auto-creates would be root-owned, and the gateway's uid 1000

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Bastion MCP gateway.
 
-Aggregates the stack-ai MCP servers - searxng, context7, memory, graphify,
-time - each running as a local stdio child process, behind a single Streamable
+Aggregates the stack-ai MCP servers - searxng, context7, memory, time -
+each running as a local stdio child process, behind a single Streamable
 HTTP endpoint protected by one Bearer token. Remote agents connect to /mcp on
 the published port; the children are plain executables baked into this image
 at build time (exact-pinned versions), so nothing is fetched at runtime.
@@ -27,13 +27,8 @@ PATHS only. Secret values are read from files at startup - never env vars:
                               to start without one, fail closed).
   MCP_CONTEXT7_API_KEY_FILE   optional Context7 API key (empty file = keyless,
                               which context7 serves at lower rate limits).
-  MCP_GITHUB_TOKEN_FILE       optional GitHub token for graphify's PR tools
-                              (they drive the gh CLI, which refuses to run
-                              unauthenticated; no token = the three PR tools
-                              are not served at all).
   MCP_SEARXNG_URL             default http://searxng:8080 (in-network alias).
-  MCP_BM_CONFIG_DIR           basic-memory config/db/projects (named volume).
-  MCP_GRAPHIFY_DIR            per-project graphify graphs (named volume).
+  MCP_BM_CONFIG_DIR           basic-memory config/db/projects (data dir).
   MCP_HOST / MCP_PORT         listen address, default 0.0.0.0 / 8811.
   TIMEZONE                    --local-timezone for the time server (bastion.conf).
 """
@@ -56,7 +51,6 @@ from starlette.routing import Route
 
 DATA_DIR = os.environ.get("MCP_DATA_DIR", "/data")
 BM_CONFIG_DIR = os.environ.get("MCP_BM_CONFIG_DIR", f"{DATA_DIR}/memory")
-GRAPHIFY_DIR = os.environ.get("MCP_GRAPHIFY_DIR", f"{DATA_DIR}/graphify")
 
 
 def read_secret_file(env_var: str, default_path: str) -> str:
@@ -154,27 +148,9 @@ MEMORY_TRANSFORMS = {
     ),
 }
 
-# --- graphify ---------------------------------------------------------------
-
-# The PR tools drive the gh CLI, which requires authentication; without a
-# token they would sit in the tool list as guaranteed errors.
-GRAPHIFY_PR_TOOLS = ("list_prs", "get_pr_impact", "triage_prs")
-
-
 def build_backends() -> list[tuple[str, StdioTransport, dict[str, ToolTransformConfig] | None]]:
     context7_key = read_secret_file("MCP_CONTEXT7_API_KEY_FILE", "/run/secrets/context7_api_key")
     context7_env = {"CONTEXT7_API_KEY": context7_key} if context7_key else {}
-    github_token = read_secret_file("MCP_GITHUB_TOKEN_FILE", "/run/secrets/github_token")
-
-    # graphify resolves a tool's project_path as <project_path>/<GRAPHIFY_OUT>/graph.json;
-    # with GRAPHIFY_OUT=. the gateway's flat layout (/data/graphify/<project>/graph.json)
-    # resolves without a redundant graphify-out/ level.
-    graphify_env = {"GRAPHIFY_OUT": "."}
-    graphify_transforms = {}
-    if not github_token:
-        graphify_transforms = disabled(*GRAPHIFY_PR_TOOLS)
-    else:
-        graphify_env["GH_TOKEN"] = github_token
 
     return [
         # SearXNG metasearch. JSON output is enabled in the instance's
@@ -191,7 +167,7 @@ def build_backends() -> list[tuple[str, StdioTransport, dict[str, ToolTransformC
         # Up-to-date library/API docs from context7.com.
         ("context7", child_transport("context7-mcp", [], context7_env), CONTEXT7_TRANSFORMS),
         # Per-project knowledge base: markdown notes + SQLite index + semantic
-        # search. Config, database and projects live on the named volume.
+        # search. Config, database and projects live in the data dir.
         (
             "memory",
             child_transport(
@@ -200,17 +176,6 @@ def build_backends() -> list[tuple[str, StdioTransport, dict[str, ToolTransformC
                 {"BASIC_MEMORY_CONFIG_DIR": BM_CONFIG_DIR},
             ),
             MEMORY_TRANSFORMS,
-        ),
-        # Per-project code knowledge graphs (graphify). Serves every graph under
-        # /data/graphify/<project>/graph.json through each tool's project_path.
-        (
-            "graphify",
-            child_transport(
-                "/opt/graphify-venv/bin/python",
-                ["-m", "graphify.serve", f"{GRAPHIFY_DIR}/main/graph.json"],
-                graphify_env,
-            ),
-            graphify_transforms,
         ),
         # Time and timezone conversion, pinned to the host's bastion.conf TZ.
         (
@@ -264,7 +229,6 @@ Bastion node tools, namespaced <namespace>_<tool>:
 - searxng: private metasearch. searxng_web_search finds pages; read a result's full text with searxng_web_url_read.
 - context7: current library/framework docs. Call context7_resolve-library-id first, then context7_query-docs with the returned ID. Prefer it over web search for API questions.
 - memory: per-project knowledge base of markdown notes. List projects with memory_list_memory_projects (create one with memory_create_memory_project), then memory_search_notes to find and memory_write_note to store. Durable facts only, never secrets.
-- graphify: per-project code knowledge graphs. Pass project_path=/data/graphify/<project>; graphify_graph_stats summarizes one, graphify_query_graph answers a question within a token budget.
 - time: current time and timezone conversion; defaults to the node's local timezone.
 """
 
@@ -299,8 +263,6 @@ def seed_volumes() -> None:
     image at build time and is copied into place. Without the config seed
     basic-memory would create its default project under /root (outside the
     volume, lost on recreate) and phone home daily for update checks.
-    Graphify needs no seed: its server starts without a default graph and
-    answers with a clear not-found error until one is built (docs/mcp.md).
     """
     bm_config = os.path.join(BM_CONFIG_DIR, "config.json")
     if not os.path.exists(bm_config):

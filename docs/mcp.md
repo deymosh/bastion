@@ -14,7 +14,6 @@ AI agent (LAN / WireGuard)            bastion-ai (10.50.0.0/24)
   (host firewall = the ACL)           │    mcp-searxng ───── HTTP ────────────┼──► searxng 10.50.0.4
                                       │    context7-mcp ──── HTTPS ───────────┼──► context7.com
                                       │    basic-memory (/data/memory)        │
-                                      │    graphify serve (/data/graphify)    │
                                       │    mcp-server-time                    │
                                       └───────────────────────────────────────┘
 ```
@@ -53,7 +52,6 @@ the token is read at startup.
 | `searxng` | `mcp-searxng` 2.5.0 | `searxng_web_search`, `searxng_web_url_read` |
 | `context7` | `@upstash/context7-mcp` 4.1.1 | `context7_resolve-library-id`, `context7_query-docs` |
 | `memory` | `basic-memory` 0.23.2 | `memory_search_notes`, `memory_read_note`, `memory_write_note`, `memory_edit_note`, `memory_move_note`, `memory_delete_note`, `memory_read_content`, `memory_list_directory`, `memory_recent_activity`, `memory_build_context`, `memory_list_memory_projects`, `memory_create_memory_project` |
-| `graphify` | `graphifyy[mcp]` 0.9.76 | `graphify_query_graph`, `graphify_get_node`, `graphify_get_neighbors`, `graphify_get_community`, `graphify_god_nodes`, `graphify_graph_stats`, `graphify_shortest_path` (+ `graphify_list_prs`, `graphify_get_pr_impact`, `graphify_triage_prs` when a GitHub token is configured) |
 | `time` | `mcp-server-time` 2026.8.18 | `time_get_current_time`, `time_convert_time` |
 
 Notes:
@@ -78,15 +76,6 @@ Notes:
   obligation-free for this repository.
 - **`time_*`** reports the current time and converts between timezones,
   defaulting to the host timezone from `bastion.conf` (`TIMEZONE`).
-- **`graphify_*`** serves per-project **code knowledge graphs** (one
-  `graph.json` per repo, built offline from tree-sitter parsing — no LLM
-  needed). Every tool takes `project_path=/data/graphify/<project>`, and the
-  read tools take a `token_budget` that caps how much they return. Until a
-  project's graph exists the tools answer with a clear not-found error.
-  `graphify_list_prs` / `graphify_get_pr_impact` / `graphify_triage_prs` need
-  the GitHub CLI, so they are only served when `GITHUB_TOKEN` (the node's
-  existing secret, shared with the bridge) is set; their GitHub access is
-  read-only (list/get/triage).
 
 The gateway also sends MCP server **instructions** on `initialize` (clients
 such as Claude Code place them in the model's system prompt): a short map of
@@ -102,28 +91,15 @@ An optional `CONTEXT7_API_KEY` in `bastion.conf` raises context7's rate
 limits; empty (the default) means keyless service at lower limits. It is
 delivered as a secret file like the token.
 
-## Building a graphify graph
+All gateway state lives in one `stack-ai/data/mcp/` directory (memory
+projects, SQLite index, embedding model cache), so moving a node means copying
+it along with the other `data/` dirs.
 
-Graphs are built from a checkout with the same image (offline for code):
-
-```bash
-docker run --rm \
-  -v /path/to/repo:/src:ro \
-  -v $PWD/stack-ai/data/mcp:/data \
-  -e GRAPHIFY_OUT=/data/graphify/<project> \
-  --entrypoint /opt/graphify-venv/bin/python \
-  bastion-mcp-gateway:2.0.0 -m graphify update /src
-```
-
-Re-run it whenever the code changes enough to be worth re-indexing (for
-example on a schedule or from CI). A `.graphifyignore` in the repo root
-(gitignore syntax) shapes what gets indexed — Bastion uses one to keep the
-`rust-teos` submodule out of the superproject graph, where its ~1.8k
-test-fixture nodes drowned the actual node tooling. The graph is then queryable as
-`project_path=/data/graphify/<project>` — the default project name is `main`
-(`/data/graphify/main/graph.json`). All gateway state lives in that one
-`stack-ai/data/mcp/` directory (memory projects, SQLite index, graphs), so
-moving a node means copying it along with the other `data/` dirs.
+Code-graph tooling (e.g. graphify) is deliberately **not** served: a graph has
+to be built from a checkout the gateway can read, while agents edit a
+different tree (the bridge's workspaces, or a remote dev host), so the graph
+is always stale relative to the code being changed — and agents already have
+exact, current file search.
 
 ## Example: remote agent configuration
 
@@ -177,18 +153,13 @@ The MCP server packages are **pinned at build time**
 (`stack-ai/mcp-gateway/Dockerfile.mcp-gateway`): the npm children install via
 `npm ci` from a committed `mcp-gateway/package-lock.json` (`mcp-searxng@2.5.0`,
 `@upstash/context7-mcp@4.1.1`), the Python children (`basic-memory@0.23.2`,
-`graphifyy[mcp]@0.9.76`, `mcp-server-time@2026.8.18`) each live in their
-own pinned virtualenv, the gateway
-itself installs `fastmcp==4.0.5` under the `mcp-gateway/constraints.txt`
-transitive-pin snapshot, and the `gh` CLI `.deb` is checksum-pinned. Both base
-images are digest-pinned. basic-memory's embedding model is baked in at build
+`mcp-server-time@2026.8.18`) each live in their own pinned virtualenv, and the
+gateway itself installs `fastmcp==4.0.5` under the
+`mcp-gateway/constraints.txt` transitive-pin snapshot. Both base images are
+digest-pinned. basic-memory's embedding model is baked in at build
 and seeded onto the volume on first start — a running gateway makes no package
 or model fetches; bump a version by editing the Dockerfile (and regenerating
 the lock/constraints files), then `./bastion build stack-ai`.
-
-`mcp-gateway` also mounts the node's `github_token` secret (shared with
-`codedeck-bridge`) for graphify's PR tools. Treat the MCP token as granting
-read access to whatever that GitHub token can read.
 
 ## Troubleshooting
 
@@ -212,13 +183,6 @@ curl -s http://localhost:8811/healthz
 # (a 403 here means JSON output is disabled - the settings.yml mount is the
 # fix; note SearXNG matches SHORT format names, so the list needs `- json`,
 # not `- application/json`)
-
-# graphify tools answer "graph.json not found": no graph for that project yet
-# - build one (see "Building a graphify graph" above), then pass
-# project_path=/data/graphify/<project>.
-
-# PR tools missing: they are only served when GITHUB_TOKEN is set in
-# bastion.conf (they need an authenticated gh CLI).
 ```
 
 `tests/` covers the wiring without Docker (`./tests/run.sh` static + unit);

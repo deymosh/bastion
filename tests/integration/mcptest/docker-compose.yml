@@ -39,13 +39,10 @@ services:
       - /tmp
     environment:
       MCP_TOKEN_FILE: /run/secrets/mcp_gateway_token
-      # context7_api_key and github_token are deliberately NOT mounted: the
-      # gateway must work keyless/tokenless when the optional secrets are
-      # absent (context7 serves keyless; graphify's PR tools are filtered
-      # out entirely, which e2e.py asserts).
+      # context7_api_key is deliberately NOT mounted: the gateway must work
+      # keyless when the optional secret is absent (context7 serves keyless).
       MCP_SEARXNG_URL: http://searxng:8080
       MCP_BM_CONFIG_DIR: /data/memory
-      MCP_GRAPHIFY_DIR: /data/graphify
       MCP_HOST: 0.0.0.0
       MCP_PORT: "8811"
       TIMEZONE: Europe/Madrid

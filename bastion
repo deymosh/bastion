@@ -214,7 +214,7 @@ do_install_sysbox() {
 # compose entry sets create_host_path: false, because a dir Docker creates is
 # root-owned and the bridge's uid 1000 could no longer clone into it.
 AGENT_WORKSPACES_DIR="${AGENT_WORKSPACES_DIR:-./stack-ai/data/codedeck/workspaces}"
-# mcp-gateway state (memory knowledge base + graphify graphs) is a bind mount
+# mcp-gateway state (the memory knowledge base) is a bind mount
 # so it can be inspected or moved between machines like every other data/
 # dir. Pre-created here for the same reason as the workspaces dir above.
 MCP_DATA_DIR="${MCP_DATA_DIR:-./stack-ai/data/mcp}"
@@ -335,7 +335,7 @@ do_up() {
     if _contains stack-ai "${stacks[@]}"; then
         # Bind source for the MCP gateway's state. create_host_path: false in
         # compose, because a dir Docker creates is root-owned and the
-        # gateway's uid 1000 could not write its memory/graphify state.
+        # gateway's uid 1000 could not write its memory state.
         mkdir -p "$MCP_DATA_DIR"
     fi
     echo -e "${GREEN}${BOLD}[+] Booting: ${stacks[*]}${NC}"

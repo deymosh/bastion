@@ -15,20 +15,16 @@ from mcp.client.streamable_http import create_mcp_http_client, streamable_http_c
 
 URL = "http://mcp-gateway:8811"
 MCP_URL = URL + "/mcp"
-NAMESPACES = ("searxng", "context7", "memory", "graphify", "time")
+NAMESPACES = ("searxng", "context7", "memory", "time")
 
 # Tools the gateway must NOT serve: searxng/memory tools dropped by the trim
-# transforms, and graphify's PR tools, which need a GitHub token this
-# throwaway project deliberately does not mount.
+# transforms.
 FORBIDDEN = (
     "searxng_instance_info",
     "searxng_search_suggestions",
     "memory_view_note",
     "memory_delete_project",
     "memory_list_workspaces",
-    "graphify_list_prs",
-    "graphify_get_pr_impact",
-    "graphify_triage_prs",
 )
 
 checks = 0
@@ -120,13 +116,6 @@ async def mcp_session(token):
             if r.is_error or "E2E check note" not in r.content[0].text:
                 die("memory project+write+search round-trip", r.content[0].text[:120])
             ok("memory namespace round-trips per-project with paginated search")
-
-            # graphify: no graph was built in this throwaway volume, so the
-            # tools must answer with the clear not-found error (not a crash).
-            r = await session.call_tool("graphify_graph_stats", {"project_path": "/data/graphify/e2e"})
-            if r.is_error or "not found" not in r.content[0].text:
-                die("graphify not-found path", r.content[0].text[:120])
-            ok("graphify namespace serves graph tools with a clear not-found error")
 
             r = await session.call_tool(
                 "context7_resolve-library-id", {"libraryName": "react", "query": "hooks"}

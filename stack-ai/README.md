@@ -107,14 +107,14 @@ invisible to the host's Docker.
 
 ## MCP gateway
 
-Five stdio MCP servers run as children of one container: `searxng`, `context7`,
-`memory` (basic-memory), `graphify` and `time`. The gateway serves their tools merged,
+Four stdio MCP servers run as children of one container: `searxng`, `context7`,
+`memory` (basic-memory) and `time`. The gateway serves their tools merged,
 namespaced (`searxng_web_search`, `memory_search_notes`, …) and trimmed to a
 lean context budget (useless tools dropped, verbose descriptions rewritten)
 over Streamable HTTP at `:8811/mcp`. The packages are pinned exactly at build
 time, and nothing is fetched at runtime. A child that crashes only fails its
 own calls and is respawned on the next one. The endpoint, the tool list,
-token rotation, graph builds and a ready-to-use `.mcp.json` are in
+token rotation and a ready-to-use `.mcp.json` are in
 [docs/mcp.md](../docs/mcp.md).
 
 ## Configuration
@@ -132,5 +132,5 @@ the MCP gateway does not, and refuses to start without its token file.
 |---|---|
 | `data/ccr/` | CCR config and the Claude login (`.claude/.credentials.json`, live secret) |
 | `data/codedeck/` | Bridge identity, pairings, sessions and `workspaces/` |
-| `data/mcp/` | MCP gateway state: memory knowledge base (`memory/`) and graphify graphs (`graphify/`) |
+| `data/mcp/` | MCP gateway state: the memory knowledge base (`memory/`) |
 | volumes `agent_docker_*` | The agent daemon's images, TLS tree and published CLI |
