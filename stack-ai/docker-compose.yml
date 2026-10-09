@@ -119,6 +119,10 @@ services:
       # the CA and server keys 0600 root.
       - agent_docker_certs:/certs/agent-docker:ro
       - agent_docker_cli:/usr/local/libexec/docker:ro
+    # The direct link: phones on your network (or VPN) reach the bridge here
+    # without a relay. Only paired phones get past its handshake.
+    ports:
+      - "7447:7447"
     networks:
       net:
         ipv4_address: 10.50.0.3

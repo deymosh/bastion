@@ -12,7 +12,7 @@ The AI control plane:
 | Service | Address | Host port | Purpose |
 |---|---|---|---|
 | `ccr` | `10.50.0.2` (gateway `ccr:8080`) | `3458` (UI) | Claude Code Router, built from a pinned upstream commit |
-| `codedeck-bridge` | `10.50.0.3` + transit | — | Nostr bridge for the CodeDeck+ app. Relay traffic goes over Tor |
+| `codedeck-bridge` | `10.50.0.3` + transit | `7447` (direct link) | Nostr bridge for the CodeDeck+ app. Relay traffic goes over Tor; phones on the LAN or VPN can connect directly on `7447`, and only paired phones get past its handshake |
 | `searxng` | `10.50.0.4` | — | Internal metasearch, used only by the gateway |
 | `mcp-gateway` | `10.50.0.5` | `8811` (`/mcp`) | Five MCP servers behind one Bearer token. See [docs/mcp.md](../docs/mcp.md) |
 | `agent-docker` *(opt-in)* | `10.50.0.6` | — | Private Docker daemon for the agent, on Sysbox. See [docs/agent-docker.md](../docs/agent-docker.md) |

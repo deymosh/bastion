@@ -191,10 +191,11 @@ for svc in searxng mcp-gateway; do
   awk -v s="$svc" '$0 ~ ("^  " s ":") {c=1; next} c && /^  [a-z]/ {c=0} c && /^      transit:/ {t=1} END {exit t?1:0}' "$AI" \
     && ok "$svc stays off bastion-transit" || bad "$svc joins bastion-transit (MCP layer is internal-only)"
 done
-# Host exposure: only CCR's UI (3458) and the MCP gateway (8811) may be
-# published in stack-ai; searxng in particular has no host port at all.
-extra=$(grep -E '^[[:space:]]+- "[0-9]+:' "$AI" | grep -vE '"(3458|8811):' || true)
-[ -z "$extra" ] && ok "stack-ai publishes only 3458 (CCR) and 8811 (MCP gateway)" \
+# Host exposure: only CCR's UI (3458), the MCP gateway (8811) and the
+# codedeck-bridge direct link (7447) may be published in stack-ai; searxng in
+# particular has no host port at all.
+extra=$(grep -E '^[[:space:]]+- "[0-9]+:' "$AI" | grep -vE '"(3458|8811|7447):' || true)
+[ -z "$extra" ] && ok "stack-ai publishes only 3458 (CCR), 8811 (MCP gateway) and 7447 (bridge direct link)" \
   || bad "unexpected published port(s) in stack-ai: $(printf '%s' "$extra" | head -2 | paste -sd'; ' -)"
 # mcp-searxng dies on a 403 unless the instance serves the JSON format.
 # SearXNG compares short format names (`json`), not MIME types.

@@ -12,6 +12,7 @@ optional in production**.
 |---|---|---|
 | `51820/udp` | WireGuard | **anywhere** (this is the VPN entry point) |
 | `80, 3000, 3001, 3458, 4000, 4001, 8811, 9090` | Hub services (hub, RTL, CLN REST, CCR, MCP gateway, Portainer, Grafana, Prometheus) | WireGuard subnet + trusted LAN only |
+| `7447/tcp` | CodeDeck+ bridge direct link (paired phones only, enforced by its handshake) | WireGuard subnet + trusted LAN only |
 | `8081/tcp` | Pi-hole admin UI (`network_mode: host`, Linux only) | WireGuard subnet + trusted LAN only |
 | `53/tcp+udp` | Pi-hole DNS — **only if the LAN resolves through it** (the `bastion.node` record lives here) | WireGuard subnet + trusted LAN only |
 | `22` | SSH (if used) | WireGuard + LAN only |
@@ -68,8 +69,9 @@ sudo ufw allow 51820/udp comment 'WireGuard'
 sudo ufw allow from "$WG_SUBNET" to any port 22 proto tcp comment 'SSH via WG'
 sudo ufw allow from "$LAN_SUBNET" to any port 22 proto tcp comment 'SSH via LAN'
 
-# Hub services (incl. Pi-hole admin 8081) - WireGuard + LAN only
-for P in 80 3000 3001 3458 4000 4001 8081 8811 9090; do
+# Hub services (incl. Pi-hole admin 8081) and the CodeDeck+ bridge direct
+# link (7447) - WireGuard + LAN only
+for P in 80 3000 3001 3458 4000 4001 7447 8081 8811 9090; do
   sudo ufw allow from "$WG_SUBNET"  to any port "$P" proto tcp comment 'Bastion Hub via WG'
   sudo ufw allow from "$LAN_SUBNET" to any port "$P" proto tcp comment 'Bastion Hub via LAN'
 done

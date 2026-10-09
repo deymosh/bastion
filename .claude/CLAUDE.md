@@ -167,7 +167,9 @@ blocks the run and explains why.
 - **Intentional design — do not "fix" it:** every Hub-listed service is published
   on `0.0.0.0` on the host on purpose — the hub (`80`), RTL (`3000`), CLN REST
   (`3001`), CCR (`3458`), Portainer (`4000`), Grafana (`4001`), Prometheus
-  (`9090`). The maintainer wants each reachable three ways: over WireGuard, from
+  (`9090`) - and likewise the CodeDeck+ bridge's direct link (`7447`), which
+  paired phones on the LAN or VPN use instead of a relay (its handshake
+  admits only paired phones). The maintainer wants each reachable three ways: over WireGuard, from
   `localhost` on the host, and from the trusted LAN — keyed by a Pi-hole
   local-DNS record (`bastion.node` → host LAN IP). The **host firewall** is the
   access-control layer (`docs/firewall.md` is the reference; it is not
