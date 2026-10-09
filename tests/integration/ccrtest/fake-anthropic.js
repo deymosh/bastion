@@ -30,6 +30,8 @@ const state = {
   bearers: [],
   // Calls the claude CLI made for the refresh plugin's nonexistent model.
   cliProbes: 0,
+  // The tools of the last /v1/messages request that carried any, as received.
+  lastTools: null,
 };
 
 function json(res, status, body) {
@@ -102,6 +104,7 @@ function handle(req, res, body) {
       return json(res, 404, { type: "error", error: { type: "not_found_error", message: `model: ${request.model}` } });
     }
     state.bearers.push(bearer.replace(/^sk-ant-oat01-/, ""));
+    if (Array.isArray(request.tools)) state.lastTools = request.tools;
     if (state.revoked || !state.accessToken || bearer !== state.accessToken) {
       state.messages401 += 1;
       return json(res, 401, { type: "error", error: { type: "authentication_error", message: "OAuth token has expired." } });

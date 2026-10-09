@@ -1,52 +1,56 @@
 #!/usr/bin/env node
 /**
- * Bastion: wire the bundled CCR extensions into CCR's configuration, before
- * CCR starts:
- *  - CUSTOM_ROUTER_PATH -> ccr-tool-schema-sanitizer.cjs (the original hook);
- *  - a `plugins[]` entry for ccr-tool-schema-plugin.cjs, a gateway request
- *    transform. CCR applies those to every upstream request after routing,
- *    including requests routed by a Claude Code subagent tag, which the
- *    custom router did not protect in practice;
- *  - a `plugins[]` entry for ccr-oauth-refresh-plugin.cjs, which hands CCR's
- *    core gateway a provider hook that refreshes the Claude Code OAuth login
- *    with the `claude` CLI when Anthropic answers 401.
+ * Bastion: wire the bundled CCR plugins into CCR's configuration, before CCR
+ * starts. Both are CCR plugins that hand themselves to CCR's core gateway as
+ * module plugins (`registerCoreGatewayPlugin`), so CCR keeps serving from its
+ * single gateway runtime:
+ *  - bastion-tool-schema-sanitizer (ccr-tool-schema-plugin.cjs), a request
+ *    transform that rewrites tool schemas some providers reject;
+ *  - bastion-claude-oauth-refresh (ccr-oauth-refresh-plugin.cjs), which
+ *    refreshes the Claude Code OAuth login with the `claude` CLI on a 401.
  *
  * CCR keeps its configuration in SQLite (config.sqlite, table app_config,
- * row "default", a JSON document) and its UI has no field for
- * CUSTOM_ROUTER_PATH; it saves back the whole document it loaded, so values
- * set here survive later edits in the UI.
+ * row "default", a JSON document; CCR's own entrypoint edits it the same
+ * way). A UI save writes back the whole document it loaded, so what is set
+ * here survives later edits in the UI.
  *
- * Leaves the configuration alone when:
- *  - there is none yet (a fresh install): CCR writes it on first start, and
- *    the next container start sets everything;
- *  - CUSTOM_ROUTER_PATH already names another router: the operator's own
- *    choice wins (it is logged, so the sanitizer's absence is not silent);
- *  - a plugin with one of these ids already exists (pointing elsewhere, or
- *    disabled by the operator): also left as it is, and logged.
+ * Each start reconciles:
+ *  - a missing entry is added;
+ *  - an entry with this id that loads our module gets the permissions and
+ *    surfaces it needs now (an image upgrade can change them); `enabled` is
+ *    the operator's and is kept;
+ *  - an entry with this id that loads another module is the operator's
+ *    choice, left alone and logged;
+ *  - CUSTOM_ROUTER_PATH pointing at our sanitizer is removed: earlier images
+ *    ran the sanitizer as a custom router too, which the core-gateway
+ *    transform makes redundant. Any other router is the operator's and stays.
+ * A fresh install (no configuration yet) is left alone: CCR writes it on its
+ * first start, and the next start sets everything.
  *
- * Never fatal: CCR always starts, with or without these extensions.
+ * Never fatal: CCR always starts, with or without these plugins.
  */
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 const TAG = "[ccr-enable-plugins]";
 const LIB = "/usr/local/lib/ccr";
-const SANITIZER = process.env.CCR_SANITIZER_PATH ?? `${LIB}/ccr-tool-schema-sanitizer.cjs`;
+// Where earlier images pointed CUSTOM_ROUTER_PATH.
+const LEGACY_ROUTER = `${LIB}/ccr-tool-schema-sanitizer.cjs`;
 
-// The permissions are the minimum CCR requires for each: loading a local
-// module, plus registering a request transform / a core-gateway plugin.
+// The minimum CCR requires to load a local module and register a core-gateway
+// plugin from it; the gateway surface is the only one either plugin uses.
+const PERMISSIONS = ["trusted-code", "core-gateway-plugins"];
+const SURFACES = { apps: false, gateway: true, provider: false };
 const PLUGINS = [
   {
     id: "bastion-tool-schema-sanitizer",
-    label: "request-transform plugin",
+    label: "tool-schema sanitizer plugin",
     module: process.env.CCR_SANITIZER_PLUGIN_PATH ?? `${LIB}/ccr-tool-schema-plugin.cjs`,
-    permissions: ["trusted-code", "gateway-request-transforms"],
   },
   {
     id: "bastion-claude-oauth-refresh",
     label: "OAuth refresh plugin",
     module: process.env.CCR_OAUTH_REFRESH_PLUGIN_PATH ?? `${LIB}/ccr-oauth-refresh-plugin.cjs`,
-    permissions: ["trusted-code", "core-gateway-plugins"],
   },
 ];
 
@@ -73,9 +77,9 @@ function main() {
         return;
       }
       const config = JSON.parse(row.value_json);
-      let changed = enableCustomRouter(config);
+      let changed = removeLegacyRouter(config);
       for (const plugin of PLUGINS) {
-        changed = enablePlugin(config, plugin) || changed;
+        changed = reconcilePlugin(config, plugin) || changed;
       }
       if (changed) {
         db.prepare("UPDATE app_config SET value_json = ?, updated_at = ? WHERE key = 'default'")
@@ -87,44 +91,40 @@ function main() {
   });
 }
 
-/** Sets CUSTOM_ROUTER_PATH unless another router is configured. Returns whether it changed. */
-function enableCustomRouter(config) {
-  const current = typeof config.CUSTOM_ROUTER_PATH === "string" ? config.CUSTOM_ROUTER_PATH.trim() : "";
-  if (current === SANITIZER) {
-    console.log(`${TAG} custom router already enabled`);
+/** Drops CUSTOM_ROUTER_PATH when it is our old sanitizer router. Returns whether it changed. */
+function removeLegacyRouter(config) {
+  if (typeof config.CUSTOM_ROUTER_PATH !== "string" || config.CUSTOM_ROUTER_PATH.trim() !== LEGACY_ROUTER) {
     return false;
   }
-  if (current) {
-    console.log(`${TAG} CUSTOM_ROUTER_PATH is ${current}; leaving it (the tool-schema sanitizer is off)`);
-    return false;
-  }
-  config.CUSTOM_ROUTER_PATH = SANITIZER;
-  console.log(`${TAG} enabled: CUSTOM_ROUTER_PATH=${SANITIZER}`);
+  config.CUSTOM_ROUTER_PATH = "";
+  console.log(`${TAG} removed CUSTOM_ROUTER_PATH=${LEGACY_ROUTER}; the sanitizer now runs in the core gateway`);
   return true;
 }
 
-/** Adds a plugin entry unless one with its id exists. Returns whether it changed. */
-function enablePlugin(config, { id, label, module, permissions }) {
+const sameList = (a, b) => Array.isArray(a) && a.length === b.length && a.every((item) => b.includes(item));
+const sameSurfaces = (a) => Object.entries(SURFACES).every(([key, value]) => a?.[key] === value);
+
+/** Adds or updates one plugin entry (see the header). Returns whether it changed. */
+function reconcilePlugin(config, { id, label, module }) {
   const plugins = Array.isArray(config.plugins) ? config.plugins : [];
   const existing = plugins.find((plugin) => plugin?.id === id);
-  if (existing) {
-    const ours = existing.module === module && existing.enabled !== false;
-    console.log(ours
-      ? `${TAG} ${label} already enabled`
-      : `${TAG} plugin ${id} was changed by the operator; leaving it`);
+  if (!existing) {
+    config.plugins = [...plugins, { id, enabled: true, module, surfaces: { ...SURFACES }, permissions: [...PERMISSIONS] }];
+    console.log(`${TAG} enabled ${label}: ${module}`);
+    return true;
+  }
+  if (existing.module !== module) {
+    console.log(`${TAG} plugin ${id} loads ${existing.module}, not ${module}; leaving it`);
     return false;
   }
-  config.plugins = [
-    ...plugins,
-    {
-      id,
-      enabled: true,
-      module,
-      surfaces: { apps: false, gateway: true, provider: false },
-      permissions,
-    },
-  ];
-  console.log(`${TAG} enabled ${label}: ${module}`);
+  const state = existing.enabled === false ? "disabled by the operator" : "enabled";
+  if (sameList(existing.permissions, PERMISSIONS) && sameSurfaces(existing.surfaces)) {
+    console.log(`${TAG} ${label} already set up (${state})`);
+    return false;
+  }
+  existing.permissions = [...PERMISSIONS];
+  existing.surfaces = { ...SURFACES };
+  console.log(`${TAG} updated ${label} permissions (${state})`);
   return true;
 }
 

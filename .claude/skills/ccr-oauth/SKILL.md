@@ -1,6 +1,6 @@
 ---
 name: ccr-oauth
-description: Use when working on CCR (Claude Code Router) auth in stack-ai — the Claude OAuth credentials file, why the token expires in the headless container, the on-demand refresh plugin (ccr-oauth-refresh-plugin.cjs) that has the official claude CLI refresh the login on an upstream 401, how CCR's core gateway retries a 401 through provider hooks, and debugging 401s from CCR. Read before touching Dockerfile.ccr, the entrypoint wrapper, ccr-enable-plugins.mjs, or the refresh plugin.
+description: Use when working on CCR (Claude Code Router) auth in stack-ai — the Claude OAuth credentials file, why the token expires in the headless container, the on-demand refresh plugin (ccr-oauth-refresh-plugin.cjs) that has the official claude CLI refresh the login on a 401 (inference via the core gateway's provider hooks, account usage via a fetch wrapper in CCR's process), and debugging 401s from CCR. Read before touching Dockerfile.ccr, the entrypoint wrapper, ccr-enable-plugins.mjs, or the refresh plugin.
 ---
 
 # CCR Claude OAuth model
@@ -11,10 +11,12 @@ CCR authenticates its "Claude Code API" provider to `api.anthropic.com` with
 the Claude Code OAuth **access token** from
 `$CLAUDE_CONFIG_DIR/.credentials.json` (`/data/.claude`, set in the compose
 file). The token is short-lived (hours). CCR never refreshes it for this
-provider. Bastion refreshes it **on demand**: when Anthropic answers `401`, a
-bundled CCR plugin has the **official `claude` CLI** refresh the login, and the
-request is retried with the new token. No background process, no polling, no
-hand-rolled OAuth request.
+provider. Bastion refreshes it **only on demand**: when Anthropic answers
+`401`, a bundled CCR plugin has the **official `claude` CLI** refresh the login,
+and the request is retried with the new token. No timer, no background
+process, no polling, no hand-rolled OAuth request - a refresh is always a
+reaction to a 401 (the maintainer's explicit choice; do not add a proactive
+or expiry-driven refresh).
 
 ## When to use this skill
 
@@ -49,29 +51,48 @@ rewrites the token pair itself and keeps every other key.
 
 ## 2. Where the 401 is caught
 
-CCR runs its data plane in a separate supervised process, the **core gateway**
-(npm `@the-next-ai/ai-gateway`), configured from JSON that CCR compiles at
-gateway start. A CCR plugin reaches it with
-`ctx.registerCoreGatewayPlugin({ key, enabled, modulePath })` (needs the
-`core-gateway-plugins` permission and the `gateway` surface); the gateway then
-`import()`s that module and calls its `createGatewayPlugin()`.
+Two CCR paths use the token, in two processes, and the plugin covers both.
+
+**Inference: the core gateway.** CCR runs its data plane in a separate
+supervised process, the **core gateway** (npm `@the-next-ai/ai-gateway`),
+configured from JSON that CCR compiles at gateway start. A CCR plugin reaches
+it with `ctx.registerCoreGatewayPlugin({ key, enabled, modulePath })` (needs
+the `core-gateway-plugins` permission and the `gateway` surface); the gateway
+then `import()`s that module, reads its `manifest` export (name, description,
+`capabilities` - validated: naming a capability the module does not return
+fails the load) and calls its `createGatewayPlugin()`.
 
 - On **any** upstream `401`, the gateway rebuilds the request once through
   every provider hook's `authenticate` with `forceCodexOauthRefreshOnce: true`
-  and retries it. That flag is the plugin's trigger. (Upstream non-OK
+  and retries it. That flag is the hook's trigger. (Upstream non-OK
   responses never reach `responseHooks` / `streamHooks`.)
-- Provider hooks run in registration order; the plugin's hook runs **before**
-  CCR's own auth entries. Those entries are the gateway config's
-  `providerPlugins` with keys `ccr-local-agent-<slug>-claude-code-oauth[-internal]`
-  and an `auth.headers.authorization` that CCR **compiled from the file at
-  gateway start**. Their `providerName`s (public and `…::anthropic_messages`)
-  identify the Claude Code provider, which is how the hook ignores every other
-  provider.
-- Because that compiled header is applied after the plugin, a refreshed file
-  alone would leave requests on the stale token until CCR recompiles. The
-  plugin therefore also rewrites `authorization` on those live config objects
-  (the gateway reads them per request). A restart recompiles from the file, so
-  they converge.
+- The hook input has no provider kind. The Claude Code OAuth providers are
+  found through CCR's provider-plugin entries, keys
+  `ccr-local-agent-<slug>-claude-code-oauth[-internal]`, whose `providerName`s
+  (public and `…::anthropic_messages`) are matched against
+  `targetProviderName`. **Where those entries live moved in CCR v3.1.2**: up
+  to v3.1.1 they are the gateway config's top-level `providerPlugins`; from
+  v3.1.2 that list is empty and they sit in
+  `plugins[key=ccr-local-agent-auth-provider-hooks].config.providerPlugins`.
+  The plugin reads both. If a CCR bump moves them again, the hook silently
+  matches nothing - the integration test's "exactly one refresh" check catches
+  it.
+- Applying the token: from v3.1.2 CCR strips any compiled `authorization`
+  from those entries (`withoutStaticLocalOauthAuth`), and its live hook
+  `ccr-local-agent-auth-provider-hooks`, which runs after ours, re-reads the
+  credentials file per request. So the refreshed file is enough; the plugin
+  also sets the header on the retried request it returns.
+
+**Account usage: CCR's own process.** For a Claude Code OAuth provider CCR
+fetches `GET https://api.anthropic.com/api/oauth/usage` (shown in its UI) with
+the token from the file, through `fetchWithSystemProxy`, which calls the
+**global `fetch`, looked up per call**. A 401 there is a plain error: no
+retry, no hook, no event. So `setup` wraps `globalThis.fetch`: a 401 from that
+exact endpoint gets the same refresh, and that one request is sent again with
+the new token; every other response is returned untouched, and without a new
+token the original 401 is returned. CCR re-runs `setup` on every config change
+after calling the previous registration's `stop`, which unwraps fetch (the
+wrapper also never wraps itself).
 
 ## 3. How the CLI is made to refresh (verified against CLI 2.1.x)
 
@@ -98,21 +119,31 @@ Do **not** use:
   or exited mid-refresh" until the lock goes stale.
 - `--bare`: it ignores the OAuth login ("Not logged in").
 
-Concurrency and backoff (module state in the gateway process): concurrent 401s
-share one CLI run; a 401 within 30 s of a successful refresh reuses the fresh
-token; after a failed refresh the CLI is not rerun for 60 s. The hook is
-`failureMode: "fail_open"` with a 70 s timeout (the CLI is killed at 60 s): a
-failed refresh lets the original 401 reach the client, never a worse error.
-`CCR_TOKEN_REFRESH=0` (read at runtime) disables it.
+Concurrency and backoff, across both processes: concurrent 401s in one
+process share one refresh; across processes a lock file
+(`.credentials.json.bastion-refresh.lock`, stale after 75 s) lets only one CLI
+run at a time, and the second process then reuses its result. The last
+success/failure time is shared in `.credentials.json.bastion-refresh.json`:
+a 401 within 30 s of a successful refresh reuses the fresh token (this spans
+restarts too), and after a failed refresh the CLI is not rerun for 60 s. The
+hook is `failureMode: "fail_open"` with a 135 s timeout (lock wait + the CLI,
+killed at 60 s): a failed refresh lets the original 401 reach the client,
+never a worse error. `CCR_TOKEN_REFRESH=0` (read at runtime) disables both
+paths.
 
 ## 4. Registration
 
 `ccr-entrypoint-wrapper.sh` runs `ccr-enable-plugins.mjs` (as the run user)
 before CCR starts. It edits CCR's config (SQLite `config.sqlite`, table
-`app_config`, row `default`) to set `CUSTOM_ROUTER_PATH` to the schema
-sanitizer and to add two `plugins[]` entries: `bastion-tool-schema-sanitizer`
-and `bastion-claude-oauth-refresh`. An entry an operator changed or disabled is
-left alone. A fresh install gets them on its second start (CCR writes the
+`app_config`, row `default`) to add two `plugins[]` entries,
+`bastion-tool-schema-sanitizer` and `bastion-claude-oauth-refresh`, both with
+`trusted-code` + `core-gateway-plugins` and only the `gateway` surface: both
+hand themselves to the core gateway as module plugins. Never use a CCR-side
+`registerGatewayRequestTransform` (or gateway routes): either makes CCR put
+its compatibility server in front of the core gateway
+(`singleGatewayRuntimeBlockers` in CCR's gateway-service.ts). Our entries get
+their permissions/surfaces reconciled on each start, keeping the operator's
+`enabled`; an entry pointing at another module is left alone. A fresh install gets them on its second start (CCR writes the
 config on the first). Also note: on a fresh install with **no provider**, CCR
 does not start its gateway ("No available models"), so `/health` (proxied by
 nginx) fails until a provider exists. That is upstream behaviour, not a
@@ -129,28 +160,32 @@ needing an operator contains `LOGIN NEEDED`.
 ## 6. Debugging a CCR 401
 
 1. `./bastion logs ccr | grep bastion-claude-oauth-refresh`:
-   - `upstream 401: refreshing …` then `refreshed; access token valid until …, refresh token until …`: working
+   - `upstream 401: refreshing …` (inference) or `account usage 401: refreshing …` (CCR's usage fetch) then `refreshed; access token valid until …, refresh token until …`: working
      (`- it expires soon; LOGIN NEEDED …` appended when under two days remain).
    - `refresh failed: the refresh token was rejected (claude CLI: Failed to authenticate: OAuth session expired and could not be refreshed). LOGIN NEEDED …`:
      revoked/expired login; log in again with `./bastion exec ccr -- claude`.
    - `upstream 401 and the refresh token expired at … LOGIN NEEDED`: same, caught without running the CLI.
    - `refresh failed (claude CLI: …); retrying on the next 401 after a minute`: transient or unknown; read the CLI line.
    - `… holds no OAuth login. LOGIN NEEDED`: no `claudeAiOauth` in the file.
-   - `401 right after a refresh; retrying with the refreshed token`: a request raced the refresh; harmless unless it repeats.
+   - `401 right after a refresh; retrying with the refreshed token`: a request raced the refresh (in either process); harmless unless it repeats.
    - no line at all: the plugin is not registered (check
-     `./bastion logs ccr | grep ccr-enable-plugins`) or `CCR_TOKEN_REFRESH=0`.
+     `./bastion logs ccr | grep ccr-enable-plugins`), `CCR_TOKEN_REFRESH=0`, or
+     a CCR bump moved the provider-plugin entries (section 2).
 2. `./bastion exec ccr -- ls -la /data/.claude`: a long-lived
-   `.oauth_refresh.lock` means a CLI died mid-refresh; it clears when stale.
+   `.oauth_refresh.lock` (the CLI's) or `.credentials.json.bastion-refresh.lock`
+   (the plugin's) means a process died mid-refresh; both clear when stale.
 3. Is the token actually expired?
    `./bastion exec ccr -- node -e "const c=require('/data/.claude/.credentials.json').claudeAiOauth; console.log(new Date(c.expiresAt))"`
 
 ## Tests
 
-- `tests/unit/ccr-oauth-refresh.test.mjs`: hook logic with a stub CLI.
+- `tests/unit/ccr-oauth-refresh.test.mjs`: hook, fetch-wrapper and
+  cross-process logic with a stub CLI (both CCR config shapes).
 - `tests/integration/ccr-oauth-refresh.sh`: the real image + official CLI
   against a fake Anthropic (both hostnames, throwaway CA): stale token → 401 →
   refresh → 200, then reuse, streaming, restart, and revoked-login fail-open.
-  Run it after any `CCR_REF` or CLI bump.
+  Run it after any `CCR_REF` or CLI bump. It does not drive the account-usage
+  path (CCR only fetches usage for its UI); that path is unit-tested.
 
 ## When NOT to apply
 

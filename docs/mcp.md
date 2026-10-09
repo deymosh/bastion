@@ -19,8 +19,9 @@ AI agent (LAN / WireGuard)            bastion-ai (10.50.0.0/24)
 ```
 
 Every tool is namespaced `<namespace>_<tool>` (children can never collide) and
-mounted through a **tool transform** that keeps the served surface lean: tools
-that never earn their context slot are not served, needlessly verbose upstream
+mounted through a **tool transform** that keeps the served surface lean: only
+tools that duplicate a served one, cannot work on this install, or give a model
+nothing to act on are left out; needlessly verbose upstream
 descriptions are rewritten, and rarely-used arguments are hidden from the
 schema. Upstream can grow its tool set without silently growing what every
 connected model pays for on `tools/list`.
@@ -51,7 +52,7 @@ the token is read at startup.
 |---|---|---|
 | `searxng` | `mcp-searxng` 2.5.0 | `searxng_web_search`, `searxng_web_url_read` |
 | `context7` | `@upstash/context7-mcp` 4.1.1 | `context7_resolve-library-id`, `context7_query-docs` |
-| `memory` | `basic-memory` 0.23.2 | `memory_search_notes`, `memory_read_note`, `memory_write_note`, `memory_edit_note`, `memory_move_note`, `memory_delete_note`, `memory_read_content`, `memory_list_directory`, `memory_recent_activity`, `memory_build_context`, `memory_list_memory_projects`, `memory_create_memory_project` |
+| `memory` | `basic-memory` 0.23.2 | `memory_search_notes`, `memory_read_note`, `memory_write_note`, `memory_edit_note`, `memory_move_note`, `memory_delete_note`, `memory_read_content`, `memory_list_directory`, `memory_recent_activity`, `memory_build_context`, `memory_list_memory_projects`, `memory_create_memory_project`, `memory_delete_project`, `memory_schema_validate`, `memory_schema_infer`, `memory_schema_diff`, `memory_basic_memory_diagnostics` |
 | `time` | `mcp-server-time` 2026.8.18 | `time_get_current_time`, `time_convert_time` |
 
 Notes:
@@ -69,8 +70,19 @@ Notes:
   semantic search (fastembed, model baked into the image). Reads are targeted
   and paginated — `search_notes` takes `page`/`page_size` and returns matches
   with snippets, never the whole base. Each project is its own directory under
-  `/data/memory/projects/<name>`; create one with `memory_create_memory_project`
-  and pass `project` on every call. Durable facts only, never secrets.
+  `/data/memory/projects/<name>`, and nowhere else: the gateway runs
+  basic-memory with `BASIC_MEMORY_PROJECT_ROOT` set to that root, so
+  `memory_create_memory_project` takes only a name (the path argument is not
+  served, and basic-memory ignores any path under a project root). A project
+  registered outside the root before this rule existed keeps working and is
+  named in the gateway log at startup; unregister it with
+  `memory_delete_project` (files are kept unless `delete_notes` is true) and
+  recreate it under the root. Pass `project` on every call. The gateway does
+  not serve the cloud-workspace pieces (`list_workspaces`, the `workspace`
+  and `project_id` arguments), which can only fail or are redundant on a local
+  install where project names are unique, nor the duplicates
+  `search`/`fetch`/`view_note` of `search_notes`/`read_content`/`read_note`.
+  Durable facts only, never secrets.
   basic-memory is AGPL-3.0; Bastion ships only a pinned build recipe (users
   install the unmodified package from PyPI), which keeps the license
   obligation-free for this repository.

@@ -18,8 +18,8 @@ services:
         # `gh api repos/musistudio/claude-code-router/commits/$(gh api repos/musistudio/claude-code-router/releases/latest --jq .tag_name) --jq .sha`
         # (the tags API isn't ordered by recency, so resolve via the actual
         # latest release instead of assuming `tags[0]` is newest).
-        CCR_REF: 471e715c20cfa855c681f6d31dc652164d4fa654
-    image: bastion-claude-code-router:471e715
+        CCR_REF: 3b0aebf3701406dc774f9fdd6c2160622376a626
+    image: bastion-claude-code-router:3b0aebf
     container_name: ccr
     logging: *logging
     restart: unless-stopped

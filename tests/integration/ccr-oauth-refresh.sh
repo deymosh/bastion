@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 ###############################################################################
-# Bastion - CCR on-demand OAuth refresh, end-to-end.
+# Bastion - CCR bundled plugins, end-to-end: on-demand OAuth refresh and the
+# tool-schema sanitizer.
 #
 # Runs the real stack-ai CCR image (wrapper, bundled plugins, claude CLI)
 # against a fake Anthropic that answers for both api.anthropic.com and
@@ -11,7 +12,10 @@
 # carries the new token. Then: the next request reuses the new token without
 # another refresh, streaming works, the token survives a CCR restart, and a
 # revoked login fails open (the client gets the original 401) and logs
-# LOGIN NEEDED.
+# LOGIN NEEDED. The tool-schema sanitizer is checked at the same upstream:
+# an unportable pattern and keyword are gone, a portable pattern stays, a
+# CCR_DROP_TOOLS tool is dropped, and CCR serves from its single gateway
+# runtime (no compatibility server in front).
 #
 # Isolated throwaway project (bastion-ccrtest): distinct container names, its
 # own network + volume, NO published host ports, `down -v` cleanup. Needs
@@ -101,6 +105,27 @@ stored=$(dex "$CCR" node -e 'const c=require("/data/.claude/.credentials.json");
   && ok "the credentials file holds the rotated pair, other keys intact" || bad "stored credentials: $stored"
 case "$(docker logs "$CCR" 2>&1)" in *"[bastion-claude-oauth-refresh] refreshed"*) ok "the refresh is logged" ;; *) bad "no refresh log line" ;; esac
 
+echo "== the tool-schema sanitizer runs in the core gateway =="
+out=$(request tools)
+case "$out" in "200 "*) ok "request with tools 200" ;; *) bad "tools request: $out" ;; esac
+# Read the schema fields the provider received, not their JSON text.
+seen() {
+  dex "$FAKE" node -e "fetch('http://127.0.0.1:8080/stats').then(r=>r.json()).then(s=>{
+    const tools = s.lastTools || [], art = tools.find(t => t.name === 'Artifact');
+    const p = art ? art.input_schema.properties : {};
+    console.log(JSON.stringify({ names: tools.map(t => t.name), unportable: p.file_paths?.items?.pattern ?? null,
+      propertyNames: 'propertyNames' in (p.files ?? {}), portable: p.asset_ids?.items?.pattern ?? null }));
+  })"
+}
+want='{"names":["Artifact","Read"],"unportable":null,"propertyNames":false,"portable":"^[0-9a-f]{32}$"}'
+got=$(seen)
+[ "$got" = "$want" ] \
+  && ok "upstream got the cleaned tools: unportable pattern + keyword gone, portable pattern kept, CCR_DROP_TOOLS tool dropped" \
+  || bad "tools seen upstream: $got"
+case "$(docker logs "$CCR" 2>&1)" in
+  *"compatibility gateway server"*) bad "CCR still puts its compatibility server in front of the core gateway" ;;
+  *) ok "CCR serves from its single gateway runtime" ;; esac
+
 echo "== later requests reuse the new token =="
 out=$(request)
 case "$out" in "200 "*bastion-refresh-ok*) ok "second request 200" ;; *) bad "second request: $out" ;; esac
@@ -115,6 +140,10 @@ out=$(request)
 case "$out" in "200 "*bastion-refresh-ok*) ok "200 after restart, still no refresh" ;; *) bad "after restart: $out" ;; esac
 
 echo "== a revoked login fails open =="
+# A 401 within 30s of a refresh (recorded next to the credentials, so it
+# spans processes and restarts) reuses the fresh token instead of running the
+# CLI again; step outside that window so this 401 really reaches the CLI.
+sleep 30
 dex "$FAKE" node -e "fetch('http://127.0.0.1:8080/control/revoke')" >/dev/null
 out=$(request)
 case "$out" in "401 "*) ok "the client gets the original 401" ;; *) bad "revoked: $out" ;; esac

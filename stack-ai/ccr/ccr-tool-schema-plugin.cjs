@@ -1,47 +1,104 @@
 "use strict";
 /**
- * Bastion: a CCR gateway plugin that runs the tool-schema sanitizer
- * (ccr-tool-schema-sanitizer.cjs) as a request transform.
+ * Bastion: rewrite the tool schemas of every upstream request so each
+ * provider accepts them (see ccr-tool-schema-sanitizer.cjs for what is
+ * removed and why), as a request transform inside CCR's core gateway.
  *
- * Why a plugin as well as the custom router: CCR applies plugin request
- * transforms to every upstream request after routing has settled, on the
- * provider-format body it is about to send. The custom router alone did not
- * protect requests routed by a Claude Code subagent tag: a general-purpose
- * subagent routed to DeepSeek by tag still reached the provider with
- * `Artifact`'s "^[^\\0]*$" pattern and got HTTP 400, while the same body sent
- * with the DeepSeek model id directly went through. Dropping that one pattern
- * on the tag-routed request was enough to fix it, so the sanitizing has to
- * happen at a stage every route passes.
+ * Where it runs: the core gateway (the ai-gateway process CCR supervises)
+ * applies `beforeUpstream` request transforms once per upstream attempt,
+ * after routing has settled - CCR's own router, including Claude Code
+ * subagent-tag routing, runs earlier, in the `beforeRouting` stage - and
+ * hands them the routed model and both forms of the request:
+ *  - `requestBody`, the client's body, which a passthrough route (e.g.
+ *    Anthropic Messages in, Anthropic Messages out) sends as it is;
+ *  - `standardRequest`, the gateway's normalized request, from which a
+ *    converting route builds the provider's body.
+ * The transform cleans the tools in both, in place, and returns nothing, so
+ * the gateway keeps its own choice between the two paths.
  *
- * Registered by ccr-enable-plugins.mjs as a `plugins[]` entry with the
- * `trusted-code` and `gateway-request-transforms` permissions. It never
- * picks a model and never fails a request: a transform that throws is
- * logged by CCR and skipped.
+ * Why the core gateway and not a CCR-side request transform
+ * (`registerGatewayRequestTransform`): any CCR-side transform makes CCR put
+ * its own compatibility server in front of the core gateway, proxying every
+ * request through one more process. A core-gateway transform keeps CCR on
+ * its single gateway runtime and still sees every route.
+ *
+ * One file, two loaders, like ccr-oauth-refresh-plugin.cjs:
+ *  - CCR loads it as a plugin (registered by ccr-enable-plugins.mjs with the
+ *    `trusted-code` and `core-gateway-plugins` permissions); `setup` hands
+ *    this same file to the core gateway as a module plugin;
+ *  - the core gateway imports it, reads `manifest`, and calls
+ *    `createGatewayPlugin`.
+ *
+ * Never fails a request: the transform is fail-open, so one that throws is
+ * skipped and the request goes out as it came in.
  */
 
-const { sanitizeRequest } = require("./ccr-tool-schema-sanitizer.cjs");
+const { sanitizeTools } = require("./ccr-tool-schema-sanitizer.cjs");
 
-/** CCR's request transform: returns the cleaned body, or null when unchanged. */
-function transform(input, context) {
-  const body = input?.body;
-  if (!body || !Array.isArray(body.tools) || body.tools.length === 0) {
-    return null;
+const KEY = "bastion-tool-schema-sanitizer";
+
+/**
+ * Read by the core gateway when it imports this module: shown in its plugin
+ * catalog. `capabilities` is validated against what createGatewayPlugin
+ * returns; a name it does not return fails the load.
+ */
+const manifest = {
+  name: KEY,
+  description:
+    "Removes tool-schema regexes and JSON Schema keywords some providers reject, and drops the tools "
+    + "CCR_DROP_TOOLS names for a routed model; fail-open.",
+  capabilities: ["requestTransforms"],
+};
+
+// The gateway hands its plugins no logger: each change is logged to stdout
+// once per process, so a long session does not flood the log.
+const reported = new Set();
+const log = {
+  info(line, key = line) {
+    if (reported.has(key)) return;
+    reported.add(key);
+    console.log(`[${KEY}] ${line}`);
+  },
+};
+
+/**
+ * The core gateway's `beforeUpstream` request transform. The drop rules
+ * match against the routed model and the target provider's name, so a rule
+ * can name either ("deepseek" matches model deepseek-v4 or a provider
+ * called "DeepSeek").
+ */
+function transform(input) {
+  const target = [input?.model, input?.targetProviderConfig?.name].filter(Boolean).join(" ");
+  for (const request of [input?.requestBody, input?.standardRequest]) {
+    if (request && typeof request === "object" && Array.isArray(request.tools)) {
+      request.tools = sanitizeTools(request.tools, { target, log });
+    }
   }
-  const before = JSON.stringify(body.tools);
-  // input.body is CCR's own clone, so cleaning it in place is safe. The
-  // routed model (the provider-side name) feeds CCR_DROP_TOOLS matching.
-  sanitizeRequest({
-    body,
-    builtInSubagentModel: input.routedModel,
-    log: context?.logger,
-  });
-  return JSON.stringify(body.tools) === before ? null : { body };
+}
+
+function createGatewayPlugin() {
+  return {
+    requestTransforms: [
+      {
+        key: KEY,
+        stage: "beforeUpstream",
+        execution: { failureMode: "fail_open" },
+        transform,
+      },
+    ],
+  };
 }
 
 module.exports = {
+  /** CCR plugin entry point: hands this file to the core gateway. */
   async setup(ctx) {
-    ctx.registerGatewayRequestTransform({ id: "tool-schema-sanitizer", transform });
-    ctx.logger?.info?.("tool-schema sanitizer request transform registered");
+    ctx.registerCoreGatewayPlugin({ key: KEY, enabled: true, modulePath: __filename });
+    ctx.logger?.info?.(`[${KEY}] tool-schema sanitizer registered with the core gateway`);
   },
+  createGatewayPlugin,
+  manifest,
 };
+// Named exports spelled out, so the core gateway's ESM import() finds them.
+module.exports.createGatewayPlugin = createGatewayPlugin;
+module.exports.manifest = manifest;
 module.exports.transform = transform;

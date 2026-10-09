@@ -189,7 +189,7 @@ compares each pin with what is running.
 | Pi-hole · unbound · WireGuard | 2026.07.2 · 1.22.0 · 1.0.20260223-r0-ls121 |
 | Prometheus · Grafana · Portainer · node-exporter | v3.14.0 · 13.2.1 · 2.45.0 · v1.12.1 |
 | Hub (nginx) | 1.31.5-alpine |
-| Claude Code Router | commit `471e715` |
+| Claude Code Router | commit `3b0aebf` (v3.1.3) |
 | CodeDeck+ bridge | v0.12.0 |
 | MCP gateway · SearXNG | FastMCP 4.0.5 · 2026.9.21 |
 | agent-docker · Sysbox | docker 29.8.1-dind · 0.7.1 |

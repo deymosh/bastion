@@ -14,8 +14,8 @@ between children are impossible.
 
 Context budget is a first-class concern: every tool's name, description and
 input schema lands in the connecting model's context, so each child is mounted
-through a ToolTransform that (a) disables tools whose value never pays for
-their slot, (b) rewrites upstream descriptions that are needlessly verbose,
+through a ToolTransform that (a) disables tools that duplicate a served one,
+cannot work on this install, or give a model nothing to act on, (b) rewrites upstream descriptions that are needlessly verbose,
 and (c) hides arguments that only power-user callers would ever send. The
 served surface is the trimmed one - upstream tool sets can grow without
 silently growing the gateway's footprint.
@@ -34,6 +34,7 @@ PATHS only. Secret values are read from files at startup - never env vars:
 """
 
 import hmac
+import json
 import os
 import shutil
 import sys
@@ -120,33 +121,86 @@ CONTEXT7_TRANSFORMS = {
 
 # --- memory (basic-memory) -------------------------------------------------
 
-# basic-memory serves 21 tools; these never pay for themselves behind a
-# gateway: cloud-workspace listings (this is a local install), diagnostics,
-# the raw search/fetch pair that search_notes + read_note already cover, the
-# Picoschema validators, artifact rendering, and project deletion.
-MEMORY_DISABLED = disabled(
-    "list_workspaces",
-    "basic_memory_diagnostics",
-    "view_note",
-    "delete_project",
-    "search",
-    "fetch",
-    "schema_validate",
-    "schema_infer",
-    "schema_diff",
+# Every memory project lives in its own directory under this root, on the
+# data volume. basic-memory enforces it when BASIC_MEMORY_PROJECT_ROOT is set
+# (passed to the child below): create_memory_project then ignores the
+# caller's path and creates <root>/<permalink of the name>, so an agent cannot
+# scatter a knowledge base anywhere else in the container.
+BM_PROJECT_ROOT = os.path.join(BM_CONFIG_DIR, "projects")
+
+# basic-memory serves 21 tools. Only the ones that add nothing a served tool
+# does not already do are dropped:
+#  - search / fetch: the ChatGPT-connector pair, duplicates of search_notes
+#    and read_content;
+#  - view_note: read_note plus an instruction to render it as an artifact;
+#  - list_workspaces: cloud workspaces only; this install is local, so it can
+#    only answer with an error.
+MEMORY_DISABLED = disabled("search", "fetch", "view_note", "list_workspaces")
+
+
+# Cloud-workspace plumbing, hidden on every tool that carries it. `workspace`
+# routes a call to a cloud workspace, which a local install rejects outright;
+# `project_id` disambiguates one project name living in several workspaces,
+# which cannot happen here (names are unique), and its upstream description
+# costs ~75 tokens on each of 13 tools. Hiding an arg only drops it from the
+# schema: the call still reaches basic-memory with the arg's own default.
+# The verbose upstream `project` descriptions (several cite cloud workspaces)
+# are replaced by one short line.
+MEMORY_WORKSPACE_TOOLS = {"write_note", "edit_note", "create_memory_project", "delete_project"}
+MEMORY_PROJECT_TOOLS = {
+    "build_context", "delete_note", "edit_note", "list_directory", "move_note", "read_content",
+    "read_note", "recent_activity", "search_notes", "write_note",
+    "schema_validate", "schema_infer", "schema_diff",
+}
+MEMORY_PROJECT_ARG = ArgTransformConfig(
+    description="Project name (from list_memory_projects); omit for the default project."
 )
 
-MEMORY_TRANSFORMS = {
-    **MEMORY_DISABLED,
+# Tool-level overrides on top of the cloud trims.
+MEMORY_OVERRIDES: dict[str, dict] = {
+    # project_path is required upstream but ignored under the project root,
+    # so it is hidden with a placeholder value and the description says where
+    # the project really goes.
+    "create_memory_project": {
+        "description": (
+            "Create a new memory project. Its directory is always "
+            f"{BM_PROJECT_ROOT}/<project_name> on the node's data volume; no other "
+            "location is possible. Optionally make it the default project."
+        ),
+        "arguments": {"project_path": ArgTransformConfig(hide=True, default="")},
+    },
+    # Upstream explains how project_id disambiguates cloud workspaces, which
+    # this install has none of.
+    "list_memory_projects": {"description": "List all memory projects with their status."},
+    # Upstream repeats the timeframe examples its `timeframe` arg already lists.
+    "recent_activity": {"description": "Get recent activity for a project or across all projects."},
     # The upstream description is a 230-token essay about memory:// URIs; the
     # mechanism matters, the essay does not.
-    "build_context": ToolTransformConfig(
-        description=(
+    "build_context": {
+        "description": (
             "Build context from a memory:// URI (e.g. memory://bastion/project-notes) "
             "to continue a previous conversation thread with its linked notes."
         )
-    ),
+    },
 }
+
+
+def memory_transforms() -> dict[str, ToolTransformConfig]:
+    transforms = dict(MEMORY_DISABLED)
+    for tool in MEMORY_WORKSPACE_TOOLS | MEMORY_PROJECT_TOOLS | MEMORY_OVERRIDES.keys():
+        override = MEMORY_OVERRIDES.get(tool, {})
+        arguments = dict(override.get("arguments", {}))
+        if tool in MEMORY_WORKSPACE_TOOLS:
+            arguments["workspace"] = ArgTransformConfig(hide=True)
+        if tool in MEMORY_PROJECT_TOOLS:
+            arguments["project_id"] = ArgTransformConfig(hide=True)
+            arguments["project"] = MEMORY_PROJECT_ARG
+        fields = {key: value for key, value in override.items() if key != "arguments"}
+        transforms[tool] = ToolTransformConfig(arguments=arguments, **fields)
+    return transforms
+
+
+MEMORY_TRANSFORMS = memory_transforms()
 
 def build_backends() -> list[tuple[str, StdioTransport, dict[str, ToolTransformConfig] | None]]:
     context7_key = read_secret_file("MCP_CONTEXT7_API_KEY_FILE", "/run/secrets/context7_api_key")
@@ -173,7 +227,7 @@ def build_backends() -> list[tuple[str, StdioTransport, dict[str, ToolTransformC
             child_transport(
                 "/opt/basic-memory-venv/bin/basic-memory",
                 ["mcp"],
-                {"BASIC_MEMORY_CONFIG_DIR": BM_CONFIG_DIR},
+                {"BASIC_MEMORY_CONFIG_DIR": BM_CONFIG_DIR, "BASIC_MEMORY_PROJECT_ROOT": BM_PROJECT_ROOT},
             ),
             MEMORY_TRANSFORMS,
         ),
@@ -228,7 +282,7 @@ INSTRUCTIONS = """\
 Bastion node tools, namespaced <namespace>_<tool>:
 - searxng: private metasearch. searxng_web_search finds pages; read a result's full text with searxng_web_url_read.
 - context7: current library/framework docs. Call context7_resolve-library-id first, then context7_query-docs with the returned ID. Prefer it over web search for API questions.
-- memory: per-project knowledge base of markdown notes. List projects with memory_list_memory_projects (create one with memory_create_memory_project), then memory_search_notes to find and memory_write_note to store. Durable facts only, never secrets.
+- memory: per-project knowledge base of markdown notes. List projects with memory_list_memory_projects (create one with memory_create_memory_project; the node places it, you only name it), then memory_search_notes to find and memory_write_note to store. Durable facts only, never secrets.
 - time: current time and timezone conversion; defaults to the node's local timezone.
 """
 
@@ -256,6 +310,30 @@ def mount_child(
     gateway.add_provider(provider, namespace=name)
 
 
+def warn_projects_outside_root(bm_config: str) -> None:
+    """Name every registered project that lives outside BM_PROJECT_ROOT.
+
+    basic-memory enforces the root only when a project is created, so a
+    project registered before the root existed keeps working where it is.
+    Logged at startup so an operator can unregister it (memory_delete_project
+    keeps its files) and recreate it under the root.
+    """
+    try:
+        with open(bm_config, encoding="utf-8") as handle:
+            projects = json.load(handle).get("projects", {})
+    except (OSError, ValueError, AttributeError):
+        return
+    root = os.path.realpath(BM_PROJECT_ROOT)
+    for name, entry in projects.items():
+        path = entry.get("path") if isinstance(entry, dict) else None
+        if isinstance(path, str) and os.path.commonpath([root, os.path.realpath(path)]) != root:
+            print(
+                f"mcp-gateway: memory project {name!r} is outside {BM_PROJECT_ROOT} ({path}); "
+                "new projects can only be created under the root",
+                file=sys.stderr,
+            )
+
+
 def seed_volumes() -> None:
     """Create first-run basic-memory state on the data volume, idempotently.
 
@@ -273,6 +351,8 @@ def seed_volumes() -> None:
                 '{"env":"dev","projects":{"main":{"path":"%s","mode":"local"}},"default_project":"main",'
                 '"auto_update":false}' % projects.replace("\\", "/")
             )
+
+    warn_projects_outside_root(bm_config)
 
     fastembed_dst = os.path.join(BM_CONFIG_DIR, "fastembed_cache")
     if not os.path.exists(fastembed_dst) and os.path.isdir("/opt/fastembed-seed"):

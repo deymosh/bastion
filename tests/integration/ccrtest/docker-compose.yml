@@ -50,6 +50,8 @@ services:
       CCR_WEB_AUTH_TOKEN: ccrtest-web-token
       CLAUDE_CONFIG_DIR: /data/.claude
       CCR_TOKEN_REFRESH: "1"
+      # The tool-schema sanitizer drops this tool for the routed model.
+      CCR_DROP_TOOLS: claude-sonnet=DropMe
       NODE_EXTRA_CA_CERTS: /certs/ca.pem
     extra_hosts:
       - "api.anthropic.com:10.199.0.10"

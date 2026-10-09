@@ -1,15 +1,8 @@
 "use strict";
 /**
- * Bastion: a CCR custom router (CUSTOM_ROUTER_PATH) that never picks a model.
- * It rewrites the tool schemas of every request so each upstream accepts
- * them, then returns undefined, so CCR's own routing (rules, subagent tags,
- * the default) decides the model exactly as if it were not there.
- *
- * Why a custom router and not a routing rule: CCR calls the custom router for
- * every request, before any policy. A routing rule runs only when no earlier
- * policy matched: a Claude Code subagent tagged with a target model is routed
- * before the rules, so a rule never sees it; and a rule that matches stops
- * the rules after it.
+ * Bastion: tool-schema rewriting so every upstream provider accepts Claude
+ * Code's tools. A library: ccr-tool-schema-plugin.cjs applies it to each
+ * routed request inside CCR's core gateway.
  *
  * What it fixes:
  *  - A `pattern` only a backtracking engine understands: a digit escape
@@ -27,10 +20,8 @@
  *    Code validates each tool call against its own schema anyway.
  *  - Optionally, tools a provider cannot take at all, by model:
  *    CCR_DROP_TOOLS="deepseek=Artifact,ArtifactData;gemini=Monitor" drops
- *    those tools when the target model's name contains the text before `=`
- *    (case-insensitive). Off when unset.
- *
- * Fail-open: CCR catches and logs anything thrown here and routes as usual.
+ *    those tools when the routed target (model and provider name) contains
+ *    the text before `=` (case-insensitive). Off when unset.
  */
 
 /**
@@ -93,22 +84,12 @@ function schemaOf(tool) {
   return tool?.input_schema ?? tool?.parameters ?? tool?.function?.parameters;
 }
 
-/**
- * The text of a CCR client model id, whose hex tail (`...-h<hex>`) encodes
- * the "Provider/model" it stands for; any other id as it is.
- */
-function decodeModel(value) {
-  if (typeof value !== "string") {
-    return "";
-  }
-  const match = value.match(/-h([0-9a-fA-F]{16,})(?:\[1m\])?\s*$/);
-  if (!match || match[1].length % 2 !== 0) {
-    return value;
-  }
-  return `${value} ${Buffer.from(match[1], "hex").toString("utf8")}`;
+/** A tool's name, in the Anthropic or the OpenAI shape. */
+function nameOf(tool) {
+  return tool?.name ?? tool?.function?.name;
 }
 
-/** CCR_DROP_TOOLS as [[modelNeedle, Set(toolNames)], ...]. */
+/** CCR_DROP_TOOLS as [[targetNeedle, Set(toolNames)], ...]. */
 function parseDropTools(raw) {
   if (!raw) {
     return [];
@@ -135,49 +116,27 @@ function toolsToDrop(target, rules) {
   return names;
 }
 
-const reported = new Set();
-
-/** Log a change once per process, so a long session does not flood the log. */
-function reportOnce(log, key, message) {
-  if (!reported.has(key)) {
-    reported.add(key);
-    log?.info?.(`[tool-schema-sanitizer] ${message}`);
-  }
-}
-
-/** Sanitize `request.body.tools` in place. Exported for the tests. */
-function sanitizeRequest(request, env = process.env) {
-  const tools = request?.body?.tools;
+/**
+ * The tools to send to `target`: the ones CCR_DROP_TOOLS names for it left
+ * out, every other one's schema cleaned in place. `log.info(line, key)` is
+ * told about each change (the caller decides how often to repeat it).
+ */
+function sanitizeTools(tools, { target = "", log, env = process.env } = {}) {
   if (!Array.isArray(tools) || tools.length === 0) {
-    return;
+    return tools;
   }
-  const log = request.log;
-  // The subagent's tagged target if any (CCR has already taken the tag out
-  // of the prompt), else the model the client asked for.
-  const target = decodeModel(request.builtInSubagentModel || request.body.model);
   const drop = toolsToDrop(target, parseDropTools(env.CCR_DROP_TOOLS));
-  if (drop.size > 0) {
-    const kept = tools.filter((tool) => !drop.has(tool?.name));
-    if (kept.length !== tools.length) {
-      request.body.tools = kept;
-      reportOnce(log, `drop:${target}`, `dropped ${[...drop].join(", ")} for ${target}`);
-    }
+  const kept = drop.size > 0 ? tools.filter((tool) => !drop.has(nameOf(tool))) : tools;
+  if (kept.length !== tools.length) {
+    log?.info?.(`dropped ${[...drop].join(", ")} for ${target}`, `drop:${target}`);
   }
-  for (const tool of request.body.tools) {
+  for (const tool of kept) {
     const removed = sanitizeSchema(schemaOf(tool));
     if (removed > 0) {
-      reportOnce(log, `pattern:${tool.name}`, `removed ${removed} unportable pattern(s)/keyword(s) from ${tool.name}`);
+      log?.info?.(`removed ${removed} unportable pattern(s)/keyword(s) from ${nameOf(tool)}`, `pattern:${nameOf(tool)}`);
     }
   }
+  return kept;
 }
 
-async function toolSchemaSanitizer(request) {
-  sanitizeRequest(request);
-  return undefined;
-}
-
-module.exports = toolSchemaSanitizer;
-module.exports.sanitizeRequest = sanitizeRequest;
-module.exports.sanitizeSchema = sanitizeSchema;
-module.exports.isUnportablePattern = isUnportablePattern;
-module.exports.decodeModel = decodeModel;
+module.exports = { sanitizeTools, sanitizeSchema, isUnportablePattern };

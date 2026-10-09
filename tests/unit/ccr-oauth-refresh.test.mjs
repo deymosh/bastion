@@ -1,7 +1,8 @@
 /**
- * Tests for stack-ai/ccr/ccr-oauth-refresh-plugin.cjs, the CCR plugin whose
- * core-gateway provider hook refreshes the Claude Code OAuth login with the
- * `claude` CLI when an upstream request was answered 401.
+ * Tests for stack-ai/ccr/ccr-oauth-refresh-plugin.cjs, the CCR plugin that
+ * refreshes the Claude Code OAuth login with the `claude` CLI only when
+ * Anthropic answers 401: from a core-gateway provider hook for inference, and
+ * from a fetch wrapper in CCR's process for the account-usage request.
  *
  * The CLI is a stub (CCR_CLAUDE_CLI) that behaves like the real one: it
  * rotates the stored tokens only when the stored access token looks expired,
@@ -10,7 +11,7 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -101,7 +102,7 @@ beforeEach(() => {
   delete process.env.CCR_TOKEN_REFRESH;
   delete process.env.FAKE_CLAUDE_MODE;
   delete process.env.FAKE_CLAUDE_DELAY_MS;
-  Object.assign(plugin._state, { inflight: null, lastSuccessAt: 0, lastFailureAt: 0 });
+  plugin._state.inflight = null;
   logs = [];
 });
 
@@ -131,24 +132,32 @@ test("a 401 retry for the Claude Code provider refreshes through the CLI", async
   assert.ok(logged(/refreshed; access token valid until \S+Z/));
 });
 
+test("CCR v3.1.2+ keeps the OAuth bindings inside its auth plugin's config; they are found there too", async () => {
+  const input = retryInput({ provider: "claude-code-api::anthropic_messages" });
+  input.config = {
+    providerPlugins: [],
+    plugins: [
+      { key: "ccr-router", config: {} },
+      {
+        key: "ccr-local-agent-auth-provider-hooks",
+        config: {
+          providerPlugins: [{
+            key: "ccr-local-agent-claude-code-api-claude-code-oauth-internal",
+            providerName: "claude-code-api::anthropic_messages",
+          }],
+        },
+      },
+    ],
+  };
+  const result = await plugin.authenticate(input);
+  assert.equal(result.value.headers.authorization, "Bearer sk-ant-oat01-new");
+});
+
 test("a refresh token close to expiry is reported after a refresh", async () => {
   writeFileSync(join(dir, ".credentials.json"),
     JSON.stringify(credentials({ refreshTokenExpiresAt: Date.now() + 24 * 3600 * 1000 })));
   await plugin.authenticate(retryInput());
   assert.ok(logged(/refresh token until \S+Z - it expires soon; LOGIN NEEDED/));
-});
-
-test("the token CCR compiled into its gateway config is switched in place", async () => {
-  // The gateway applies these entries' header after this hook, on every
-  // request: left stale, they would put the old token back on the retry.
-  const input = retryInput();
-  input.config.providerPlugins[0].auth = { headers: { Authorization: "Bearer sk-ant-oat01-old" }, strict: true };
-  input.config.providerPlugins[1].auth = { headers: { authorization: "Bearer kimi-token" } };
-  await plugin.authenticate(input);
-  assert.deepEqual(input.config.providerPlugins[0].auth.headers, { authorization: "Bearer sk-ant-oat01-new" });
-  assert.equal(input.config.providerPlugins[0].auth.strict, true);
-  assert.deepEqual(input.config.providerPlugins[1].auth.headers, { authorization: "Bearer kimi-token" },
-    "other providers' entries are untouched");
 });
 
 test("the 401 is authoritative: a token that has not expired locally is refreshed too", async () => {
@@ -216,15 +225,131 @@ test("a missing CLI is a failed refresh, not a failed request", async () => {
   assert.ok(logged(/refresh failed \(claude CLI: could not start the claude CLI: .*\); retrying on the next 401/));
 });
 
-test("setup hands this file to the core gateway; the hook is fail-open", async () => {
+const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
+const usageInit = (token = "sk-ant-oat01-old") => ({
+  headers: { authorization: `Bearer ${token}`, "anthropic-beta": "oauth-2025-04-20" },
+});
+
+/** Installs a fake global fetch, wraps it, and returns what it was asked. */
+function fakeFetch(answer) {
+  const seen = [];
+  const before = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    seen.push({ url: String(input), authorization: new Headers(init?.headers).get("authorization") });
+    return new Response("{}", { status: answer(input, init) });
+  };
+  const unwrap = plugin.wrapFetch();
+  return { seen, restore: () => { unwrap(); globalThis.fetch = before; } };
+}
+
+test("an account-usage 401 is refreshed and that request sent once more", async () => {
+  const fetched = fakeFetch((input, init) =>
+    (new Headers(init?.headers).get("authorization") === "Bearer sk-ant-oat01-new" ? 200 : 401));
+  try {
+    const response = await globalThis.fetch(USAGE_URL, usageInit());
+    assert.equal(response.status, 200);
+    assert.deepEqual(fetched.seen.map((call) => call.authorization),
+      ["Bearer sk-ant-oat01-old", "Bearer sk-ant-oat01-new"]);
+    assert.equal(calls().length, 1);
+    assert.ok(logged(/account usage 401: refreshing the Claude Code login/));
+  } finally {
+    fetched.restore();
+  }
+});
+
+test("other responses, other URLs and a failed refresh pass through untouched", async () => {
+  process.env.FAKE_CLAUDE_MODE = "fail";
+  const fetched = fakeFetch((input) => (String(input).includes("/v1/") ? 401 : 200));
+  try {
+    assert.equal((await globalThis.fetch(USAGE_URL, usageInit())).status, 200, "a 200 is not a refresh");
+    assert.equal((await globalThis.fetch("https://api.anthropic.com/v1/models", usageInit())).status, 401,
+      "only the usage endpoint is retried");
+    assert.equal(calls().length, 0);
+  } finally {
+    fetched.restore();
+  }
+  const failing = fakeFetch(() => 401);
+  try {
+    const response = await globalThis.fetch(USAGE_URL, usageInit());
+    assert.equal(response.status, 401, "the original 401 comes back when no token could be had");
+    assert.equal(failing.seen.length, 1, "no retry without a new token");
+  } finally {
+    failing.restore();
+  }
+});
+
+test("wrapping twice never stacks wrappers, and unwrapping restores fetch", () => {
+  const before = globalThis.fetch;
+  const unwrapFirst = plugin.wrapFetch();
+  unwrapFirst();
+  assert.equal(globalThis.fetch, before);
+  const unwrapA = plugin.wrapFetch();
+  const unwrapB = plugin.wrapFetch();
+  unwrapB();
+  assert.equal(globalThis.fetch, before, "the second wrap wrapped the original, not the first wrapper");
+  unwrapA();
+  assert.equal(globalThis.fetch, before);
+});
+
+test("a refresh made by the other process is reused, not repeated", async () => {
+  // CCR's process and the core gateway share the credentials file: a fresh
+  // refresh recorded by either one is reused by the other on its next 401.
+  writeFileSync(join(dir, ".credentials.json"), JSON.stringify(credentials({ accessToken: "sk-ant-oat01-other" })));
+  writeFileSync(join(dir, ".credentials.json.bastion-refresh.json"), JSON.stringify({ refreshedAt: Date.now() }));
+  const result = await plugin.authenticate(retryInput());
+  assert.equal(result.value.headers.authorization, "Bearer sk-ant-oat01-other");
+  assert.equal(calls().length, 0);
+});
+
+test("a refresh running in the other process is waited for, then reused", async () => {
+  const lock = join(dir, ".credentials.json.bastion-refresh.lock");
+  writeFileSync(lock, "4242");
+  setTimeout(() => {
+    writeFileSync(join(dir, ".credentials.json"), JSON.stringify(credentials({ accessToken: "sk-ant-oat01-other" })));
+    writeFileSync(join(dir, ".credentials.json.bastion-refresh.json"), JSON.stringify({ refreshedAt: Date.now() }));
+    rmSync(lock);
+  }, 300);
+  const result = await plugin.authenticate(retryInput());
+  assert.equal(result.value.headers.authorization, "Bearer sk-ant-oat01-other");
+  assert.equal(calls().length, 0, "the CLI ran once, in the other process");
+  assert.equal(existsSync(lock), false);
+});
+
+test("a lock left by a dead process is taken over", async () => {
+  const lock = join(dir, ".credentials.json.bastion-refresh.lock");
+  writeFileSync(lock, "4242");
+  const old = (Date.now() - 10 * 60_000) / 1000;
+  utimesSync(lock, old, old);
+  const result = await plugin.authenticate(retryInput());
+  assert.equal(result.value.headers.authorization, "Bearer sk-ant-oat01-new");
+  assert.equal(existsSync(lock), false, "released after the refresh");
+});
+
+test("setup hands this file to the core gateway and wraps fetch until stopped; the hook is fail-open", async () => {
   const registered = [];
-  await plugin.setup({ registerCoreGatewayPlugin: (entry) => registered.push(entry) });
+  const logger = { info: (line) => logs.push(`info ${line}`), warn: (line) => logs.push(`warn ${line}`) };
+  const before = globalThis.fetch;
+  const registration = await plugin.setup({ logger, registerCoreGatewayPlugin: (entry) => registered.push(entry) });
   assert.deepEqual(registered, [{ key: "bastion-claude-oauth-refresh", enabled: true, modulePath: PLUGIN_FILE }]);
+  assert.notEqual(globalThis.fetch, before, "fetch is wrapped while the plugin runs");
+  assert.equal(typeof registration.stop, "function", "CCR re-runs setup on reload: the fetch wrap must come off");
+  registration.stop();
+  assert.equal(globalThis.fetch, before);
+  assert.ok(logged(/^info \[bastion-claude-oauth-refresh\] on-demand refresh registered with the core gateway/),
+    "CCR's side logs through the logger CCR provides");
 
   // The core gateway imports the module and needs a named createGatewayPlugin.
   const imported = await import(`${new URL(`file://${PLUGIN_FILE.replace(/\\/g, "/")}`).href}`);
   assert.equal(typeof imported.createGatewayPlugin, "function");
-  const [hook] = imported.createGatewayPlugin().providerHooks;
+  const module = imported.createGatewayPlugin();
+  const [hook] = module.providerHooks;
+  // The gateway rejects a manifest that names a capability the module does
+  // not return.
+  assert.equal(imported.manifest.name, "bastion-claude-oauth-refresh");
+  assert.ok(imported.manifest.description.length > 0);
+  for (const capability of imported.manifest.capabilities) {
+    assert.ok(Array.isArray(module[capability]) && module[capability].length > 0, capability);
+  }
   assert.equal(hook.key, "bastion-claude-oauth-refresh");
   assert.equal(hook.execution.failureMode, "fail_open");
   assert.ok(hook.execution.timeoutMs > 60_000, "the hook outlives the CLI's own timeout");

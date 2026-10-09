@@ -24,7 +24,7 @@ RUN_GID="${PGID:-1000}"
 #    run user. Harmless (and fast) when they are already correct; `|| true` so a
 #    read-only bind or a missing path never blocks startup.
 if [ "$(id -u)" = "0" ]; then
-    for p in /data /app /etc/nginx/conf.d /var/lib/nginx /var/log/nginx /run/nginx; do
+    for p in /data /etc/nginx/conf.d /var/lib/nginx /var/log/nginx /run/nginx; do
         [ -e "$p" ] && chown -R "${RUN_UID}:${RUN_GID}" "$p" 2>/dev/null || true
     done
     [ -r /run/secrets/ccr_web_auth_token ] && chown "${RUN_UID}:${RUN_GID}" /run/secrets/ccr_web_auth_token 2>/dev/null || true
