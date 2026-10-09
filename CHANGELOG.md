@@ -1,5 +1,39 @@
 # Changelog
 
+## [2.0.0](https://github.com/deymosh/bastion/compare/v1.0.0...v2.0.0) (2026-10-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* **mcp:** the memory namespace serves basic-memory tools instead of the old knowledge-graph tools, and state lives in stack-ai/data/mcp instead of the named volume. Operators upgrading: the old memory.json graph is not read (re-enter durable facts as notes via memory_write_note), and to carry over anything created since this change was deployed, copy the old volume before first start:   docker run --rm -v stack-ai_mcp_memory_data:/from \     -v "$PWD/stack-ai/data/mcp":/to alpine \     sh -c "cp -a /from/. /to/ && chown -R 1000:1000 /to"
+
+### Features
+
+* **ai:** memory projects pinned to the data root, all useful memory tools, CCR plugins on the core gateway (v3.1.3) ([ab42083](https://github.com/deymosh/bastion/commit/ab42083511f17e915605ad036c189ac27fda1b0d))
+* **ai:** pin memory projects to the data root and serve every useful memory tool ([4b35930](https://github.com/deymosh/bastion/commit/4b35930a5ac09034062253672901bebfc76df9f8))
+* **ai:** publish the CodeDeck+ bridge direct link on port 7447 ([3c52bae](https://github.com/deymosh/bastion/commit/3c52baee00f25b6f4961c46433fae3d850e66bde))
+* **ai:** refresh the CCR Claude login on account-usage 401s and move to CCR v3.1.3 ([1b6a094](https://github.com/deymosh/bastion/commit/1b6a094b20eb17a978851891f5803ef94eb37ea0))
+* **ai:** refresh the CCR Claude login on demand with the claude CLI ([42aeb1a](https://github.com/deymosh/bastion/commit/42aeb1ab91daaa340d9071560991b8b4ff5947f9))
+* **ai:** refresh the CCR Claude login on demand with the claude CLI ([747eb39](https://github.com/deymosh/bastion/commit/747eb39192d8347d80f938fdd7588a72f28f0b37))
+* **ccr:** strip tool-schema regexes some providers reject ([1ffa84b](https://github.com/deymosh/bastion/commit/1ffa84b4e729f9c54d64f1d61a1d714898ffefa4))
+* **mcp:** redesign the gateway around trimmed, per-project tools ([7490f66](https://github.com/deymosh/bastion/commit/7490f664d2dff33d945542e32ae3a604d266a274))
+
+
+### Bug Fixes
+
+* **ai:** keep the CCR refresh CLI off CCR's routing and log login needs ([c611f3f](https://github.com/deymosh/bastion/commit/c611f3f46ce3db68d943c74aeb802760b2f7a682))
+* **ai:** keep the CCR refresh CLI off CCR's routing and log login needs ([c555118](https://github.com/deymosh/bastion/commit/c555118cd0f4cb0c4de8075ae08b8810b8957d02))
+* **bitcoin:** bump clboss to v0.17.1-rc2 ([5bfad62](https://github.com/deymosh/bastion/commit/5bfad62050f43ac393a86dd47c25a364eaa7f553))
+* **ccr:** find CCR's config under CCR_DATA_DIR in the startup step ([fd94d04](https://github.com/deymosh/bastion/commit/fd94d043cf855b4301ddea695c6ff4f0612876a4))
+* **ccr:** sanitize tool schemas for tag-routed subagents ([b0a2790](https://github.com/deymosh/bastion/commit/b0a27907f1aa3b8a29b3803fe84144bace5ea111))
+* **ccr:** sanitize tool schemas in a gateway request transform ([dcfd59b](https://github.com/deymosh/bastion/commit/dcfd59b5d22f637a9d0c863e9a6273b73940a2f5))
+* **ccr:** strip lookaround patterns and 2020-12 keywords from tool schemas ([687e967](https://github.com/deymosh/bastion/commit/687e967268a6ce8e79223d7a6c386cec0883c60d))
+
+
+### Performance
+
+* **ai:** stop re-owning the CCR app tree on every start ([e5b401c](https://github.com/deymosh/bastion/commit/e5b401c0dfa242625262ce6ac89951eb95740480))
+
 ## 1.0.0 (2026-09-26)
 
 
