@@ -50,8 +50,10 @@ within a day, and CCR never refreshes it itself. A CCR plugin bundled in the
 image (`ccr/ccr-oauth-refresh-plugin.cjs`) does, on demand: when Anthropic
 answers a request with `401`, CCR retries it once, and on that retry the
 plugin has the official `claude` CLI refresh the login (rotating both tokens in
-the credentials file), then sends the retry with the new token. Nothing runs in
-the background and nothing is polled; CCR re-reads the file on every request,
+the credentials file), then sends the retry with the new token. The account
+usage CCR shows for the provider (a separate request, which CCR itself never
+retries) gets the same treatment: a `401` there refreshes and resends it once.
+Nothing runs in the background and nothing is polled; CCR re-reads the file on every request,
 so no restart is needed. The CLI run spends no inference: it asks for a model
 that does not exist, after refreshing.
 

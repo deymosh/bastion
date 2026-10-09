@@ -1,6 +1,6 @@
 # CCR_REF is a commit SHA (not a branch or tag) so the build is reproducible.
 # Points at the official project directly; Bastion carries no fork.
-ARG CCR_REF=471e715c20cfa855c681f6d31dc652164d4fa654
+ARG CCR_REF=3b0aebf3701406dc774f9fdd6c2160622376a626
 ARG CCR_REPOSITORY=https://github.com/musistudio/claude-code-router.git
 
 FROM node:26.10.0-bookworm@sha256:2aaae6d91f99fee84cfc92da9b52c22a185752d247746052bbc3f961e44478c6 AS source

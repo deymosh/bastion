@@ -115,6 +115,10 @@ out=$(request)
 case "$out" in "200 "*bastion-refresh-ok*) ok "200 after restart, still no refresh" ;; *) bad "after restart: $out" ;; esac
 
 echo "== a revoked login fails open =="
+# A 401 within 30s of a refresh (recorded next to the credentials, so it
+# spans processes and restarts) reuses the fresh token instead of running the
+# CLI again; step outside that window so this 401 really reaches the CLI.
+sleep 30
 dex "$FAKE" node -e "fetch('http://127.0.0.1:8080/control/revoke')" >/dev/null
 out=$(request)
 case "$out" in "401 "*) ok "the client gets the original 401" ;; *) bad "revoked: $out" ;; esac
