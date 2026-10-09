@@ -58,7 +58,7 @@ printf '#!/bin/sh\necho "chown $*" >> "%s"\n'                        "$BIN/calls
 printf '#!/bin/sh\necho "gosu $1" >> "%s"; shift; exec "$@"\n'       "$BIN/calls" > "$BIN/gosu";  chmod +x "$BIN/gosu"
 : > "$BIN/calls"
 # point one chown target at our fixture dir so we can prove the loop runs
-sed "s#/data /app#$CHOWNABLE /app#" "$WRAP" > "$BIN/wrap3"
+sed "s#for p in /data #for p in $CHOWNABLE #" "$WRAP" > "$BIN/wrap3"
 out=$(timeout 5 env PATH="$BIN:$PATH" PUID=1234 PGID=5678 sh "$BIN/wrap3" 2>&1)
 calls=$(cat "$BIN/calls")
 assert_contains "$calls" "chown -R 1234:5678 $CHOWNABLE" "chowns an existing writable path to PUID:PGID"
