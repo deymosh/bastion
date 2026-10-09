@@ -76,27 +76,29 @@ engine lacks. DeepSeek, for one, answers every Claude Code request with HTTP
 400 because the `Artifact` tool's `file_paths` items carry the pattern
 `^[^\0]*$`: `\0` (NUL) is valid JavaScript and PCRE, but not portable.
 
-The image bundles a CCR custom router, `ccr/ccr-tool-schema-sanitizer.cjs`,
-that removes such patterns (any digit escape: `\0`, `\1`...) from every
-request's tools and keeps the tools themselves. A pattern only steers the
-model; Claude Code still validates every tool call against its own schema.
-The router never picks a model, so CCR's routing decides as before. CCR calls
-a custom router for every request, before its routing policies, so it also
-covers subagents routed by a model tag. A routing-rule script would not: the
-tag routes those requests before any rule runs.
+The image bundles a CCR plugin, `ccr/ccr-tool-schema-plugin.cjs` (using
+`ccr/ccr-tool-schema-sanitizer.cjs`), that removes such patterns (backtracking
+syntax: digit escapes like `\0`, lookarounds, atomic groups) and the
+`prefixItems` / `propertyNames` keywords from every request's tools, and keeps
+the tools themselves. A pattern only steers the model; Claude Code still
+validates every tool call against its own schema. It runs inside CCR's core
+gateway as a request transform, after routing has settled, so it covers every
+route, including subagents routed by a model tag, and never picks a model.
+Running it there (rather than as a CCR-side transform or custom router) keeps
+CCR serving straight from its core gateway, with no extra proxy in between.
 
-At start, the wrapper sets CCR's `CUSTOM_ROUTER_PATH` to the sanitizer and
-registers the bundled plugins (`ccr/ccr-enable-plugins.mjs`). CCR keeps those
-settings through edits in its UI. A fresh install gets them on its second
-start, since CCR writes its config on the first. If `CUSTOM_ROUTER_PATH`
-already names another router, or an operator changed or disabled one of the
-plugins, the wrapper leaves it and logs so. To check:
-`./bastion logs ccr | grep ccr-enable-plugins`.
+At start, the wrapper registers the bundled plugins
+(`ccr/ccr-enable-plugins.mjs`). CCR keeps them through edits in its UI. A
+fresh install gets them on its second start, since CCR writes its config on
+the first. An entry an operator pointed at another module is left alone; one
+the operator disabled stays disabled. Upgrading from an image that ran the
+sanitizer as CCR's `CUSTOM_ROUTER_PATH` removes that setting (any other
+router stays). To check: `./bastion logs ccr | grep ccr-enable-plugins`.
 
 As a last resort, a tool a provider cannot take at all can be dropped for it.
 With `CCR_DROP_TOOLS` set to `deepseek=Artifact,ArtifactData;gemini=Monitor`,
-the listed tools are dropped whenever the target model's name contains the
-text before `=` (`./bastion config set CCR_DROP_TOOLS '...'`, then restart
+the listed tools are dropped whenever the routed model or its provider's
+name contains the text before `=` (`./bastion config set CCR_DROP_TOOLS '...'`, then restart
 `ccr`).
 
 ## CodeDeck+ bridge

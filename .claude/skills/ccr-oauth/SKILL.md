@@ -135,10 +135,15 @@ paths.
 
 `ccr-entrypoint-wrapper.sh` runs `ccr-enable-plugins.mjs` (as the run user)
 before CCR starts. It edits CCR's config (SQLite `config.sqlite`, table
-`app_config`, row `default`) to set `CUSTOM_ROUTER_PATH` to the schema
-sanitizer and to add two `plugins[]` entries: `bastion-tool-schema-sanitizer`
-and `bastion-claude-oauth-refresh`. An entry an operator changed or disabled is
-left alone. A fresh install gets them on its second start (CCR writes the
+`app_config`, row `default`) to add two `plugins[]` entries,
+`bastion-tool-schema-sanitizer` and `bastion-claude-oauth-refresh`, both with
+`trusted-code` + `core-gateway-plugins` and only the `gateway` surface: both
+hand themselves to the core gateway as module plugins. Never use a CCR-side
+`registerGatewayRequestTransform` (or gateway routes): either makes CCR put
+its compatibility server in front of the core gateway
+(`singleGatewayRuntimeBlockers` in CCR's gateway-service.ts). Our entries get
+their permissions/surfaces reconciled on each start, keeping the operator's
+`enabled`; an entry pointing at another module is left alone. A fresh install gets them on its second start (CCR writes the
 config on the first). Also note: on a fresh install with **no provider**, CCR
 does not start its gateway ("No available models"), so `/health` (proxied by
 nginx) fails until a provider exists. That is upstream behaviour, not a

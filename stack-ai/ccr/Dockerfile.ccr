@@ -54,11 +54,11 @@ COPY --from=source /src/docker/pm2.config.cjs ./docker/pm2.config.cjs
 
 COPY ccr-entrypoint-wrapper.sh /usr/local/bin/ccr-entrypoint-wrapper
 
-# Bastion: a custom router and a gateway request-transform plugin that only
-# rewrite tool schemas some providers reject (see ccr-tool-schema-sanitizer.cjs
-# and ccr-tool-schema-plugin.cjs); a plugin that refreshes the Claude Code
-# OAuth login with the claude CLI above when Anthropic answers 401 (see
-# ccr-oauth-refresh-plugin.cjs); and the startup step that registers them.
+# Bastion: two CCR plugins that run inside CCR's core gateway - one rewrites
+# tool schemas some providers reject (ccr-tool-schema-plugin.cjs, using
+# ccr-tool-schema-sanitizer.cjs), one refreshes the Claude Code OAuth login
+# with the claude CLI above when Anthropic answers 401
+# (ccr-oauth-refresh-plugin.cjs) - and the startup step that registers them.
 COPY ccr-tool-schema-sanitizer.cjs /usr/local/lib/ccr/ccr-tool-schema-sanitizer.cjs
 COPY ccr-tool-schema-plugin.cjs /usr/local/lib/ccr/ccr-tool-schema-plugin.cjs
 COPY ccr-oauth-refresh-plugin.cjs /usr/local/lib/ccr/ccr-oauth-refresh-plugin.cjs

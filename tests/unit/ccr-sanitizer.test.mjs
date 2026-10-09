@@ -1,8 +1,8 @@
 /**
- * Tests for stack-ai/ccr/ccr-tool-schema-sanitizer.cjs (the custom router
- * that rewrites tool schemas) and stack-ai/ccr/ccr-enable-plugins.mjs (the
- * startup step that points CCR's CUSTOM_ROUTER_PATH at it and registers the
- * bundled plugins).
+ * Tests for stack-ai/ccr/ccr-tool-schema-sanitizer.cjs (the tool-schema
+ * rewriting), stack-ai/ccr/ccr-tool-schema-plugin.cjs (the core-gateway
+ * request transform that applies it) and stack-ai/ccr/ccr-enable-plugins.mjs
+ * (the startup step that registers the bundled plugins).
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -11,12 +11,13 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CCR = resolve(here, "../../stack-ai/ccr");
 const require = createRequire(import.meta.url);
 const sanitizer = require(join(CCR, "ccr-tool-schema-sanitizer.cjs"));
+const plugin = require(join(CCR, "ccr-tool-schema-plugin.cjs"));
 
 /** Claude Code's Artifact tool, cut to the part that matters. */
 function artifactTool() {
@@ -34,9 +35,8 @@ function artifactTool() {
   };
 }
 
-function request(model, tools, extra = {}) {
-  return { body: { model, tools }, log: { info() {} }, ...extra };
-}
+const quiet = { info() {} };
+const names = (tools) => tools.map((t) => t.name ?? t.function?.name);
 
 test("backtracking-only syntax is unportable; ordinary syntax is not", () => {
   const unportable = [
@@ -72,81 +72,86 @@ test("prefixItems and propertyNames go; properties with those names stay", () =>
   assert.deepEqual(schema.properties.prefixItems, { type: "string", description: "a field called prefixItems" });
 });
 
-test("only the unportable pattern goes; the tool and the rest of its schema stay", async () => {
-  const req = request("deepseek-v4.1-flash", [artifactTool(), { name: "Read", input_schema: { type: "object" } }]);
-  assert.equal(await sanitizer(req), undefined, "it never picks a model");
-  const [artifact, read] = req.body.tools;
-  assert.equal(artifact.name, "Artifact");
-  assert.equal(read.name, "Read");
-  const props = artifact.input_schema.properties;
+test("only the unportable pattern goes; the tool and the rest of its schema stay", () => {
+  const tools = sanitizer.sanitizeTools([artifactTool(), { name: "Read", input_schema: { type: "object" } }], { log: quiet });
+  assert.deepEqual(names(tools), ["Artifact", "Read"]);
+  const props = tools[0].input_schema.properties;
   assert.equal(props.file_paths.items.pattern, undefined);
   assert.equal(props.file_paths.items.maxLength, 1024);
   assert.equal(props.asset_ids.items.pattern, "^[0-9a-f]{32}$");
   assert.deepEqual(props.pattern, { type: "string", description: "a field called pattern" });
 });
 
-test("every model gets the fix, subagents included", async () => {
-  for (const model of ["claude-opus-4", "anthropic/claude-ccr-h4f70656e436f6465", undefined]) {
-    const req = request(model, [artifactTool()], { builtInSubagentModel: "OpenCode Go/deepseek-v4.1-flash" });
-    await sanitizer(req);
-    assert.equal(req.body.tools[0].input_schema.properties.file_paths.items.pattern, undefined);
-  }
-});
-
 test("OpenAI-shaped tools are covered too", () => {
   const tool = { type: "function", function: { name: "Artifact", parameters: artifactTool().input_schema } };
-  sanitizer.sanitizeRequest(request("deepseek", [tool]));
+  sanitizer.sanitizeTools([tool], { log: quiet });
   assert.equal(tool.function.parameters.properties.file_paths.items.pattern, undefined);
 });
 
-test("CCR_DROP_TOOLS drops tools by target model, hex-encoded client ids included", () => {
+test("CCR_DROP_TOOLS drops tools by routed target; off when unset", () => {
   const env = { CCR_DROP_TOOLS: "deepseek=Artifact,ArtifactData; gemini = Monitor" };
-  const tools = () => [artifactTool(), { name: "ArtifactData" }, { name: "Monitor" }, { name: "Read" }];
-  const names = (req) => req.body.tools.map((t) => t.name);
-
-  const direct = request("OpenCode Go/DeepSeek-v4.1-flash", tools());
-  sanitizer.sanitizeRequest(direct, env);
-  assert.deepEqual(names(direct), ["Monitor", "Read"]);
-
-  // "anthropic/claude-ccr-h" + hex("OpenCode Go/deepseek-v4.1-flash")
-  const hex = Buffer.from("OpenCode Go/deepseek-v4.1-flash").toString("hex");
-  const encoded = request(`anthropic/claude-ccr-h${hex}[1m]`, tools());
-  sanitizer.sanitizeRequest(encoded, env);
-  assert.deepEqual(names(encoded), ["Monitor", "Read"]);
-
-  const subagent = request("claude-opus-4", tools(), { builtInSubagentModel: "Google/gemini-2.5-pro" });
-  sanitizer.sanitizeRequest(subagent, env);
-  assert.deepEqual(names(subagent), ["Artifact", "ArtifactData", "Read"]);
-
-  const untouched = request("claude-opus-4", tools());
-  sanitizer.sanitizeRequest(untouched, env);
-  assert.deepEqual(names(untouched), ["Artifact", "ArtifactData", "Monitor", "Read"]);
-  sanitizer.sanitizeRequest(untouched, {});
-  assert.equal(untouched.body.tools.length, 4, "off when unset");
+  const tools = () => [artifactTool(), { name: "ArtifactData" }, { type: "function", function: { name: "Monitor" } }, { name: "Read" }];
+  const run = (target, e = env) => names(sanitizer.sanitizeTools(tools(), { target, env: e, log: quiet }));
+  assert.deepEqual(run("deepseek-v4.1-flash OpenCode Go"), ["Monitor", "Read"]);
+  assert.deepEqual(run("models/gemini-2.5-pro Google"), ["Artifact", "ArtifactData", "Read"], "OpenAI-shaped names match too");
+  assert.deepEqual(run("claude-opus-4 Claude Code API"), ["Artifact", "ArtifactData", "Monitor", "Read"]);
+  assert.deepEqual(run("deepseek-v4.1-flash", {}), ["Artifact", "ArtifactData", "Monitor", "Read"]);
 });
 
-test("the plugin registers a request transform that cleans the routed body", async () => {
-  const plugin = require(join(CCR, "ccr-tool-schema-plugin.cjs"));
+test("a malformed tool list is left alone", () => {
+  assert.equal(sanitizer.sanitizeTools(undefined), undefined);
+  assert.deepEqual(sanitizer.sanitizeTools([null, 3, { name: "x" }], { log: quiet }), [null, 3, { name: "x" }]);
+});
+
+// --- the core-gateway plugin ----------------------------------------------
+
+/** A beforeUpstream transform input, as the core gateway builds it. */
+function upstreamInput(model, providerName = "OpenCode Go") {
+  return {
+    stage: "beforeUpstream",
+    model,
+    targetProviderConfig: { name: providerName },
+    requestBody: { model, tools: [artifactTool(), { name: "ArtifactData" }, { name: "Read" }] },
+    standardRequest: { model, tools: [artifactTool(), { name: "ArtifactData" }, { name: "Read" }] },
+  };
+}
+
+test("the transform cleans both the passthrough body and the standard request, in place", () => {
+  const previous = process.env.CCR_DROP_TOOLS;
+  process.env.CCR_DROP_TOOLS = "deepseek=ArtifactData";
+  try {
+    const input = upstreamInput("deepseek-v4.1-flash");
+    assert.equal(plugin.transform(input), undefined, "returns nothing: the gateway keeps its passthrough/convert choice");
+    for (const request of [input.requestBody, input.standardRequest]) {
+      assert.deepEqual(names(request.tools), ["Artifact", "Read"]);
+      assert.equal(request.tools[0].input_schema.properties.file_paths.items.pattern, undefined);
+    }
+    const claude = upstreamInput("claude-sonnet-5", "Claude Code API");
+    plugin.transform(claude);
+    assert.deepEqual(names(claude.requestBody.tools), ["Artifact", "ArtifactData", "Read"], "drops follow the routed target");
+  } finally {
+    if (previous === undefined) delete process.env.CCR_DROP_TOOLS;
+    else process.env.CCR_DROP_TOOLS = previous;
+  }
+  assert.equal(plugin.transform({ stage: "beforeUpstream", requestBody: { model: "x" } }), undefined);
+  assert.equal(plugin.transform({}), undefined);
+});
+
+test("setup hands this file to the core gateway, which gets a fail-open beforeUpstream transform", async () => {
   const registered = [];
-  await plugin.setup({ registerGatewayRequestTransform: (t) => registered.push(t), logger: { info() {} } });
-  assert.equal(registered.length, 1);
-  assert.equal(registered[0].id, "tool-schema-sanitizer");
+  await plugin.setup({ registerCoreGatewayPlugin: (entry) => registered.push(entry), logger: quiet });
+  assert.deepEqual(registered, [{ key: "bastion-tool-schema-sanitizer", enabled: true, modulePath: join(CCR, "ccr-tool-schema-plugin.cjs") }]);
 
-  const body = { model: "deepseek-v4.1-flash", tools: [artifactTool()] };
-  const result = await registered[0].transform({ body, routedModel: "deepseek-v4.1-flash" }, { logger: { info() {} } });
-  assert.equal(result.body.tools[0].input_schema.properties.file_paths.items.pattern, undefined);
-  assert.equal(result.body.tools[0].input_schema.properties.asset_ids.items.pattern, "^[0-9a-f]{32}$");
-
-  const clean = { tools: [{ name: "Read", input_schema: { type: "object" } }] };
-  assert.equal(plugin.transform({ body: clean }, {}), null, "unchanged bodies are not replaced");
-  assert.equal(plugin.transform({ body: { model: "x" } }, {}), null);
-  assert.equal(plugin.transform({}, {}), null);
-});
-
-test("a request without tools, or a malformed one, is left alone", async () => {
-  assert.equal(await sanitizer({ body: { model: "x" } }), undefined);
-  assert.equal(await sanitizer({ body: { tools: [null, 3, { name: "x" }] } }), undefined);
-  assert.equal(await sanitizer({}), undefined);
+  const imported = await import(pathToFileURL(join(CCR, "ccr-tool-schema-plugin.cjs")).href);
+  const module = imported.createGatewayPlugin();
+  const [transform] = module.requestTransforms;
+  assert.equal(transform.key, "bastion-tool-schema-sanitizer");
+  assert.equal(transform.stage, "beforeUpstream", "after routing, subagent-tag routing included");
+  assert.equal(transform.execution.failureMode, "fail_open");
+  // The gateway rejects a manifest naming a capability the module does not return.
+  for (const capability of imported.manifest.capabilities) {
+    assert.ok(Array.isArray(module[capability]) && module[capability].length > 0, capability);
+  }
 });
 
 // --- the startup step ---------------------------------------------------
@@ -157,14 +162,22 @@ try {
 } catch {
   DatabaseSync = undefined;
 }
-const SANITIZER_PATH = "/usr/local/lib/ccr/ccr-tool-schema-sanitizer.cjs";
-const PLUGIN_PATH = "/usr/local/lib/ccr/ccr-tool-schema-plugin.cjs";
+const LEGACY_ROUTER = "/usr/local/lib/ccr/ccr-tool-schema-sanitizer.cjs";
+const SURFACES = { apps: false, gateway: true, provider: false };
+const PERMISSIONS = ["trusted-code", "core-gateway-plugins"];
+const SANITIZER_PLUGIN = {
+  id: "bastion-tool-schema-sanitizer",
+  enabled: true,
+  module: "/usr/local/lib/ccr/ccr-tool-schema-plugin.cjs",
+  surfaces: SURFACES,
+  permissions: PERMISSIONS,
+};
 const OAUTH_PLUGIN = {
   id: "bastion-claude-oauth-refresh",
   enabled: true,
   module: "/usr/local/lib/ccr/ccr-oauth-refresh-plugin.cjs",
-  surfaces: { apps: false, gateway: true, provider: false },
-  permissions: ["trusted-code", "core-gateway-plugins"],
+  surfaces: SURFACES,
+  permissions: PERMISSIONS,
 };
 
 function withDb(row, run) {
@@ -191,63 +204,39 @@ function withDb(row, run) {
   }
 }
 
-test("the startup step sets the path and keeps everything else", { skip: !DatabaseSync }, () => {
-  withDb({ Providers: [{ name: "p" }], CUSTOM_ROUTER_PATH: "" }, (out, config) => {
-    assert.match(out, /enabled/);
-    assert.equal(config.CUSTOM_ROUTER_PATH, SANITIZER_PATH);
+test("the startup step registers both plugins once, keeping everything else", { skip: !DatabaseSync }, () => {
+  const other = { id: "someone-else", enabled: true, module: "/data/x.cjs" };
+  withDb({ Providers: [{ name: "p" }], plugins: [other] }, (out, config) => {
+    assert.match(out, /enabled tool-schema sanitizer plugin/);
+    assert.match(out, /enabled OAuth refresh plugin/);
+    assert.deepEqual(config.plugins, [other, SANITIZER_PLUGIN, OAUTH_PLUGIN]);
     assert.deepEqual(config.Providers, [{ name: "p" }]);
   });
-  withDb({ CUSTOM_ROUTER_PATH: SANITIZER_PATH }, (out) => assert.match(out, /already enabled/));
-});
-
-test("the startup step registers the request-transform plugin once", { skip: !DatabaseSync }, () => {
-  const other = { id: "someone-else", enabled: true, module: "/data/x.cjs" };
-  withDb({ CUSTOM_ROUTER_PATH: SANITIZER_PATH, plugins: [other] }, (out, config) => {
-    assert.match(out, /enabled request-transform plugin/);
-    assert.deepEqual(config.plugins[0], other);
-    assert.deepEqual(config.plugins[1], {
-      id: "bastion-tool-schema-sanitizer",
-      enabled: true,
-      module: PLUGIN_PATH,
-      surfaces: { apps: false, gateway: true, provider: false },
-      permissions: ["trusted-code", "gateway-request-transforms"],
-    });
-  });
-  const ours = { id: "bastion-tool-schema-sanitizer", enabled: true, module: PLUGIN_PATH };
-  withDb({ CUSTOM_ROUTER_PATH: SANITIZER_PATH, plugins: [ours] }, (out, config) => {
-    assert.match(out, /request-transform plugin already enabled/);
-    assert.deepEqual(config.plugins, [ours, OAUTH_PLUGIN]);
+  withDb({ plugins: [SANITIZER_PLUGIN, OAUTH_PLUGIN] }, (out, config) => {
+    assert.match(out, /tool-schema sanitizer plugin already set up \(enabled\)/);
+    assert.match(out, /OAuth refresh plugin already set up \(enabled\)/);
+    assert.deepEqual(config.plugins, [SANITIZER_PLUGIN, OAUTH_PLUGIN]);
   });
 });
 
-test("the startup step registers the OAuth refresh plugin once", { skip: !DatabaseSync }, () => {
-  withDb({ CUSTOM_ROUTER_PATH: SANITIZER_PATH }, (out, config) => {
-    assert.match(out, /enabled OAuth refresh plugin/);
-    assert.deepEqual(config.plugins.find((plugin) => plugin.id === OAUTH_PLUGIN.id), OAUTH_PLUGIN);
-  });
-  withDb({ CUSTOM_ROUTER_PATH: SANITIZER_PATH, plugins: [OAUTH_PLUGIN] }, (out, config) => {
-    assert.match(out, /OAuth refresh plugin already enabled/);
-    assert.equal(config.plugins.filter((plugin) => plugin.id === OAUTH_PLUGIN.id).length, 1);
-  });
-});
-
-test("the startup step leaves an operator's disabled or moved plugin alone", { skip: !DatabaseSync }, () => {
-  const disabled = { id: "bastion-tool-schema-sanitizer", enabled: false, module: PLUGIN_PATH };
-  withDb({ CUSTOM_ROUTER_PATH: SANITIZER_PATH, plugins: [disabled] }, (out, config) => {
-    assert.match(out, /changed by the operator/);
-    assert.deepEqual(config.plugins, [disabled, OAUTH_PLUGIN]);
-  });
-  const offRefresh = { ...OAUTH_PLUGIN, enabled: false };
-  withDb({ CUSTOM_ROUTER_PATH: SANITIZER_PATH, plugins: [offRefresh] }, (out, config) => {
-    assert.match(out, /plugin bastion-claude-oauth-refresh was changed by the operator/);
-    assert.deepEqual(config.plugins.find((plugin) => plugin.id === OAUTH_PLUGIN.id), offRefresh);
+test("an upgrade moves the sanitizer off the custom router and the CCR-side transform", { skip: !DatabaseSync }, () => {
+  // What earlier images set up: the sanitizer as CUSTOM_ROUTER_PATH plus a
+  // CCR-side request transform, which forced CCR's compatibility server.
+  const old = { ...SANITIZER_PLUGIN, enabled: false, permissions: ["trusted-code", "gateway-request-transforms"] };
+  withDb({ CUSTOM_ROUTER_PATH: LEGACY_ROUTER, plugins: [old, OAUTH_PLUGIN] }, (out, config) => {
+    assert.match(out, /removed CUSTOM_ROUTER_PATH/);
+    assert.match(out, /updated tool-schema sanitizer plugin permissions \(disabled by the operator\)/);
+    assert.equal(config.CUSTOM_ROUTER_PATH, "");
+    assert.deepEqual(config.plugins[0], { ...SANITIZER_PLUGIN, enabled: false }, "the operator's enabled=false is kept");
   });
 });
 
-test("the startup step leaves an operator's own router alone", { skip: !DatabaseSync }, () => {
-  withDb({ CUSTOM_ROUTER_PATH: "/data/my-router.js" }, (out, config) => {
-    assert.match(out, /leaving it/);
+test("the startup step leaves an operator's own router and moved plugins alone", { skip: !DatabaseSync }, () => {
+  const moved = { ...OAUTH_PLUGIN, module: "/data/my-refresh.cjs", permissions: ["trusted-code"] };
+  withDb({ CUSTOM_ROUTER_PATH: "/data/my-router.js", plugins: [moved] }, (out, config) => {
     assert.equal(config.CUSTOM_ROUTER_PATH, "/data/my-router.js");
+    assert.match(out, /plugin bastion-claude-oauth-refresh loads \/data\/my-refresh\.cjs.*leaving it/);
+    assert.deepEqual(config.plugins.find((p) => p.id === OAUTH_PLUGIN.id), moved);
   });
 });
 
@@ -263,8 +252,7 @@ test("the startup step finds the config under CCR_DATA_DIR, whatever HOME is", {
     const env = { ...process.env, CCR_DATA_DIR: dataDir, HOME: join(tmpdir(), "not-the-data-dir") };
     delete env.CCR_CONFIG_DB;
     const out = execFileSync(process.execPath, [join(CCR, "ccr-enable-plugins.mjs")], { env, encoding: "utf8" });
-    assert.match(out, /enabled: CUSTOM_ROUTER_PATH/);
-    assert.match(out, /enabled request-transform plugin/);
+    assert.match(out, /enabled tool-schema sanitizer plugin/);
     assert.match(out, /enabled OAuth refresh plugin/);
   } finally {
     rmSync(dataDir, { recursive: true, force: true });
