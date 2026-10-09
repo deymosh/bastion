@@ -23,8 +23,18 @@ FORBIDDEN = (
     "searxng_instance_info",
     "searxng_search_suggestions",
     "memory_view_note",
-    "memory_delete_project",
     "memory_list_workspaces",
+    "memory_search",
+    "memory_fetch",
+)
+
+# Tools that must stay served: dropping one of these hides real capability.
+REQUIRED = (
+    "memory_delete_project",
+    "memory_schema_validate",
+    "memory_schema_infer",
+    "memory_schema_diff",
+    "memory_basic_memory_diagnostics",
 )
 
 checks = 0
@@ -82,6 +92,21 @@ async def mcp_session(token):
             served = [n for n in FORBIDDEN if n in names]
             if served:
                 die("trimmed/unconfigured tools are not served", str(served))
+            missing = [n for n in REQUIRED if n not in names]
+            if missing:
+                die("useful tools stay served", str(missing))
+            by_name = {t.name: t for t in tools}
+            leaked = [
+                n for n in ("memory_write_note", "memory_edit_note", "memory_create_memory_project", "memory_delete_project")
+                if "workspace" in by_name[n].input_schema.get("properties", {})
+            ]
+            if leaked:
+                die("cloud-only workspace arg is hidden", str(leaked))
+            leaked = [n for n in names if n.startswith("memory_") and "project_id" in by_name[n].input_schema.get("properties", {})]
+            if leaked:
+                die("cloud-only project_id arg is hidden", str(leaked))
+            if "project_path" in by_name["memory_create_memory_project"].input_schema.get("properties", {}):
+                die("create_memory_project takes no path")
             ok(f"tools/list: {len(names)} unique namespaced tools across {len(NAMESPACES)} namespaces, trims hold")
 
             r = await session.call_tool("time_get_current_time", {"timezone": "Europe/Madrid"})
@@ -96,10 +121,10 @@ async def mcp_session(token):
 
             # memory: per-project knowledge base. Create a project, write a
             # note into it, find it again with a paginated search.
-            await session.call_tool(
-                "memory_create_memory_project",
-                {"project_name": "e2e", "project_path": "/data/memory/projects/e2e"},
-            )
+            r = await session.call_tool("memory_create_memory_project", {"project_name": "e2e"})
+            if r.is_error or "/data/memory/projects/e2e" not in r.content[0].text:
+                die("a new project lands under the project root", r.content[0].text[:200])
+            ok("memory projects are created under /data/memory/projects")
             await session.call_tool(
                 "memory_write_note",
                 {
