@@ -65,7 +65,7 @@ services:
 
   codedeck-bridge:
     # Pinned by digest (version tag kept for readability). Pinned 2026-09-17.
-    image: ghcr.io/deymosh/codedeck-plus-bridge:v1.2.0@sha256:a76dd8ec25680a254ecdc0dc3e397091b8eedafc86ea2d9120bf95e01277b0ed
+    image: ghcr.io/deymosh/codedeck-plus-bridge:v1.3.1@sha256:7e8559a5d27805f4fcfc1ea83c4a01bc0f78086045d045a37686f5ac7b36722e
     container_name: codedeck-bridge
     logging: *logging
     restart: unless-stopped
@@ -143,7 +143,7 @@ services:
     # is deliberately no privileged fallback. See docs/agent-docker.md.
     profiles: ["agent-docker"]
     # Pinned by digest (version tag kept for readability). Pinned 2026-09-26.
-    image: docker:29.8.1-dind@sha256:3f3c01aaaebf7cce837356b688b7c059a4749f10bd7660dec7c58fc454a283f0
+    image: docker:29.9.2-dind@sha256:9e79b879b177fbd72c34376a3dd3d91747da5db49e1f560f76aea59561471977
     container_name: agent-docker
     logging: *logging
     # The dind entrypoint puts the hostname into the TLS server certificate's
@@ -196,7 +196,7 @@ services:
     # output is enabled in ./config/searxng/settings.yml (mounted read-only) -
     # without it every mcp-searxng query answers 403.
     # Pinned by digest (date tag kept for readability). Pinned 2026-09-22.
-    image: searxng/searxng:2026.9.25-d8ae3abd5@sha256:38ed750807fb00c26047e51896b50f83e7843d120d9e65f950770305f62c7111
+    image: searxng/searxng:2026.10.29-cff884f98@sha256:dc2f7ed8a215b2f8244eaed083acdd50406f0de18bf43410cc460a4b511b7424
     container_name: searxng
     logging: *logging
     restart: unless-stopped

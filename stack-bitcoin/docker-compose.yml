@@ -119,7 +119,7 @@ services:
 
   rtl:
     # Version tag + digest. Pinned 2026-09-09.
-    image: shahanafarooqui/rtl:v0.15.12@sha256:47bc963a983aba9eb8961603fd57ce89f20c0df15438450e9639c0265c364c3b
+    image: shahanafarooqui/rtl:v0.15.16@sha256:0b44c4e581257b52d60722d92c62a1f47a104e4c703740bdcfccc38c80bc83dc
     container_name: rtl
     logging: *logging
     restart: unless-stopped
