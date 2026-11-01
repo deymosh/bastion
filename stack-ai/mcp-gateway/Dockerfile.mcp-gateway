@@ -22,7 +22,7 @@ COPY package.json package-lock.json ./
 RUN npm ci \
     && npm cache clean --force
 
-FROM python:3.14.7-slim-bookworm@sha256:82bc3c539b8813ada9d68c63b40158fa002f7f33de9bf3312a3dfdc0620dff56
+FROM python:3.15.0-slim-bookworm@sha256:0e019bbdfb5d9874cb2389f1c2884b64aa2ac97c99960b5bc521cef978c0617d
 
 # TLS roots for outbound HTTPS (context7's API, SearXNG upstream engines),
 # and libatomic1: the copied node binary links it from Node >= 26 on, and the
