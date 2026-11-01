@@ -5,6 +5,6 @@
   "description": "Exact-pinned npm MCP servers baked into the stack-ai mcp-gateway image. Installed with `npm ci` (lockfile) so rebuilds are reproducible and hash-verified; bump a version here, regenerate package-lock.json, and rebuild.",
   "dependencies": {
     "@upstash/context7-mcp": "4.1.1",
-    "mcp-searxng": "2.5.0"
+    "mcp-searxng": "2.9.0"
   }
 }
