@@ -8,7 +8,7 @@ ARG CCR_REPOSITORY=https://github.com/musistudio/claude-code-router.git
 # run tests/integration/ccr-oauth-refresh.sh.
 ARG CLAUDE_CODE_VERSION=2.1.295
 
-FROM node:26.10.0-bookworm@sha256:2aaae6d91f99fee84cfc92da9b52c22a185752d247746052bbc3f961e44478c6 AS source
+FROM node:26.13.0-bookworm@sha256:fa52d1669505e29b58c042875b1d65c229e0787a3610fd52869b22b68e480853 AS source
 ARG CCR_REF
 ARG CCR_REPOSITORY
 
@@ -24,14 +24,14 @@ RUN apt-get update \
 WORKDIR /src
 RUN npm ci && npm run build:docker
 
-FROM node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2 AS production-deps
+FROM node:26.13.0-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS production-deps
 WORKDIR /src
 COPY --from=source /src/package.json /src/package-lock.json ./
 COPY --from=source /src/packages/core/package.json packages/core/package.json
 RUN npm ci --omit=dev --workspace=@claude-code-router/core --include-workspace-root=false \
     && npm cache clean --force
 
-FROM node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2 AS runtime
+FROM node:26.13.0-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS runtime
 ARG CLAUDE_CODE_VERSION
 ENV NODE_ENV=production \
     CCR_DATA_DIR=/data \
